@@ -13,6 +13,14 @@ import (
 	"github.com/gorilla/feeds"
 )
 
+// buildURL creates proper URLs based on whether SSL domain is configured
+func buildURL(conf *util.AppConfig, path string) string {
+	if conf.Conf.WithAp && conf.Conf.SslDomain != "" {
+		return fmt.Sprintf("https://%s%s", conf.Conf.SslDomain, path)
+	}
+	return fmt.Sprintf("http://%s:%d%s", conf.Conf.Host, conf.Conf.HttpPort, path)
+}
+
 func GetRSS(conf *util.AppConfig, username string) (string, error) {
 
 	var err error
@@ -21,7 +29,7 @@ func GetRSS(conf *util.AppConfig, username string) (string, error) {
 	var createdBy string
 	var email string
 
-	link := fmt.Sprintf("http://%s:%d/feed", conf.Conf.Host, conf.Conf.HttpPort)
+	link := buildURL(conf, "/feed")
 
 	if username != "" {
 		err, notes = db.GetDB().ReadNotesByUsername(username)
@@ -65,7 +73,7 @@ func GetRSS(conf *util.AppConfig, username string) (string, error) {
 				&feeds.Item{
 					Id:      note.Id.String(),
 					Title:   note.CreatedAt.Format(util.DateTimeFormat()),
-					Link:    &feeds.Link{Href: fmt.Sprintf("http://%s:%d/feed/%s", conf.Conf.Host, conf.Conf.HttpPort, note.Id)},
+					Link:    &feeds.Link{Href: buildURL(conf, fmt.Sprintf("/feed/%s", note.Id))},
 					Content: note.Message,
 					Author:  &feeds.Author{Name: note.CreatedBy, Email: email},
 					Created: note.CreatedAt,
@@ -86,7 +94,7 @@ func GetRSSItem(conf *util.AppConfig, id uuid.UUID) (string, error) {
 	}
 
 	email := fmt.Sprintf("%s@stegodon", note.CreatedBy)
-	url := fmt.Sprintf("http://%s:%d/feed/%s", conf.Conf.Host, conf.Conf.HttpPort, note.Id)
+	url := buildURL(conf, fmt.Sprintf("/feed/%s", note.Id))
 
 	feed := &feeds.Feed{
 		Title:       "Single Stegodon Note",
