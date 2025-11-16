@@ -48,7 +48,8 @@ EXPOSE 23232 9999
 # Set default environment variables
 ENV STEGODON_HOST=0.0.0.0 \
     STEGODON_SSHPORT=23232 \
-    STEGODON_HTTPPORT=9999
+    STEGODON_HTTPPORT=9999 \
+    TERM=xterm-256color
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

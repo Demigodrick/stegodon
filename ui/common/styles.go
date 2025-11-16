@@ -3,16 +3,16 @@ package common
 import "github.com/charmbracelet/lipgloss"
 
 const (
-	COLOR_GREY        = "#626262" // ANSI 241
-	COLOR_MAGENTA     = "#d75fd7" // ANSI 170
-	COLOR_LIGHTBLUE   = "#5f87ff" // ANSI 69
-	COLOR_PURPLE      = "#7D56F4" // TrueColor purple
-	COLOR_GREEN       = "#00ff7f" // Terminal green accent
-	COLOR_BLUE        = "#5fafff" // Link/secondary blue
-	COLOR_DARK_GREY   = "#585858" // ANSI 240 - Muted text
-	COLOR_BORDER_GREY = "#585858" // ANSI 240 - Border color
-	COLOR_WHITE       = "#eeeeee" // ANSI 255 - White text
-	COLOR_RED         = "#ff0000" // ANSI 196 - Error/warning red
+	COLOR_GREY        = "241" // ANSI 241
+	COLOR_MAGENTA     = "170" // ANSI 170
+	COLOR_LIGHTBLUE   = "69"  // ANSI 69
+	COLOR_PURPLE      = "141" // ANSI 141 - closest to #7D56F4
+	COLOR_GREEN       = "48"  // ANSI 48 - bright green
+	COLOR_BLUE        = "75"  // ANSI 75 - light blue
+	COLOR_DARK_GREY   = "240" // ANSI 240 - Muted text
+	COLOR_BORDER_GREY = "240" // ANSI 240 - Border color
+	COLOR_WHITE       = "255" // ANSI 255 - White text
+	COLOR_RED         = "196" // ANSI 196 - Error/warning red
 )
 
 var (

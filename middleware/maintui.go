@@ -4,6 +4,7 @@ import (
 	"log"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
 	bm "github.com/charmbracelet/wish/bubbletea"
@@ -27,8 +28,11 @@ func MainTui() wish.Middleware {
 			return nil
 		}
 
+		// Set the global color profile to ANSI256 for Docker compatibility
+		lipgloss.SetColorProfile(termenv.ANSI256)
+
 		m := ui.NewModel(*acc, pty.Window.Width, pty.Window.Height)
 		return tea.NewProgram(m, tea.WithInput(s), tea.WithOutput(s), tea.WithAltScreen())
 	}
-	return bm.MiddlewareWithProgramHandler(teaHandler, termenv.TrueColor)
+	return bm.MiddlewareWithProgramHandler(teaHandler, termenv.ANSI256)
 }
