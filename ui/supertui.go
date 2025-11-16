@@ -114,6 +114,8 @@ func (m MainModel) Init() tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			return common.CreateNoteView
 		})
+		// Initialize writenote model to start cursor blinking
+		cmds = append(cmds, m.createModel.Init())
 	}
 
 	return tea.Batch(cmds...)
@@ -230,6 +232,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case common.DeleteAccountView:
 				m.state = common.CreateNoteView
 			}
+			// Handle focus changes for writenote textarea
+			if oldState == common.CreateNoteView {
+				m.createModel.Blur()
+			}
+			if m.state == common.CreateNoteView {
+				m.createModel.Focus()
+			}
 			// Reload data when switching to certain views
 			if oldState != m.state {
 				cmd = getViewInitCmd(m.state, &m)
@@ -266,6 +275,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.state = common.LocalUsersView
 				}
+			}
+			// Handle focus changes for writenote textarea
+			if oldState == common.CreateNoteView {
+				m.createModel.Blur()
+			}
+			if m.state == common.CreateNoteView {
+				m.createModel.Focus()
 			}
 			// Reload data when switching to certain views
 			if oldState != m.state {
@@ -315,6 +331,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localUsersModel, cmd = m.localUsersModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.listModel, cmd = m.listModel.Update(msg)
+		cmds = append(cmds, cmd)
+		m.createModel, cmd = m.createModel.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -615,6 +633,8 @@ func (m MainModel) currentFocusedModel() string {
 // getViewInitCmd returns the init command for a view to reload its data
 func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 	switch state {
+	case common.CreateNoteView:
+		return m.createModel.Init()
 	case common.FollowersView:
 		return m.followersModel.Init()
 	case common.FollowingView:

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -36,6 +37,8 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 	ti.CharLimit = MaxLetters
 	ti.ShowLineNumbers = false
 	ti.SetWidth(30)
+	ti.Cursor.SetMode(cursor.CursorBlink)
+	ti.Focus()
 
 	return Model{
 		Textarea:          ti,
@@ -155,6 +158,14 @@ func updateNoteModelCmd(noteId uuid.UUID, message string) tea.Cmd {
 
 func (m Model) Init() tea.Cmd {
 	return textarea.Blink
+}
+
+func (m *Model) Focus() {
+	m.Textarea.Focus()
+}
+
+func (m *Model) Blur() {
+	m.Textarea.Blur()
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
