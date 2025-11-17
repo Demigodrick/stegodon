@@ -21,6 +21,7 @@ type Model struct {
 	DisplayName textinput.Model
 	Bio         textinput.Model
 	Step        int // 0=username, 1=display name, 2=bio
+	Error       string
 	Err         util.ErrMsg
 }
 
@@ -36,6 +37,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Err = msg
 		return m, nil
 	case tea.KeyMsg:
+		// Clear error when user starts typing
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeyBackspace {
+			m.Error = ""
+		}
+
 		switch msg.String() {
 		case "enter":
 			if m.Step == 0 {
@@ -90,13 +96,21 @@ func (m Model) View() string {
 		help = "(enter to save profile, ctrl-c to quit)"
 	}
 
-	return fmt.Sprintf(
+	baseView := fmt.Sprintf(
 		"Logging into STEGODON v%s\n\n%s\n\n%s\n\n%s",
 		util.GetVersion(),
 		prompt,
 		input,
 		help,
-	) + "\n"
+	)
+
+	// Add error message if present
+	if m.Error != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		baseView += "\n\n" + errorStyle.Render(m.Error)
+	}
+
+	return baseView + "\n"
 }
 
 // ViewWithWidth renders the view with proper width accounting for border and margins

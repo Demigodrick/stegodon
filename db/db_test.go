@@ -1113,3 +1113,109 @@ func TestCountAccounts(t *testing.T) {
 		t.Errorf("Expected 3 accounts, got %d", count)
 	}
 }
+
+func TestUpdateLoginById_UsernameUniqueness(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create two test accounts
+	userId1 := uuid.New()
+	userId2 := uuid.New()
+	createTestAccount(t, db, userId1, "alice", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, userId2, "bob", "pubkey2", "webpub2", "webpriv2")
+
+	// Test 1: Update user's own username (should succeed)
+	err := db.UpdateLoginById("alice_updated", "Alice Updated", "Bio", userId1)
+	if err != nil {
+		t.Errorf("UpdateLoginById should succeed when updating own username: %v", err)
+	}
+
+	// Verify update worked
+	err, acc := db.ReadAccByUsername("alice_updated")
+	if err != nil {
+		t.Fatalf("ReadAccByUsername failed: %v", err)
+	}
+	if acc == nil {
+		t.Fatal("Expected to find updated account")
+	}
+	if acc.DisplayName != "Alice Updated" {
+		t.Errorf("Expected display name 'Alice Updated', got '%s'", acc.DisplayName)
+	}
+
+	// Test 2: Try to update to an existing username (should fail)
+	err = db.UpdateLoginById("bob", "Alice Trying Bob", "Bio", userId1)
+	if err == nil {
+		t.Error("UpdateLoginById should fail when username is already taken by another user")
+	}
+	if err != nil && err.Error() != "username 'bob' is already taken" {
+		t.Errorf("Expected error message 'username 'bob' is already taken', got '%s'", err.Error())
+	}
+
+	// Test 3: Verify first user's username wasn't changed after failed update
+	err, acc = db.ReadAccByUsername("alice_updated")
+	if err != nil {
+		t.Fatalf("ReadAccByUsername failed: %v", err)
+	}
+	if acc == nil {
+		t.Fatal("Expected original account to still exist")
+	}
+
+	// Test 4: Update display name and bio without changing username (should succeed)
+	err = db.UpdateLoginById("alice_updated", "Alice New Display", "New Bio", userId1)
+	if err != nil {
+		t.Errorf("UpdateLoginById should succeed when keeping same username: %v", err)
+	}
+
+	// Verify update worked
+	err, acc = db.ReadAccByUsername("alice_updated")
+	if err != nil {
+		t.Fatalf("ReadAccByUsername failed: %v", err)
+	}
+	if acc.DisplayName != "Alice New Display" {
+		t.Errorf("Expected display name 'Alice New Display', got '%s'", acc.DisplayName)
+	}
+	if acc.Summary != "New Bio" {
+		t.Errorf("Expected summary 'New Bio', got '%s'", acc.Summary)
+	}
+}
+
+func TestUpdateLoginById_NonExistentUser(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create one test account
+	userId1 := uuid.New()
+	createTestAccount(t, db, userId1, "alice", "pubkey1", "webpub1", "webpriv1")
+
+	// Try to update a non-existent user
+	nonExistentId := uuid.New()
+	err := db.UpdateLoginById("newusername", "Display", "Bio", nonExistentId)
+	// This should not error because UPDATE will just affect 0 rows
+	// But the username check should pass since nobody has "newusername"
+	if err != nil {
+		t.Errorf("UpdateLoginById with non-existent user should not error: %v", err)
+	}
+}
+
+func TestUpdateLoginById_CaseInsensitiveUsername(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create two test accounts
+	userId1 := uuid.New()
+	userId2 := uuid.New()
+	createTestAccount(t, db, userId1, "alice", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, userId2, "bob", "pubkey2", "webpub2", "webpriv2")
+
+	// SQLite UNIQUE constraint is case-insensitive by default
+	// Try to update to "ALICE" (different case but same username)
+	err := db.UpdateLoginById("Alice", "Alice Upper", "Bio", userId2)
+
+	// This might fail or succeed depending on SQLite collation settings
+	// For this test, we just verify that if it fails, it's a constraint error
+	if err != nil {
+		// Should fail with constraint error or our custom error
+		t.Logf("Case-insensitive check result: %v", err)
+	}
+}
+

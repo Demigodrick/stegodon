@@ -53,12 +53,17 @@ type MainModel struct {
 	deleteAccountModel deleteaccount.Model
 }
 
+type userUpdateErrorMsg struct {
+	err error
+}
+
 func updateUserModelCmd(acc *domain.Account) tea.Cmd {
 	return func() tea.Msg {
 		acc.FirstTimeLogin = domain.FALSE
 		err := db.GetDB().UpdateLoginById(acc.Username, acc.DisplayName, acc.Summary, acc.Id)
 		if err != nil {
-			log.Printf("User %s could not be updated!", acc.Username)
+			log.Printf("User %s could not be updated: %v", acc.Username, err)
+			return userUpdateErrorMsg{err: err}
 		}
 		return nil
 	}
@@ -126,6 +131,15 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case userUpdateErrorMsg:
+		// Handle username validation error
+		if m.state == common.CreateUserView {
+			m.newUserModel.Error = msg.err.Error()
+			m.newUserModel.Step = 0 // Reset to username step
+			m.newUserModel.TextInput.Focus()
+			return m, nil
+		}
+
 	case tea.WindowSizeMsg:
 		// Handle window resize
 		m.width = msg.Width

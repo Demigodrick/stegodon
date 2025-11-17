@@ -169,6 +169,12 @@ func (db *DB) UpdateLoginByPkHash(username string, displayName string, summary s
 }
 
 func (db *DB) UpdateLoginById(username string, displayName string, summary string, id uuid.UUID) error {
+	// Check if username is already taken by another user (before transaction)
+	err, existingAcc := db.ReadAccByUsername(username)
+	if err == nil && existingAcc != nil && existingAcc.Id != id {
+		return fmt.Errorf("username '%s' is already taken", username)
+	}
+
 	return db.wrapTransaction(func(tx *sql.Tx) error {
 		err := db.updateLoginUserById(tx, username, displayName, summary, id)
 		if err != nil {
