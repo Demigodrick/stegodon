@@ -61,9 +61,9 @@ func TestPkToHashDifferentInputs(t *testing.T) {
 
 func TestGetVersion(t *testing.T) {
 	// GetVersion now uses embedded version.txt
-	// The embedded version should be "1.2.0"
+	// The embedded version should be "1.2.1"
 	version := GetVersion()
-	expected := "1.2.0"
+	expected := "1.2.1"
 
 	if version != expected {
 		t.Errorf("Expected version '%s', got '%s'", expected, version)
@@ -73,7 +73,7 @@ func TestGetVersion(t *testing.T) {
 func TestGetNameAndVersion(t *testing.T) {
 	// GetNameAndVersion now uses embedded version.txt
 	result := GetNameAndVersion()
-	expected := "stegodon / 1.2.0"
+	expected := "stegodon / 1.2.1"
 
 	if result != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, result)
