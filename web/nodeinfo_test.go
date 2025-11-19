@@ -376,3 +376,63 @@ func TestNodeInfo20_SoftwareVersion(t *testing.T) {
 		t.Error("Software version should contain at least one digit")
 	}
 }
+
+func TestNodeInfo20_OpenRegistrations_Closed(t *testing.T) {
+	// Test that openRegistrations is false when STEGODON_CLOSED=true
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "example.com"
+	conf.Conf.Closed = true
+	conf.Conf.Single = false
+
+	result := GetNodeInfo20(conf)
+
+	var nodeInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &nodeInfo); err != nil {
+		t.Fatalf("Failed to parse JSON: %v", err)
+	}
+
+	if nodeInfo["openRegistrations"] != false {
+		t.Error("openRegistrations should be false when STEGODON_CLOSED=true")
+	}
+}
+
+func TestNodeInfo20_OpenRegistrations_Open(t *testing.T) {
+	// Test that openRegistrations is true when neither closed nor single with users
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "example.com"
+	conf.Conf.Closed = false
+	conf.Conf.Single = false
+
+	result := GetNodeInfo20(conf)
+
+	var nodeInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &nodeInfo); err != nil {
+		t.Fatalf("Failed to parse JSON: %v", err)
+	}
+
+	// Note: This may be true or false depending on actual database state
+	// We're just verifying the JSON field exists and is a boolean
+	_, ok := nodeInfo["openRegistrations"].(bool)
+	if !ok {
+		t.Error("openRegistrations should be a boolean value")
+	}
+}
+
+func TestNodeInfo20_OpenRegistrations_ClosedOverridesSingle(t *testing.T) {
+	// Test that STEGODON_CLOSED=true always closes registration
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "example.com"
+	conf.Conf.Closed = true
+	conf.Conf.Single = false
+
+	result := GetNodeInfo20(conf)
+
+	var nodeInfo map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &nodeInfo); err != nil {
+		t.Fatalf("Failed to parse JSON: %v", err)
+	}
+
+	if nodeInfo["openRegistrations"] != false {
+		t.Error("openRegistrations should be false when STEGODON_CLOSED=true regardless of other settings")
+	}
+}

@@ -87,7 +87,11 @@ func GetNodeInfo20(conf *util.AppConfig) string {
 	}
 
 	// Determine if registrations are open
+	// Closed if: STEGODON_CLOSED=true OR (STEGODON_SINGLE=true AND user exists)
 	openRegistrations := !conf.Conf.Closed
+	if conf.Conf.Single && totalUsers >= 1 {
+		openRegistrations = false
+	}
 
 	// Get node description (use custom if set, otherwise default)
 	nodeDescription := conf.Conf.NodeDescription
