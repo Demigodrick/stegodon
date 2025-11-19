@@ -151,3 +151,87 @@ func GetNoteObject(noteId uuid.UUID, conf *util.AppConfig) (error, string) {
 
 	return nil, string(jsonBytes)
 }
+
+// GetFollowersCollection returns an ActivityPub OrderedCollection of followers
+// Always uses paging for compatibility with Mastodon and other servers
+func GetFollowersCollection(actor string, conf *util.AppConfig, followerURIs []string) string {
+	collectionURI := fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, actor)
+
+	// Always use paging (Mastodon expects this)
+	collection := map[string]interface{}{
+		"@context":   "https://www.w3.org/ns/activitystreams",
+		"id":         collectionURI,
+		"type":       "OrderedCollection",
+		"totalItems": len(followerURIs),
+		"first":      fmt.Sprintf("%s?page=1", collectionURI),
+	}
+
+	jsonBytes, err := json.Marshal(collection)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
+// GetFollowingCollection returns an ActivityPub OrderedCollection of following
+// Always uses paging for compatibility with Mastodon and other servers
+func GetFollowingCollection(actor string, conf *util.AppConfig, followingURIs []string) string {
+	collectionURI := fmt.Sprintf("https://%s/users/%s/following", conf.Conf.SslDomain, actor)
+
+	// Always use paging (Mastodon expects this)
+	collection := map[string]interface{}{
+		"@context":   "https://www.w3.org/ns/activitystreams",
+		"id":         collectionURI,
+		"type":       "OrderedCollection",
+		"totalItems": len(followingURIs),
+		"first":      fmt.Sprintf("%s?page=1", collectionURI),
+	}
+
+	jsonBytes, err := json.Marshal(collection)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
+// GetFollowersPage returns an OrderedCollectionPage for followers
+func GetFollowersPage(actor string, conf *util.AppConfig, followerURIs []string, page int) string {
+	collectionURI := fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, actor)
+	pageURI := fmt.Sprintf("%s?page=%d", collectionURI, page)
+
+	collectionPage := map[string]interface{}{
+		"@context":     "https://www.w3.org/ns/activitystreams",
+		"id":           pageURI,
+		"type":         "OrderedCollectionPage",
+		"partOf":       collectionURI,
+		"orderedItems": followerURIs,
+		"totalItems":   len(followerURIs),
+	}
+
+	jsonBytes, err := json.Marshal(collectionPage)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
+// GetFollowingPage returns an OrderedCollectionPage for following
+func GetFollowingPage(actor string, conf *util.AppConfig, followingURIs []string, page int) string {
+	collectionURI := fmt.Sprintf("https://%s/users/%s/following", conf.Conf.SslDomain, actor)
+	pageURI := fmt.Sprintf("%s?page=%d", collectionURI, page)
+
+	collectionPage := map[string]interface{}{
+		"@context":     "https://www.w3.org/ns/activitystreams",
+		"id":           pageURI,
+		"type":         "OrderedCollectionPage",
+		"partOf":       collectionURI,
+		"orderedItems": followingURIs,
+		"totalItems":   len(followingURIs),
+	}
+
+	jsonBytes, err := json.Marshal(collectionPage)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}

@@ -51,6 +51,15 @@ func main() {
 		log.Println("Key format migration complete")
 	}
 
+	// Run duplicate follows cleanup migration
+	log.Println("Checking for duplicate follows...")
+	if err := database.MigrateDuplicateFollows(); err != nil {
+		log.Printf("Warning: Duplicate follows migration encountered errors: %v", err)
+		log.Println("You may need to manually review the migration. See logs above for details.")
+	} else {
+		log.Println("Duplicate follows migration complete")
+	}
+
 	// Start ActivityPub delivery worker if enabled
 	if conf.Conf.WithAp {
 		activitypub.StartDeliveryWorker(conf)

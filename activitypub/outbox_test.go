@@ -568,3 +568,298 @@ func TestContextURI(t *testing.T) {
 		t.Error("Context should be from W3C")
 	}
 }
+
+// Tests for Undo activity (unfollow)
+
+func TestUndoActivityGeneration(t *testing.T) {
+	// Test Undo activity structure for unfollowing
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	followID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	remoteActorURI := "https://mastodon.social/users/bob"
+
+	undo := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]interface{}{
+			"id":     followID,
+			"type":   "Follow",
+			"actor":  actorURI,
+			"object": remoteActorURI,
+		},
+	}
+
+	// Verify structure can be marshaled
+	jsonBytes, err := json.Marshal(undo)
+	if err != nil {
+		t.Fatalf("Failed to marshal Undo activity: %v", err)
+	}
+
+	// Parse back to verify structure
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal Undo: %v", err)
+	}
+
+	if parsed["type"] != "Undo" {
+		t.Errorf("Expected type Undo, got %v", parsed["type"])
+	}
+	if parsed["actor"] != actorURI {
+		t.Errorf("Expected actor %s, got %v", actorURI, parsed["actor"])
+	}
+
+	// Verify embedded Follow object
+	obj := parsed["object"].(map[string]interface{})
+	if obj["type"] != "Follow" {
+		t.Error("Expected embedded object type Follow")
+	}
+	if obj["id"] != followID {
+		t.Error("Expected embedded object to reference original Follow")
+	}
+	if obj["actor"] != actorURI {
+		t.Error("Expected Follow actor to match Undo actor")
+	}
+	if obj["object"] != remoteActorURI {
+		t.Error("Expected Follow object to be remote actor URI")
+	}
+}
+
+func TestUndoActivityStructureValidation(t *testing.T) {
+	// Test that Undo activity follows ActivityPub specification
+	// https://www.w3.org/TR/activitypub/#undo-activity
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	followID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	remoteActorURI := "https://mastodon.social/users/bob"
+
+	undo := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]interface{}{
+			"id":     followID,
+			"type":   "Follow",
+			"actor":  actorURI,
+			"object": remoteActorURI,
+		},
+	}
+
+	jsonBytes, err := json.Marshal(undo)
+	if err != nil {
+		t.Fatalf("Failed to marshal Undo activity: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal Undo: %v", err)
+	}
+
+	// Required fields
+	if parsed["@context"] == nil {
+		t.Error("Undo activity must have @context")
+	}
+	if parsed["id"] == nil {
+		t.Error("Undo activity must have id")
+	}
+	if parsed["type"] != "Undo" {
+		t.Error("Undo activity must have type 'Undo'")
+	}
+	if parsed["actor"] == nil {
+		t.Error("Undo activity must have actor")
+	}
+	if parsed["object"] == nil {
+		t.Error("Undo activity must have object")
+	}
+
+	// Object must be a Follow activity (for unfollow)
+	obj := parsed["object"].(map[string]interface{})
+	if obj["type"] != "Follow" {
+		t.Error("For unfollow, Undo object must be a Follow activity")
+	}
+
+	// The Follow's actor should match the Undo's actor
+	if obj["actor"] != parsed["actor"] {
+		t.Error("Follow actor should match Undo actor")
+	}
+}
+
+func TestUndoFollowWorkflow(t *testing.T) {
+	// Test the complete unfollow workflow structure
+	// 1. Original Follow was sent
+	// 2. Now sending Undo to cancel it
+
+	// Original Follow
+	followID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	targetURI := "https://mastodon.social/users/bob"
+
+	originalFollow := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       followID,
+		"type":     "Follow",
+		"actor":    actorURI,
+		"object":   targetURI,
+	}
+
+	// Verify original Follow is valid
+	followJSON, err := json.Marshal(originalFollow)
+	if err != nil {
+		t.Fatalf("Failed to marshal Follow: %v", err)
+	}
+
+	var parsedFollow map[string]interface{}
+	if err := json.Unmarshal(followJSON, &parsedFollow); err != nil {
+		t.Fatalf("Failed to parse Follow: %v", err)
+	}
+
+	// Now create Undo that references this Follow
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	undo := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object":   originalFollow, // Embed the entire Follow
+	}
+
+	undoJSON, err := json.Marshal(undo)
+	if err != nil {
+		t.Fatalf("Failed to marshal Undo: %v", err)
+	}
+
+	var parsedUndo map[string]interface{}
+	if err := json.Unmarshal(undoJSON, &parsedUndo); err != nil {
+		t.Fatalf("Failed to parse Undo: %v", err)
+	}
+
+	// Verify the embedded Follow is intact
+	embeddedFollow := parsedUndo["object"].(map[string]interface{})
+	if embeddedFollow["id"] != followID {
+		t.Error("Embedded Follow should retain original ID")
+	}
+	if embeddedFollow["type"] != "Follow" {
+		t.Error("Embedded object should be Follow")
+	}
+	if embeddedFollow["actor"] != actorURI {
+		t.Error("Embedded Follow should have same actor as Undo")
+	}
+}
+
+func TestUndoActivityComparison(t *testing.T) {
+	// Compare Undo structure with other activities to ensure consistency
+	actorURI := "https://stegodon.example/users/alice"
+	targetURI := "https://mastodon.social/users/bob"
+
+	// Follow activity
+	followID := "https://stegodon.example/activities/" + uuid.New().String()
+	follow := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       followID,
+		"type":     "Follow",
+		"actor":    actorURI,
+		"object":   targetURI,
+	}
+
+	// Undo activity
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	undo := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object":   follow,
+	}
+
+	// Both should have required fields
+	for _, activity := range []map[string]interface{}{follow, undo} {
+		if activity["@context"] == nil {
+			t.Error("All activities must have @context")
+		}
+		if activity["id"] == nil {
+			t.Error("All activities must have id")
+		}
+		if activity["type"] == nil {
+			t.Error("All activities must have type")
+		}
+		if activity["actor"] == nil {
+			t.Error("All activities must have actor")
+		}
+		if activity["object"] == nil {
+			t.Error("All activities must have object")
+		}
+	}
+
+	// IDs should be unique
+	if follow["id"] == undo["id"] {
+		t.Error("Follow and Undo should have different IDs")
+	}
+
+	// Actors should be the same (same person unfollowing)
+	if follow["actor"] != undo["actor"] {
+		t.Error("Follow and Undo should have same actor for unfollow")
+	}
+}
+
+func TestUndoJSONMarshaling(t *testing.T) {
+	// Test that Undo activity can be marshaled and unmarshaled without data loss
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	followID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	targetURI := "https://mastodon.social/users/bob"
+
+	original := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]interface{}{
+			"id":     followID,
+			"type":   "Follow",
+			"actor":  actorURI,
+			"object": targetURI,
+		},
+	}
+
+	// Marshal
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Failed to marshal: %v", err)
+	}
+
+	// Unmarshal
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// Verify all fields preserved
+	if parsed["id"] != original["id"] {
+		t.Error("ID should be preserved")
+	}
+	if parsed["type"] != original["type"] {
+		t.Error("Type should be preserved")
+	}
+	if parsed["actor"] != original["actor"] {
+		t.Error("Actor should be preserved")
+	}
+
+	// Verify nested object preserved
+	originalObj := original["object"].(map[string]interface{})
+	parsedObj := parsed["object"].(map[string]interface{})
+
+	if parsedObj["id"] != originalObj["id"] {
+		t.Error("Nested Follow ID should be preserved")
+	}
+	if parsedObj["type"] != originalObj["type"] {
+		t.Error("Nested Follow type should be preserved")
+	}
+	if parsedObj["actor"] != originalObj["actor"] {
+		t.Error("Nested Follow actor should be preserved")
+	}
+	if parsedObj["object"] != originalObj["object"] {
+		t.Error("Nested Follow object should be preserved")
+	}
+}

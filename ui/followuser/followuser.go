@@ -62,8 +62,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case followResultMsg:
 		if msg.err != nil {
-			m.Error = fmt.Sprintf("Failed: %v", msg.err)
-			m.Status = ""
+			// Check if it's an "already following" message (case-insensitive)
+			errMsg := strings.ToLower(msg.err.Error())
+			if strings.Contains(errMsg, "already following") {
+				m.Status = fmt.Sprintf("ℹ Already following %s", msg.username)
+				m.Error = ""
+			} else {
+				m.Error = fmt.Sprintf("Failed: %v", msg.err)
+				m.Status = ""
+			}
 		} else {
 			m.Status = fmt.Sprintf("✓ Sent follow request to %s", msg.username)
 		}
@@ -178,28 +185,15 @@ func followRemoteUser(accountId uuid.UUID, username, domain string) error {
 		return fmt.Errorf("webfinger resolution failed: %w", err)
 	}
 
-	// Check if already following this user
-	err, following := database.ReadFollowingByAccountId(accountId)
-	if err == nil && following != nil {
-		for _, follow := range *following {
-			err, remoteAcc := database.ReadRemoteAccountById(follow.TargetAccountId)
-			if err == nil && remoteAcc != nil {
-				if remoteAcc.ActorURI == actorURI {
-					return fmt.Errorf("already following %s@%s", username, domain)
-				}
-			}
-		}
-	}
-
-	// Get config (TODO: pass from main)
+	// Get config
 	conf, err := util.ReadConf()
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
-	// Send Follow activity
+	// Send Follow activity (SendFollow will check for duplicates)
 	if err := activitypub.SendFollow(localAccount, actorURI, conf); err != nil {
-		return fmt.Errorf("failed to send follow: %w", err)
+		return err // Return error as-is (without wrapping) so "already following" message works
 	}
 
 	log.Printf("Successfully sent follow request from %s to %s@%s (%s)",

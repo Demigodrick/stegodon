@@ -3,6 +3,7 @@ package activitypub
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -318,6 +319,21 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 		return fmt.Errorf("failed to fetch remote actor: %w", err)
 	}
 
+	// Check if already following this user
+	database := db.GetDB()
+	err, existingFollow := database.ReadFollowByAccountIds(localAccount.Id, remoteActor.Id)
+	if err != sql.ErrNoRows && err != nil {
+		// Database error (not "not found")
+		log.Printf("SendFollow: Error checking existing follow: %v", err)
+		return fmt.Errorf("failed to check existing follow: %w", err)
+	}
+	if existingFollow != nil {
+		// Already following
+		log.Printf("SendFollow: User %s is already following %s@%s", localAccount.Username, remoteActor.Username, remoteActor.Domain)
+		return fmt.Errorf("already following %s@%s", remoteActor.Username, remoteActor.Domain)
+	}
+
+	// Not following yet, create the follow
 	followID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 
@@ -330,7 +346,6 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 	}
 
 	// Store follow relationship as pending
-	database := db.GetDB()
 	followRecord := &domain.Follow{
 		Id:              uuid.New(),
 		AccountId:       localAccount.Id,
@@ -346,6 +361,29 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 
 	// Send Follow activity
 	return SendActivity(follow, remoteActor.InboxURI, localAccount, conf)
+}
+
+// SendUndo sends an Undo activity for a Follow (i.e., unfollow)
+func SendUndo(localAccount *domain.Account, follow *domain.Follow, remoteActor *domain.RemoteAccount, conf *util.AppConfig) error {
+	undoID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	// Create Undo activity with embedded Follow object
+	undo := map[string]interface{}{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]interface{}{
+			"id":     follow.URI,
+			"type":   "Follow",
+			"actor":  actorURI,
+			"object": remoteActor.ActorURI,
+		},
+	}
+
+	log.Printf("Outbox: Sending Undo (unfollow) from %s to %s@%s", localAccount.Username, remoteActor.Username, remoteActor.Domain)
+	return SendActivity(undo, remoteActor.InboxURI, localAccount, conf)
 }
 
 // mustMarshal marshals v to JSON, panicking on error

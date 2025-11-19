@@ -666,7 +666,7 @@ const (
 	sqlSelectLocalFollowsByAccountId = `SELECT id, account_id, target_account_id, uri, accepted, created_at FROM follows WHERE account_id = ? AND is_local = 1 AND accepted = 1`
 	sqlDeleteLocalFollow             = `DELETE FROM follows WHERE account_id = ? AND target_account_id = ? AND is_local = 1`
 	sqlCheckLocalFollow              = `SELECT COUNT(*) FROM follows WHERE account_id = ? AND target_account_id = ? AND is_local = 1`
-	sqlSelectFollowByAccountIds      = `SELECT id, account_id, target_account_id, uri, accepted, created_at FROM follows WHERE account_id = ? AND target_account_id = ? AND accepted = 1`
+	sqlSelectFollowByAccountIds      = `SELECT id, account_id, target_account_id, uri, accepted, created_at FROM follows WHERE account_id = ? AND target_account_id = ?`
 )
 
 func (db *DB) CreateFollow(follow *domain.Follow) error {
@@ -1411,5 +1411,160 @@ func (db *DB) MigrateKeysToPKCS8() error {
 		return fmt.Errorf("migration completed with %d errors", errorCount)
 	}
 
+	return nil
+}
+
+// MigrateDuplicateFollows removes duplicate follow relationships and adds UNIQUE constraint
+// This is a one-time migration to fix the issue where multiple Follow activities
+// from the same actor could create duplicate entries
+func (db *DB) MigrateDuplicateFollows() error {
+	log.Println("Starting duplicate follows cleanup migration...")
+
+	// First, check if we already have the UNIQUE constraint
+	// If the constraint exists, we can skip this migration
+	rows, err := db.db.Query(`SELECT sql FROM sqlite_master WHERE type='table' AND name='follows'`)
+	if err != nil {
+		return fmt.Errorf("failed to check table schema: %w", err)
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var sql string
+		if err := rows.Scan(&sql); err != nil {
+			return fmt.Errorf("failed to read table schema: %w", err)
+		}
+		// Check if UNIQUE constraint already exists
+		if strings.Contains(sql, "UNIQUE") && strings.Contains(sql, "account_id") && strings.Contains(sql, "target_account_id") {
+			log.Println("UNIQUE constraint already exists on follows table, skipping migration")
+			return nil
+		}
+	}
+
+	// Find and count duplicate follows
+	duplicateQuery := `
+		SELECT account_id, target_account_id, COUNT(*) as count
+		FROM follows
+		GROUP BY account_id, target_account_id
+		HAVING count > 1
+	`
+	dupRows, err := db.db.Query(duplicateQuery)
+	if err != nil {
+		return fmt.Errorf("failed to query duplicates: %w", err)
+	}
+
+	type duplicatePair struct {
+		accountId       string
+		targetAccountId string
+		count           int
+	}
+	var duplicates []duplicatePair
+
+	for dupRows.Next() {
+		var dp duplicatePair
+		if err := dupRows.Scan(&dp.accountId, &dp.targetAccountId, &dp.count); err != nil {
+			log.Printf("Failed to scan duplicate row: %v", err)
+			continue
+		}
+		duplicates = append(duplicates, dp)
+	}
+	dupRows.Close()
+
+	if len(duplicates) == 0 {
+		log.Println("No duplicate follows found")
+	} else {
+		log.Printf("Found %d pairs with duplicate follows", len(duplicates))
+
+		// Remove duplicates, keeping only the oldest one (first created)
+		removedCount := 0
+		for _, dp := range duplicates {
+			// Keep the oldest follow (MIN(created_at)), delete the rest
+			deleteQuery := `
+				DELETE FROM follows
+				WHERE account_id = ? AND target_account_id = ?
+				AND id NOT IN (
+					SELECT id FROM follows
+					WHERE account_id = ? AND target_account_id = ?
+					ORDER BY created_at ASC
+					LIMIT 1
+				)
+			`
+			result, err := db.db.Exec(deleteQuery, dp.accountId, dp.targetAccountId, dp.accountId, dp.targetAccountId)
+			if err != nil {
+				log.Printf("Failed to delete duplicates for %s -> %s: %v", dp.accountId, dp.targetAccountId, err)
+				continue
+			}
+
+			affected, _ := result.RowsAffected()
+			removedCount += int(affected)
+			log.Printf("Removed %d duplicate(s) for relationship %s -> %s", affected, dp.accountId, dp.targetAccountId)
+		}
+
+		log.Printf("Duplicate cleanup complete: removed %d duplicate follows", removedCount)
+	}
+
+	// Now add the UNIQUE constraint by recreating the table
+	log.Println("Adding UNIQUE constraint to follows table...")
+
+	// SQLite doesn't support ALTER TABLE to add constraints, so we need to recreate the table
+	// https://www.sqlite.org/lang_altertable.html
+	err = db.wrapTransaction(func(tx *sql.Tx) error {
+		// Create new table with UNIQUE constraint
+		_, err := tx.Exec(`
+			CREATE TABLE follows_new (
+				id TEXT NOT NULL PRIMARY KEY,
+				account_id TEXT NOT NULL,
+				target_account_id TEXT NOT NULL,
+				uri TEXT NOT NULL,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				accepted INTEGER DEFAULT 0,
+				is_local INTEGER DEFAULT 0,
+				UNIQUE(account_id, target_account_id)
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create new follows table: %w", err)
+		}
+
+		// Copy data from old table to new table
+		_, err = tx.Exec(`
+			INSERT INTO follows_new (id, account_id, target_account_id, uri, created_at, accepted, is_local)
+			SELECT id, account_id, target_account_id, uri, created_at, accepted,
+				   COALESCE(is_local, 0) as is_local
+			FROM follows
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to copy data to new table: %w", err)
+		}
+
+		// Drop old table
+		_, err = tx.Exec(`DROP TABLE follows`)
+		if err != nil {
+			return fmt.Errorf("failed to drop old table: %w", err)
+		}
+
+		// Rename new table to old name
+		_, err = tx.Exec(`ALTER TABLE follows_new RENAME TO follows`)
+		if err != nil {
+			return fmt.Errorf("failed to rename new table: %w", err)
+		}
+
+		// Recreate indices
+		_, err = tx.Exec(`
+			CREATE INDEX IF NOT EXISTS idx_follows_account_id ON follows(account_id);
+			CREATE INDEX IF NOT EXISTS idx_follows_target_account_id ON follows(target_account_id);
+			CREATE INDEX IF NOT EXISTS idx_follows_uri ON follows(uri);
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to recreate indices: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to add UNIQUE constraint: %w", err)
+	}
+
+	log.Println("Successfully added UNIQUE constraint to follows table")
 	return nil
 }

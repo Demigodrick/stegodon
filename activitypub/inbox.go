@@ -184,21 +184,28 @@ func handleFollowActivity(body []byte, username string, remoteActor *domain.Remo
 		return fmt.Errorf("local account not found: %w", err)
 	}
 
-	// Create follow relationship
-	// When remote actor follows local account:
-	// - AccountId = remote actor (the follower)
-	// - TargetAccountId = local account (being followed)
-	followRecord := &domain.Follow{
-		Id:              uuid.New(),
-		AccountId:       remoteActor.Id,  // The follower
-		TargetAccountId: localAccount.Id, // The target being followed
-		URI:             follow.ID,
-		Accepted:        true, // Auto-accept for now
-		CreatedAt:       time.Now(),
-	}
+	// Check if follow relationship already exists
+	err, existingFollow := database.ReadFollowByAccountIds(remoteActor.Id, localAccount.Id)
+	if err == nil && existingFollow != nil {
+		// Follow already exists, just log and continue to send Accept
+		log.Printf("Inbox: Follow relationship from %s@%s already exists, skipping duplicate", remoteActor.Username, remoteActor.Domain)
+	} else {
+		// Create follow relationship
+		// When remote actor follows local account:
+		// - AccountId = remote actor (the follower)
+		// - TargetAccountId = local account (being followed)
+		followRecord := &domain.Follow{
+			Id:              uuid.New(),
+			AccountId:       remoteActor.Id,  // The follower
+			TargetAccountId: localAccount.Id, // The target being followed
+			URI:             follow.ID,
+			Accepted:        true, // Auto-accept for now
+			CreatedAt:       time.Now(),
+		}
 
-	if err := database.CreateFollow(followRecord); err != nil {
-		return fmt.Errorf("failed to create follow: %w", err)
+		if err := database.CreateFollow(followRecord); err != nil {
+			return fmt.Errorf("failed to create follow: %w", err)
+		}
 	}
 
 	// Send Accept activity

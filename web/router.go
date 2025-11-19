@@ -258,15 +258,117 @@ func Router(conf *util.AppConfig) error {
 		})
 
 		g.GET("/users/:actor/followers", func(c *gin.Context) {
-			log.Println("Get followers..")
+			actor := c.Param("actor")
+			page := c.Query("page")
+			log.Printf("Get followers for %s (page=%s)", actor, page)
 			c.Header("Content-Type", "application/activity+json; charset=utf-8")
-			c.Render(200, render.String{Format: "{}"})
+
+			// Get the account
+			database := db.GetDB()
+			err, account := database.ReadAccByUsername(actor)
+			if err != nil {
+				log.Printf("Failed to get account %s: %v", actor, err)
+				c.Render(404, render.String{Format: "{}"})
+				return
+			}
+
+			// Get followers
+			err, followers := database.ReadFollowersByAccountId(account.Id)
+			if err != nil {
+				log.Printf("Failed to get followers: %v", err)
+				c.Render(200, render.String{Format: GetFollowersCollection(actor, conf, []string{})})
+				return
+			}
+
+			// Build list of follower URIs
+			followerURIs := []string{}
+			if followers != nil {
+				for _, follower := range *followers {
+					// Get the remote account
+					err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
+					if err == nil && remoteActor != nil {
+						followerURIs = append(followerURIs, remoteActor.ActorURI)
+						log.Printf("Added remote follower: %s", remoteActor.ActorURI)
+					} else {
+						// Check if it's a local account
+						err, localAcc := database.ReadAccById(follower.AccountId)
+						if err == nil && localAcc != nil {
+							localURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAcc.Username)
+							followerURIs = append(followerURIs, localURI)
+							log.Printf("Added local follower: %s", localURI)
+						} else {
+							log.Printf("Could not find account for follower AccountId=%s", follower.AccountId)
+						}
+					}
+				}
+			}
+
+			log.Printf("Returning %d followers for %s", len(followerURIs), actor)
+
+			// If page parameter is present, return a page
+			if page != "" {
+				c.Render(200, render.String{Format: GetFollowersPage(actor, conf, followerURIs, 1)})
+			} else {
+				// Return the collection with first link
+				c.Render(200, render.String{Format: GetFollowersCollection(actor, conf, followerURIs)})
+			}
 		})
 
 		g.GET("/users/:actor/following", func(c *gin.Context) {
-			log.Println("Get followers..")
+			actor := c.Param("actor")
+			page := c.Query("page")
+			log.Printf("Get following for %s (page=%s)", actor, page)
 			c.Header("Content-Type", "application/activity+json; charset=utf-8")
-			c.Render(200, render.String{Format: "{}"})
+
+			// Get the account
+			database := db.GetDB()
+			err, account := database.ReadAccByUsername(actor)
+			if err != nil {
+				log.Printf("Failed to get account %s: %v", actor, err)
+				c.Render(404, render.String{Format: "{}"})
+				return
+			}
+
+			// Get following
+			err, following := database.ReadFollowingByAccountId(account.Id)
+			if err != nil {
+				log.Printf("Failed to get following: %v", err)
+				c.Render(200, render.String{Format: GetFollowingCollection(actor, conf, []string{})})
+				return
+			}
+
+			// Build list of following URIs
+			followingURIs := []string{}
+			if following != nil {
+				for _, follow := range *following {
+					// Get the remote account
+					err, remoteActor := database.ReadRemoteAccountById(follow.TargetAccountId)
+					if err == nil && remoteActor != nil {
+						followingURIs = append(followingURIs, remoteActor.ActorURI)
+						log.Printf("Added remote following: %s", remoteActor.ActorURI)
+					} else {
+						// Check if it's a local account
+						err, localAcc := database.ReadAccById(follow.TargetAccountId)
+						if err == nil && localAcc != nil {
+							localURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAcc.Username)
+							followingURIs = append(followingURIs, localURI)
+							log.Printf("Added local following: %s", localURI)
+						} else {
+							log.Printf("Could not find account for following TargetAccountId=%s", follow.TargetAccountId)
+						}
+					}
+				}
+			}
+
+			log.Printf("Returning %d following for %s", len(followingURIs), actor)
+
+			// If page parameter is present, return a page
+			if page != "" {
+				c.Render(200, render.String{Format: GetFollowingPage(actor, conf, followingURIs, 1)})
+			} else {
+				// Return the collection with first link
+				c.Render(200, render.String{Format: GetFollowingCollection(actor, conf, followingURIs)})
+			}
 		})
 
 		g.GET("/.well-known/webfinger", func(c *gin.Context) {

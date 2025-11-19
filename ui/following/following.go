@@ -7,9 +7,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/deemkeen/stegodon/activitypub"
 	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/ui/common"
+	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 	"log"
 )
@@ -111,14 +113,44 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 
-				// Delete the follow
+				// Delete the follow and send Undo activity for remote follows
 				go func() {
 					var err error
 					if selectedFollow.IsLocal {
-						// For local follows, delete by account IDs
+						// For local follows, just delete by account IDs
 						err = database.DeleteFollowByAccountIds(m.AccountId, selectedFollow.TargetAccountId)
 					} else {
-						// For remote follows, delete by URI
+						// For remote follows, send Undo activity first, then delete
+						// Get local account
+						localAccErr, localAccount := database.ReadAccById(m.AccountId)
+						if localAccErr != nil {
+							log.Printf("Unfollow failed: failed to get local account: %v", localAccErr)
+							return
+						}
+
+						// Get remote account
+						remoteAccErr, remoteAccount := database.ReadRemoteAccountById(selectedFollow.TargetAccountId)
+						if remoteAccErr != nil {
+							log.Printf("Unfollow failed: failed to get remote account: %v", remoteAccErr)
+							return
+						}
+
+						// Get config for SendUndo
+						conf, confErr := util.ReadConf()
+						if confErr != nil {
+							log.Printf("Unfollow failed: failed to read config: %v", confErr)
+							return
+						}
+
+						// Send Undo activity to remote server
+						if conf.Conf.WithAp {
+							if undoErr := activitypub.SendUndo(localAccount, &selectedFollow, remoteAccount, conf); undoErr != nil {
+								log.Printf("Warning: Failed to send Undo activity: %v", undoErr)
+								// Continue with local delete even if remote notification fails
+							}
+						}
+
+						// Delete from local database
 						err = database.DeleteFollowByURI(selectedFollow.URI)
 					}
 					if err != nil {

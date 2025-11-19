@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -1216,6 +1217,203 @@ func TestUpdateLoginById_CaseInsensitiveUsername(t *testing.T) {
 	if err != nil {
 		// Should fail with constraint error or our custom error
 		t.Logf("Case-insensitive check result: %v", err)
+	}
+}
+
+// Tests for duplicate follow prevention
+
+func TestReadFollowByAccountIds(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test accounts
+	followerId := uuid.New()
+	targetId := uuid.New()
+	createTestAccount(t, db, followerId, "alice", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, targetId, "bob", "pubkey2", "webpub2", "webpriv2")
+
+	// Create a follow relationship
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       followerId,
+		TargetAccountId: targetId,
+		URI:             "https://example.com/follows/123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	err := db.CreateFollow(follow)
+	if err != nil {
+		t.Fatalf("Failed to create follow: %v", err)
+	}
+
+	// Test: Read existing follow relationship
+	err, existingFollow := db.ReadFollowByAccountIds(followerId, targetId)
+	if err != nil {
+		t.Fatalf("ReadFollowByAccountIds failed: %v", err)
+	}
+	if existingFollow == nil {
+		t.Fatal("Expected to find follow relationship but got nil")
+	}
+	if existingFollow.AccountId != followerId {
+		t.Errorf("Expected follower ID %s, got %s", followerId, existingFollow.AccountId)
+	}
+	if existingFollow.TargetAccountId != targetId {
+		t.Errorf("Expected target ID %s, got %s", targetId, existingFollow.TargetAccountId)
+	}
+
+	// Test: Read non-existent follow relationship
+	nonExistentId := uuid.New()
+	err, notFound := db.ReadFollowByAccountIds(followerId, nonExistentId)
+	if err != sql.ErrNoRows {
+		t.Errorf("Expected sql.ErrNoRows for non-existent follow, got: %v", err)
+	}
+	if notFound != nil {
+		t.Error("Expected nil for non-existent follow relationship")
+	}
+
+	// Test: Read pending (not yet accepted) follow relationship
+	pendingTargetId := uuid.New()
+	createTestAccount(t, db, pendingTargetId, "charlie", "pubkey3", "webpub3", "webpriv3")
+	pendingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       followerId,
+		TargetAccountId: pendingTargetId,
+		URI:             "https://example.com/follows/456",
+		Accepted:        false, // Pending, not yet accepted
+		CreatedAt:       time.Now(),
+	}
+	err = db.CreateFollow(pendingFollow)
+	if err != nil {
+		t.Fatalf("Failed to create pending follow: %v", err)
+	}
+
+	// Should find pending follow (even though accepted = false)
+	err, foundPending := db.ReadFollowByAccountIds(followerId, pendingTargetId)
+	if err != nil {
+		t.Fatalf("ReadFollowByAccountIds failed to find pending follow: %v", err)
+	}
+	if foundPending == nil {
+		t.Fatal("Expected to find pending follow relationship but got nil")
+	}
+	if foundPending.Accepted {
+		t.Error("Expected pending follow to have Accepted=false")
+	}
+}
+
+func TestCreateFollow_DuplicatePrevention(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test accounts
+	followerId := uuid.New()
+	targetId := uuid.New()
+	createTestAccount(t, db, followerId, "alice", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, targetId, "bob", "pubkey2", "webpub2", "webpriv2")
+
+	// Create first follow relationship (pending)
+	follow1 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       followerId,
+		TargetAccountId: targetId,
+		URI:             "https://example.com/follows/123",
+		Accepted:        false, // Pending follow
+		CreatedAt:       time.Now(),
+	}
+	err := db.CreateFollow(follow1)
+	if err != nil {
+		t.Fatalf("Failed to create first follow: %v", err)
+	}
+
+	// Verify ReadFollowByAccountIds can detect the pending follow
+	err, existingFollow := db.ReadFollowByAccountIds(followerId, targetId)
+	if err != nil {
+		t.Fatalf("ReadFollowByAccountIds should find pending follow: %v", err)
+	}
+	if existingFollow == nil {
+		t.Fatal("Pending follow should be found by ReadFollowByAccountIds")
+	}
+	if existingFollow.Accepted {
+		t.Error("Expected pending follow to have Accepted=false")
+	}
+
+	// Test: Attempting to create duplicate follow should fail with UNIQUE constraint error
+	follow2 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       followerId,
+		TargetAccountId: targetId,
+		URI:             "https://example.com/follows/456",
+		Accepted:        false,
+		CreatedAt:       time.Now(),
+	}
+	err = db.CreateFollow(follow2)
+	if err == nil {
+		t.Fatal("Expected UNIQUE constraint error when creating duplicate follow")
+	}
+	if !strings.Contains(err.Error(), "UNIQUE") && !strings.Contains(err.Error(), "constraint") {
+		t.Errorf("Expected UNIQUE constraint error, got: %v", err)
+	}
+}
+
+func TestFollowersListNoDuplicates(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test accounts
+	follower1Id := uuid.New()
+	follower2Id := uuid.New()
+	targetId := uuid.New()
+	createTestAccount(t, db, follower1Id, "alice", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, follower2Id, "charlie", "pubkey2", "webpub2", "webpriv2")
+	createTestAccount(t, db, targetId, "bob", "pubkey3", "webpub3", "webpriv3")
+
+	// Create two different followers for the same target
+	follow1 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       follower1Id,
+		TargetAccountId: targetId,
+		URI:             "https://example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	err := db.CreateFollow(follow1)
+	if err != nil {
+		t.Fatalf("Failed to create follow1: %v", err)
+	}
+
+	follow2 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       follower2Id,
+		TargetAccountId: targetId,
+		URI:             "https://example.com/follows/2",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	err = db.CreateFollow(follow2)
+	if err != nil {
+		t.Fatalf("Failed to create follow2: %v", err)
+	}
+
+	// Read followers
+	err, followers := db.ReadFollowersByAccountId(targetId)
+	if err != nil {
+		t.Fatalf("Failed to read followers: %v", err)
+	}
+	if followers == nil {
+		t.Fatal("Followers list should not be nil")
+	}
+
+	// Should have exactly 2 followers
+	if len(*followers) != 2 {
+		t.Errorf("Expected 2 followers, got %d", len(*followers))
+	}
+
+	// Verify no duplicates by checking unique AccountIds
+	seenFollowers := make(map[uuid.UUID]int)
+	for _, f := range *followers {
+		seenFollowers[f.AccountId]++
+		if seenFollowers[f.AccountId] > 1 {
+			t.Errorf("Duplicate follower detected: %s appears %d times", f.AccountId, seenFollowers[f.AccountId])
+		}
 	}
 }
 
