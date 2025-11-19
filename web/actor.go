@@ -41,6 +41,9 @@ func GetActor(actor string, conf *util.AppConfig) (error, string) {
 	summary := strings.Replace(acc.Summary, "\"", "\\\"", -1)
 	summary = strings.Replace(summary, "\n", "\\n", -1)
 
+	// Use default logo for all users
+	logoURL := fmt.Sprintf("https://%s/static/stegologo.png", conf.Conf.SslDomain)
+
 	return nil, fmt.Sprintf(
 		`{
 					"@context": [
@@ -60,6 +63,11 @@ func GetActor(actor string, conf *util.AppConfig) (error, string) {
 					"url": "%s",
   					"manuallyApprovesFollowers": false,
 					"discoverable": true,
+					"icon": {
+						"type": "Image",
+						"mediaType": "image/png",
+						"url": "%s"
+					},
   					"endpoints": {
     					"sharedInbox": "%s"
   					},
@@ -76,6 +84,7 @@ func GetActor(actor string, conf *util.AppConfig) (error, string) {
 		getIRI(conf.Conf.SslDomain, username, followers),
 		getIRI(conf.Conf.SslDomain, username, following),
 		getIRI(conf.Conf.SslDomain, username, id),
+		logoURL,
 		getIRI(conf.Conf.SslDomain, username, sharedInbox),
 		getIRI(conf.Conf.SslDomain, username, id),
 		getIRI(conf.Conf.SslDomain, username, id), pubKey)

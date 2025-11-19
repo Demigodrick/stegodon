@@ -66,6 +66,9 @@ STEGODON_SSLDOMAIN=yourdomain.com # Your public domain (required for ActivityPub
 # Access control
 STEGODON_SINGLE=true              # Single-user mode
 STEGODON_CLOSED=true              # Closed registration
+
+# Customization
+STEGODON_NODE_DESCRIPTION="My personal microblog server"  # NodeInfo description
 ```
 
 **File locations:**

@@ -76,6 +76,9 @@ const (
 	sqlSelectAllAccounts        = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE first_time_login = 0 ORDER BY username ASC`
 	sqlSelectAllAccountsAdmin   = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts ORDER BY created_at ASC`
 	sqlCountAccounts            = `SELECT COUNT(*) FROM accounts`
+	sqlCountLocalPosts          = `SELECT COUNT(*) FROM notes`
+	sqlCountActiveUsersMonth    = `SELECT COUNT(DISTINCT user_id) FROM notes WHERE created_at >= datetime('now', '-30 days')`
+	sqlCountActiveUsersHalfYear = `SELECT COUNT(DISTINCT user_id) FROM notes WHERE created_at >= datetime('now', '-180 days')`
 	sqlSelectLocalTimelineNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at FROM notes
 														INNER JOIN accounts ON accounts.id = notes.user_id
 														ORDER BY notes.created_at DESC LIMIT ?`
@@ -1071,6 +1074,36 @@ func (db *DB) ReadAllAccountsAdmin() (error, *[]domain.Account) {
 func (db *DB) CountAccounts() (int, error) {
 	var count int
 	err := db.db.QueryRow(sqlCountAccounts).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountLocalPosts returns the total number of local posts (notes) in the database
+func (db *DB) CountLocalPosts() (int, error) {
+	var count int
+	err := db.db.QueryRow(sqlCountLocalPosts).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountActiveUsersMonth returns the number of users who posted in the last 30 days
+func (db *DB) CountActiveUsersMonth() (int, error) {
+	var count int
+	err := db.db.QueryRow(sqlCountActiveUsersMonth).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountActiveUsersHalfYear returns the number of users who posted in the last 180 days
+func (db *DB) CountActiveUsersHalfYear() (int, error) {
+	var count int
+	err := db.db.QueryRow(sqlCountActiveUsersHalfYear).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

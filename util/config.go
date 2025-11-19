@@ -17,13 +17,14 @@ var embeddedConfig []byte
 
 type AppConfig struct {
 	Conf struct {
-		Host      string
-		SshPort   int    `yaml:"sshPort"`
-		HttpPort  int    `yaml:"httpPort"`
-		SslDomain string `yaml:"sslDomain"`
-		WithAp    bool   `yaml:"withAp"`
-		Single    bool   `yaml:"single"`
-		Closed    bool   `yaml:"closed"`
+		Host            string
+		SshPort         int    `yaml:"sshPort"`
+		HttpPort        int    `yaml:"httpPort"`
+		SslDomain       string `yaml:"sslDomain"`
+		WithAp          bool   `yaml:"withAp"`
+		Single          bool   `yaml:"single"`
+		Closed          bool   `yaml:"closed"`
+		NodeDescription string `yaml:"nodeDescription"`
 	}
 }
 
@@ -69,6 +70,7 @@ func ReadConf() (*AppConfig, error) {
 	envWithAp := os.Getenv("STEGODON_WITH_AP")
 	envSingle := os.Getenv("STEGODON_SINGLE")
 	envClosed := os.Getenv("STEGODON_CLOSED")
+	envNodeDescription := os.Getenv("STEGODON_NODE_DESCRIPTION")
 
 	if envHost != "" {
 		c.Conf.Host = envHost
@@ -104,6 +106,10 @@ func ReadConf() (*AppConfig, error) {
 
 	if envClosed == "true" {
 		c.Conf.Closed = true
+	}
+
+	if envNodeDescription != "" {
+		c.Conf.NodeDescription = envNodeDescription
 	}
 
 	return c, nil

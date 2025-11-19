@@ -67,6 +67,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if strings.Contains(errMsg, "already following") {
 				m.Status = fmt.Sprintf("ℹ Already following %s", msg.username)
 				m.Error = ""
+			} else if strings.Contains(errMsg, "self-follow not allowed") {
+				m.Status = "ℹ Self-follow not allowed on stegodon for now"
+				m.Error = ""
 			} else {
 				m.Error = fmt.Sprintf("Failed: %v", msg.err)
 				m.Status = ""

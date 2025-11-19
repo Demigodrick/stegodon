@@ -319,6 +319,12 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 		return fmt.Errorf("failed to fetch remote actor: %w", err)
 	}
 
+	// Check if trying to follow yourself
+	if remoteActor.Domain == conf.Conf.SslDomain && remoteActor.Username == localAccount.Username {
+		log.Printf("SendFollow: User %s attempted to follow themselves", localAccount.Username)
+		return fmt.Errorf("self-follow not allowed on stegodon for now")
+	}
+
 	// Check if already following this user
 	database := db.GetDB()
 	err, existingFollow := database.ReadFollowByAccountIds(localAccount.Id, remoteActor.Id)

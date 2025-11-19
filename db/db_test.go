@@ -1417,3 +1417,242 @@ func TestFollowersListNoDuplicates(t *testing.T) {
 	}
 }
 
+func TestCountLocalPosts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Test: Empty database
+	count, err := db.CountLocalPosts()
+	if err != nil {
+		t.Fatalf("CountLocalPosts failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 posts in empty database, got %d", count)
+	}
+
+	// Test: Add user and notes
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "user1", "pubkey1", "webpub1", "webpriv1")
+
+	// Add first note
+	_, err = db.CreateNote(userId, "First note")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountLocalPosts()
+	if err != nil {
+		t.Fatalf("CountLocalPosts failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 post, got %d", count)
+	}
+
+	// Add second note
+	_, err = db.CreateNote(userId, "Second note")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountLocalPosts()
+	if err != nil {
+		t.Fatalf("CountLocalPosts failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 posts, got %d", count)
+	}
+
+	// Add third note from same user
+	_, err = db.CreateNote(userId, "Third note")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountLocalPosts()
+	if err != nil {
+		t.Fatalf("CountLocalPosts failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 posts, got %d", count)
+	}
+}
+
+func TestCountActiveUsersMonth(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Test: Empty database
+	count, err := db.CountActiveUsersMonth()
+	if err != nil {
+		t.Fatalf("CountActiveUsersMonth failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 active users in empty database, got %d", count)
+	}
+
+	// Test: Add users and notes
+	userId1 := uuid.New()
+	userId2 := uuid.New()
+	createTestAccount(t, db, userId1, "user1", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, userId2, "user2", "pubkey2", "webpub2", "webpriv2")
+
+	// User 1 posts (should be counted as active)
+	_, err = db.CreateNote(userId1, "Note from user1")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersMonth()
+	if err != nil {
+		t.Fatalf("CountActiveUsersMonth failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 active user, got %d", count)
+	}
+
+	// User 2 posts (should be counted as active)
+	_, err = db.CreateNote(userId2, "Note from user2")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersMonth()
+	if err != nil {
+		t.Fatalf("CountActiveUsersMonth failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 active users, got %d", count)
+	}
+
+	// User 1 posts again (should still be 2 unique users)
+	_, err = db.CreateNote(userId1, "Another note from user1")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersMonth()
+	if err != nil {
+		t.Fatalf("CountActiveUsersMonth failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 active users (should count distinct users), got %d", count)
+	}
+}
+
+func TestCountActiveUsersHalfYear(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Test: Empty database
+	count, err := db.CountActiveUsersHalfYear()
+	if err != nil {
+		t.Fatalf("CountActiveUsersHalfYear failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 active users in empty database, got %d", count)
+	}
+
+	// Test: Add users and notes
+	userId1 := uuid.New()
+	userId2 := uuid.New()
+	userId3 := uuid.New()
+	createTestAccount(t, db, userId1, "user1", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, userId2, "user2", "pubkey2", "webpub2", "webpriv2")
+	createTestAccount(t, db, userId3, "user3", "pubkey3", "webpub3", "webpriv3")
+
+	// User 1 posts
+	_, err = db.CreateNote(userId1, "Note from user1")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersHalfYear()
+	if err != nil {
+		t.Fatalf("CountActiveUsersHalfYear failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 active user, got %d", count)
+	}
+
+	// User 2 posts
+	_, err = db.CreateNote(userId2, "Note from user2")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersHalfYear()
+	if err != nil {
+		t.Fatalf("CountActiveUsersHalfYear failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 active users, got %d", count)
+	}
+
+	// User 3 posts
+	_, err = db.CreateNote(userId3, "Note from user3")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	count, err = db.CountActiveUsersHalfYear()
+	if err != nil {
+		t.Fatalf("CountActiveUsersHalfYear failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 active users, got %d", count)
+	}
+}
+
+func TestCountActiveUsers_Consistency(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create users and have them post
+	userId1 := uuid.New()
+	userId2 := uuid.New()
+	createTestAccount(t, db, userId1, "user1", "pubkey1", "webpub1", "webpriv1")
+	createTestAccount(t, db, userId2, "user2", "pubkey2", "webpub2", "webpriv2")
+
+	_, err := db.CreateNote(userId1, "Note 1")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+	_, err = db.CreateNote(userId2, "Note 2")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Get all counts
+	activeMonth, err := db.CountActiveUsersMonth()
+	if err != nil {
+		t.Fatalf("CountActiveUsersMonth failed: %v", err)
+	}
+
+	activeHalfYear, err := db.CountActiveUsersHalfYear()
+	if err != nil {
+		t.Fatalf("CountActiveUsersHalfYear failed: %v", err)
+	}
+
+	totalUsers, err := db.CountAccounts()
+	if err != nil {
+		t.Fatalf("CountAccounts failed: %v", err)
+	}
+
+	// Verify logical consistency
+	// ActiveMonth should not exceed ActiveHalfYear
+	if activeMonth > activeHalfYear {
+		t.Errorf("ActiveMonth (%d) should not exceed ActiveHalfYear (%d)", activeMonth, activeHalfYear)
+	}
+
+	// ActiveHalfYear should not exceed TotalUsers
+	if activeHalfYear > totalUsers {
+		t.Errorf("ActiveHalfYear (%d) should not exceed TotalUsers (%d)", activeHalfYear, totalUsers)
+	}
+
+	// ActiveMonth should not exceed TotalUsers
+	if activeMonth > totalUsers {
+		t.Errorf("ActiveMonth (%d) should not exceed TotalUsers (%d)", activeMonth, totalUsers)
+	}
+}
+
+

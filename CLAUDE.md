@@ -61,6 +61,7 @@ Configuration is managed via environment variables:
 - `STEGODON_WITH_AP` - Enable ActivityPub functionality (default: false)
 - `STEGODON_SINGLE` - Enable single-user mode (default: false)
 - `STEGODON_CLOSED` - Close registration for new users (default: false)
+- `STEGODON_NODE_DESCRIPTION` - Custom description for NodeInfo (default: "A SSH-first federated microblog")
 
 **File Locations** (as of single-binary distribution):
 - Configuration file: Checked in order:
@@ -89,6 +90,13 @@ Configuration is managed via environment variables:
 - SSH connection attempts from new users are rejected with the message: "Registration is closed. Please contact the administrator."
 - Existing users can continue to log in normally
 - Useful for invite-only or maintenance periods
+
+**For NodeInfo customization**:
+- Set `STEGODON_NODE_DESCRIPTION` to customize the instance description shown in NodeInfo
+- This description is visible in fediverse server lists and discovery tools
+- Example: `STEGODON_NODE_DESCRIPTION="My personal microblog server"`
+- If not set, defaults to: "A SSH-first federated microblog"
+- NodeInfo is available at `/.well-known/nodeinfo` and `/nodeinfo/2.0` (when `STEGODON_WITH_AP=true`)
 
 ## Architecture
 

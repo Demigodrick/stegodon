@@ -368,3 +368,4 @@ func TestGetFollowingPage(t *testing.T) {
 		}
 	}
 }
+

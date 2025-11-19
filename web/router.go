@@ -23,6 +23,9 @@ import (
 //go:embed templates/*.html
 var embeddedTemplates embed.FS
 
+//go:embed stegologo.png
+var embeddedLogo []byte
+
 func Router(conf *util.AppConfig) error {
 	log.Printf("Starting RSS Feed server on %s:%d", conf.Conf.Host, conf.Conf.HttpPort)
 	g := gin.Default()
@@ -38,6 +41,13 @@ func Router(conf *util.AppConfig) error {
 		return fmt.Errorf("failed to parse embedded templates: %w", err)
 	}
 	g.SetHTMLTemplate(tmpl)
+
+	// Serve static logo file
+	g.GET("/static/stegologo.png", func(c *gin.Context) {
+		c.Header("Content-Type", "image/png")
+		c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+		c.Data(200, "image/png", embeddedLogo)
+	})
 
 	// Web UI routes
 	g.GET("/", func(c *gin.Context) {
@@ -387,6 +397,17 @@ func Router(conf *util.AppConfig) error {
 					c.Render(200, render.String{Format: resp})
 				}
 			}
+		})
+
+		// NodeInfo endpoints for server discovery and statistics
+		g.GET("/.well-known/nodeinfo", func(c *gin.Context) {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.Render(200, render.String{Format: GetWellKnownNodeInfo(conf)})
+		})
+
+		g.GET("/nodeinfo/2.0", func(c *gin.Context) {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.Render(200, render.String{Format: GetNodeInfo20(conf)})
 		})
 
 	}

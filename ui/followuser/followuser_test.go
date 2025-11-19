@@ -199,3 +199,187 @@ func TestClearStatusMsg(t *testing.T) {
 		t.Errorf("Expected TextInput to be cleared, got: %s", updatedModel.TextInput.Value())
 	}
 }
+
+func TestFollowResultMsg_SelfFollow(t *testing.T) {
+	// Create a model
+	accountId := uuid.New()
+	model := InitialModel(accountId)
+
+	// Simulate receiving a self-follow error
+	selfFollowErr := fmt.Errorf("self-follow not allowed on stegodon for now")
+	msg := followResultMsg{
+		username: "alice@stegodon.example",
+		err:      selfFollowErr,
+	}
+
+	// Update model with the message
+	updatedModel, _ := model.Update(msg)
+
+	// Verify that Status is set (not Error) - this is informational
+	if updatedModel.Status == "" {
+		t.Error("Expected Status to be set for self-follow error")
+	}
+	if updatedModel.Error != "" {
+		t.Error("Expected Error to be empty for self-follow error")
+	}
+
+	// Verify the status message contains the informational icon
+	if !strings.Contains(updatedModel.Status, "ℹ") {
+		t.Error("Expected Status to contain informational icon (ℹ)")
+	}
+	if !strings.Contains(updatedModel.Status, "Self-follow") {
+		t.Error("Expected Status to contain 'Self-follow'")
+	}
+	if !strings.Contains(updatedModel.Status, "not allowed") {
+		t.Error("Expected Status to contain 'not allowed'")
+	}
+	if !strings.Contains(updatedModel.Status, "stegodon") {
+		t.Error("Expected Status to contain 'stegodon'")
+	}
+}
+
+func TestFollowResultMsg_SelfFollowVariations(t *testing.T) {
+	// Test different variations of self-follow error messages
+	tests := []struct {
+		name     string
+		errMsg   string
+		wantInfo bool // Should be treated as informational (Status) vs error (Error)
+	}{
+		{
+			name:     "exact self-follow message",
+			errMsg:   "self-follow not allowed on stegodon for now",
+			wantInfo: true,
+		},
+		{
+			name:     "capitalized Self-follow",
+			errMsg:   "Self-follow not allowed on stegodon for now",
+			wantInfo: true,
+		},
+		{
+			name:     "with extra context",
+			errMsg:   "failed to follow: self-follow not allowed on stegodon for now",
+			wantInfo: true,
+		},
+		{
+			name:     "uppercase SELF-FOLLOW",
+			errMsg:   "SELF-FOLLOW NOT ALLOWED ON STEGODON FOR NOW",
+			wantInfo: true,
+		},
+		{
+			name:     "already following (different error)",
+			errMsg:   "already following user@example.com",
+			wantInfo: true,
+		},
+		{
+			name:     "network error (should be error, not info)",
+			errMsg:   "failed to connect to remote server",
+			wantInfo: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accountId := uuid.New()
+			model := InitialModel(accountId)
+
+			msg := followResultMsg{
+				username: "user@example.com",
+				err:      fmt.Errorf("%s", tt.errMsg),
+			}
+
+			updatedModel, _ := model.Update(msg)
+
+			if tt.wantInfo {
+				// Should be informational (Status, not Error)
+				if updatedModel.Status == "" {
+					t.Errorf("Expected Status to be set for informational message: %s", tt.errMsg)
+				}
+				if updatedModel.Error != "" {
+					t.Errorf("Expected Error to be empty for informational message: %s (got: %s)", tt.errMsg, updatedModel.Error)
+				}
+			} else {
+				// Should be an error (Error, not Status)
+				if updatedModel.Error == "" {
+					t.Errorf("Expected Error to be set for error message: %s", tt.errMsg)
+				}
+				if updatedModel.Status != "" {
+					t.Errorf("Expected Status to be empty for error message: %s (got: %s)", tt.errMsg, updatedModel.Status)
+				}
+			}
+		})
+	}
+}
+
+func TestFollowResultMsg_ErrorMessagePriority(t *testing.T) {
+	// Test that self-follow is checked before already-following
+	// Both should be informational, but verify the correct one is shown
+	tests := []struct {
+		name        string
+		errMsg      string
+		wantContain string
+	}{
+		{
+			name:        "self-follow error",
+			errMsg:      "self-follow not allowed on stegodon for now",
+			wantContain: "Self-follow",
+		},
+		{
+			name:        "already following error",
+			errMsg:      "already following bob@mastodon.social",
+			wantContain: "Already following",
+		},
+		{
+			name:        "generic error",
+			errMsg:      "network timeout",
+			wantContain: "Failed:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accountId := uuid.New()
+			model := InitialModel(accountId)
+
+			msg := followResultMsg{
+				username: "user@example.com",
+				err:      fmt.Errorf("%s", tt.errMsg),
+			}
+
+			updatedModel, _ := model.Update(msg)
+
+			// Check that the appropriate field contains the expected text
+			combined := updatedModel.Status + updatedModel.Error
+			if !strings.Contains(combined, tt.wantContain) {
+				t.Errorf("Expected message to contain '%s', got Status='%s' Error='%s'",
+					tt.wantContain, updatedModel.Status, updatedModel.Error)
+			}
+		})
+	}
+}
+
+func TestFollowResultMsg_UserFriendlyMessages(t *testing.T) {
+	// Verify that informational messages are user-friendly (not technical)
+	accountId := uuid.New()
+	model := InitialModel(accountId)
+
+	selfFollowErr := fmt.Errorf("self-follow not allowed on stegodon for now")
+	msg := followResultMsg{
+		username: "alice@stegodon.example",
+		err:      selfFollowErr,
+	}
+
+	updatedModel, _ := model.Update(msg)
+
+	// Should NOT contain technical terms
+	technicalTerms := []string{"error", "failed", "exception", "nil", "panic"}
+	for _, term := range technicalTerms {
+		if strings.Contains(strings.ToLower(updatedModel.Status), term) {
+			t.Errorf("Status message should be user-friendly, but contains technical term: %s", term)
+		}
+	}
+
+	// Should contain informational icon
+	if !strings.Contains(updatedModel.Status, "ℹ") {
+		t.Error("Expected informational message to have ℹ icon")
+	}
+}

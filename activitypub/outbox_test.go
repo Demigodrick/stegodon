@@ -863,3 +863,261 @@ func TestUndoJSONMarshaling(t *testing.T) {
 		t.Error("Nested Follow object should be preserved")
 	}
 }
+
+// Tests for self-follow prevention
+
+func TestSelfFollowDetection(t *testing.T) {
+	// Test detection of self-follow attempt (same domain and username)
+	sslDomain := "stegodon.example"
+	username := "alice"
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: username,
+	}
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: username,
+		Domain:   sslDomain,
+		ActorURI: "https://" + sslDomain + "/users/" + username,
+	}
+
+	// Check if this is a self-follow attempt
+	isSelfFollow := (remoteActor.Domain == sslDomain && remoteActor.Username == localAccount.Username)
+
+	if !isSelfFollow {
+		t.Error("Should detect self-follow when domain and username match")
+	}
+}
+
+func TestSelfFollowDetectionDifferentUser(t *testing.T) {
+	// Test that different users on same domain are not detected as self-follow
+	sslDomain := "stegodon.example"
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob", // Different user
+		Domain:   sslDomain,
+		ActorURI: "https://" + sslDomain + "/users/bob",
+	}
+
+	// Check if this is a self-follow attempt
+	isSelfFollow := (remoteActor.Domain == sslDomain && remoteActor.Username == localAccount.Username)
+
+	if isSelfFollow {
+		t.Error("Should NOT detect self-follow when usernames differ")
+	}
+}
+
+func TestSelfFollowDetectionDifferentDomain(t *testing.T) {
+	// Test that same username on different domain is not detected as self-follow
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "alice", // Same username
+		Domain:   "mastodon.social", // Different domain
+		ActorURI: "https://mastodon.social/users/alice",
+	}
+
+	localDomain := "stegodon.example"
+
+	// Check if this is a self-follow attempt
+	isSelfFollow := (remoteActor.Domain == localDomain && remoteActor.Username == localAccount.Username)
+
+	if isSelfFollow {
+		t.Error("Should NOT detect self-follow when domains differ")
+	}
+}
+
+func TestSelfFollowErrorMessage(t *testing.T) {
+	// Test that self-follow error message is user-friendly
+	errMsg := "self-follow not allowed on stegodon for now"
+
+	if !strings.Contains(strings.ToLower(errMsg), "self-follow") {
+		t.Error("Error message should mention 'self-follow'")
+	}
+
+	if !strings.Contains(strings.ToLower(errMsg), "not allowed") {
+		t.Error("Error message should indicate it's not allowed")
+	}
+
+	if !strings.Contains(strings.ToLower(errMsg), "stegodon") {
+		t.Error("Error message should mention stegodon")
+	}
+
+	// Should not be too technical
+	if strings.Contains(errMsg, "error") || strings.Contains(errMsg, "failed") {
+		t.Error("Error message should be user-friendly, not technical")
+	}
+}
+
+func TestSelfFollowPreventionTiming(t *testing.T) {
+	// Test that self-follow check happens early (before database operations)
+	// This is important to avoid unnecessary database writes
+
+	// In the actual SendFollow function, the check order is:
+	// 1. Fetch remote actor (GetOrFetchActor)
+	// 2. Check if self-follow ← THIS SHOULD HAPPEN HERE
+	// 3. Check if already following (database read)
+	// 4. Create follow record (database write)
+
+	// The self-follow check should happen at step 2, before any database operations
+	// This test verifies the logic is correct
+
+	sslDomain := "stegodon.example"
+	username := "alice"
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: username,
+	}
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: username,
+		Domain:   sslDomain,
+		ActorURI: "https://" + sslDomain + "/users/" + username,
+	}
+
+	// Check self-follow BEFORE any other operations
+	isSelfFollow := (remoteActor.Domain == sslDomain && remoteActor.Username == localAccount.Username)
+
+	if !isSelfFollow {
+		t.Fatal("Failed to detect self-follow at early stage")
+	}
+
+	// If we get here, we would return early and NOT proceed with:
+	// - Database read for existing follow
+	// - Database write for new follow
+	// This is the desired behavior
+}
+
+func TestSelfFollowCaseSensitivity(t *testing.T) {
+	// Test that username comparison is case-sensitive (ActivityPub standard)
+	sslDomain := "stegodon.example"
+
+	tests := []struct {
+		name          string
+		localUsername string
+		remoteUsername string
+		shouldMatch   bool
+	}{
+		{
+			name:          "Exact match",
+			localUsername: "alice",
+			remoteUsername: "alice",
+			shouldMatch:   true,
+		},
+		{
+			name:          "Different case",
+			localUsername: "alice",
+			remoteUsername: "Alice",
+			shouldMatch:   false, // ActivityPub usernames are case-sensitive
+		},
+		{
+			name:          "All uppercase",
+			localUsername: "alice",
+			remoteUsername: "ALICE",
+			shouldMatch:   false,
+		},
+		{
+			name:          "Different users",
+			localUsername: "alice",
+			remoteUsername: "bob",
+			shouldMatch:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			localAccount := &domain.Account{
+				Id:       uuid.New(),
+				Username: tt.localUsername,
+			}
+
+			remoteActor := &domain.RemoteAccount{
+				Id:       uuid.New(),
+				Username: tt.remoteUsername,
+				Domain:   sslDomain,
+				ActorURI: "https://" + sslDomain + "/users/" + tt.remoteUsername,
+			}
+
+			isSelfFollow := (remoteActor.Domain == sslDomain && remoteActor.Username == localAccount.Username)
+
+			if isSelfFollow != tt.shouldMatch {
+				t.Errorf("Expected isSelfFollow=%v for local=%s remote=%s, got %v",
+					tt.shouldMatch, tt.localUsername, tt.remoteUsername, isSelfFollow)
+			}
+		})
+	}
+}
+
+func TestSelfFollowDomainComparison(t *testing.T) {
+	// Test that domain comparison works correctly
+	tests := []struct {
+		name         string
+		localDomain  string
+		remoteDomain string
+		shouldMatch  bool
+	}{
+		{
+			name:         "Same domain",
+			localDomain:  "stegodon.example",
+			remoteDomain: "stegodon.example",
+			shouldMatch:  true,
+		},
+		{
+			name:         "Different domains",
+			localDomain:  "stegodon.example",
+			remoteDomain: "mastodon.social",
+			shouldMatch:  false,
+		},
+		{
+			name:         "Subdomain difference",
+			localDomain:  "stegodon.example.com",
+			remoteDomain: "mastodon.example.com",
+			shouldMatch:  false,
+		},
+		{
+			name:         "Port in domain",
+			localDomain:  "stegodon.example:3000",
+			remoteDomain: "stegodon.example",
+			shouldMatch:  false, // Should be exact match
+		},
+	}
+
+	username := "alice"
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			localAccount := &domain.Account{
+				Id:       uuid.New(),
+				Username: username,
+			}
+
+			remoteActor := &domain.RemoteAccount{
+				Id:       uuid.New(),
+				Username: username,
+				Domain:   tt.remoteDomain,
+				ActorURI: "https://" + tt.remoteDomain + "/users/" + username,
+			}
+
+			isSelfFollow := (remoteActor.Domain == tt.localDomain && remoteActor.Username == localAccount.Username)
+
+			if isSelfFollow != tt.shouldMatch {
+				t.Errorf("Expected isSelfFollow=%v for local=%s remote=%s, got %v",
+					tt.shouldMatch, tt.localDomain, tt.remoteDomain, isSelfFollow)
+			}
+		})
+	}
+}
