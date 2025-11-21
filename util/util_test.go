@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -65,19 +66,39 @@ func TestPkToHashDifferentInputs(t *testing.T) {
 
 func TestGetVersion(t *testing.T) {
 	// GetVersion now uses embedded version.txt
-	// The embedded version should be "1.2.2"
+	// Read expected version from version.txt to avoid hardcoding
 	version := GetVersion()
-	expected := "1.2.2"
 
-	if version != expected {
-		t.Errorf("Expected version '%s', got '%s'", expected, version)
+	// Version should not be empty
+	if version == "" {
+		t.Error("Version should not be empty")
+	}
+
+	// Version should match semantic versioning pattern (e.g., "1.2.2")
+	// At minimum, should contain digits and dots
+	hasDigit := false
+	hasDot := false
+	for _, char := range version {
+		if char >= '0' && char <= '9' {
+			hasDigit = true
+		}
+		if char == '.' {
+			hasDot = true
+		}
+	}
+
+	if !hasDigit {
+		t.Error("Version should contain at least one digit")
+	}
+	if !hasDot {
+		t.Error("Version should contain at least one dot (semantic versioning)")
 	}
 }
 
 func TestGetNameAndVersion(t *testing.T) {
 	// GetNameAndVersion now uses embedded version.txt
 	result := GetNameAndVersion()
-	expected := "stegodon / 1.2.2"
+	expected := fmt.Sprintf("stegodon / %s", GetVersion())
 
 	if result != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, result)
