@@ -1,30 +1,29 @@
-{{define "profile.html"}}
+{{define "post.html"}}
 <!doctype html>
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>{{.Title}} - stegodon – ssh-first fediverse blog</title>
+        <title>{{.Title}} - stegodon</title>
 
         <!-- SEO Meta Tags -->
-        <meta name="description" content="{{.User.DisplayName}} (@{{.User.Username}}) on stegodon. {{if .User.Summary}}{{.User.Summary}}{{else}}SSH-first federated blog on the Fediverse.{{end}}" />
-        <meta name="keywords" content="{{.User.Username}}, fediverse, activitypub, blog, mastodon, federated" />
-        <meta name="author" content="{{.User.Username}}" />
-        <link rel="canonical" href="https://{{.Host}}/{{.User.Username}}" />
+        <meta name="description" content="Post by @{{.User.Username}} on stegodon - {{.Post.Message}}" />
+        <meta name="keywords" content="fediverse, activitypub, ssh, blog, terminal, mastodon, federated, decentralized" />
+        <meta name="author" content="@{{.User.Username}}" />
+        <link rel="canonical" href="https://{{.Host}}/u/{{.User.Username}}/{{.Post.NoteId}}" />
 
         <!-- Open Graph / Facebook -->
-        <meta property="og:type" content="profile" />
-        <meta property="og:url" content="https://{{.Host}}/{{.User.Username}}" />
-        <meta property="og:title" content="{{.User.DisplayName}} (@{{.User.Username}}) - stegodon" />
-        <meta property="og:description" content="{{if .User.Summary}}{{.User.Summary}}{{else}}View posts from {{.User.DisplayName}} on stegodon, an SSH-first federated blog platform.{{end}}" />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://{{.Host}}/u/{{.User.Username}}/{{.Post.NoteId}}" />
+        <meta property="og:title" content="{{.Title}} - stegodon" />
+        <meta property="og:description" content="{{.Post.Message}}" />
         <meta property="og:site_name" content="stegodon" />
-        <meta property="profile:username" content="{{.User.Username}}" />
 
         <!-- Twitter Card -->
         <meta name="twitter:card" content="summary" />
-        <meta name="twitter:url" content="https://{{.Host}}/{{.User.Username}}" />
-        <meta name="twitter:title" content="{{.User.DisplayName}} (@{{.User.Username}})" />
-        <meta name="twitter:description" content="{{if .User.Summary}}{{.User.Summary}}{{else}}Posts from {{.User.DisplayName}} on stegodon{{end}}" />
+        <meta name="twitter:url" content="https://{{.Host}}/u/{{.User.Username}}/{{.Post.NoteId}}" />
+        <meta name="twitter:title" content="{{.Title}}" />
+        <meta name="twitter:description" content="{{.Post.Message}}" />
 
         <!-- Favicon -->
         <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23000'/><text x='50' y='70' text-anchor='middle' font-family='monospace' font-size='70' font-weight='bold' fill='%2300ff7f'>S</text></svg>">
@@ -42,12 +41,11 @@
                 line-height: 1.6;
                 color: #e0e0e0;
                 background: #000;
-                height: 100vh;
-                overflow: hidden;
+                min-height: 100vh;
             }
             .layout {
                 display: flex;
-                height: 100vh;
+                min-height: 100vh;
             }
             .sidebar-header {
                 margin-bottom: 30px;
@@ -113,9 +111,7 @@
                 color: #5fafff;
                 padding: 4px 8px;
                 border-radius: 3px;
-                font-family:
-                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                    "Liberation Mono", "Courier New", monospace;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                 display: block;
                 margin: 10px 0;
                 word-wrap: break-word;
@@ -136,11 +132,17 @@
                 flex: 1;
                 background: #000;
                 overflow-y: auto;
-                height: 100vh;
+                min-height: 100vh;
             }
             .content-wrapper {
                 max-width: 1200px;
                 padding: 30px;
+            }
+            .timeline {
+                font-family:
+                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                    "Liberation Mono", "Courier New", monospace;
+                max-width: 800px;
             }
             .profile-header {
                 display: flex;
@@ -167,39 +169,6 @@
             .back-link:hover {
                 text-decoration: underline;
             }
-            .user-profile {
-                font-family:
-                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                    "Liberation Mono", "Courier New", monospace;
-                margin-bottom: 30px;
-                max-width: 800px;
-            }
-
-            .user-info {
-                background: #000;
-                padding: 10px;
-                font-size: 17px;
-                line-height: 3;
-                color: #e5e5e5;
-            }
-            .user-info p {
-                margin: 0 0 5px 0;
-                padding-left: 1.8em;
-                position: relative;
-                color: #ccc;
-                word-wrap: break-word;
-                overflow-wrap: break-word;
-                word-break: break-word;
-            }
-            .user-info p::before {
-                position: absolute;
-                left: 0;
-                top: 0;
-                color: #00ff7f;
-            }
-            .user-info strong {
-                color: #5fafff;
-            }
             h2 {
                 color: #00ff7f;
                 margin-bottom: 20px;
@@ -216,9 +185,6 @@
                 margin-bottom: 20px;
                 max-width: 800px;
             }
-            .post:last-child {
-                margin-bottom: 20px;
-            }
             .post-meta {
                 background: #181818;
                 border-bottom: 1px solid #333;
@@ -229,19 +195,18 @@
                 justify-content: space-between;
                 align-items: center;
             }
-            .post-caption {
+            .post-author {
                 font-weight: 600;
                 color: #00ff7f;
                 text-decoration: none;
             }
-            .post-permalink {
-                color: #666;
-                text-decoration: none;
-                font-size: 12px;
-            }
-            .post-permalink:hover {
-                color: #00ff7f;
+            .post-author:hover {
                 text-decoration: underline;
+            }
+            .post-caption {
+                font-weight: 600;
+                color: #00ff7f;
+                text-decoration: none;
             }
             .post-content {
                 background: #000;
@@ -254,7 +219,7 @@
             }
             .post-time {
                 margin: 0;
-                padding: 0 0 10px 0;
+                padding: 0 0 2px 0;
                 line-height: 0.8;
                 color: #666;
                 font-size: 14px;
@@ -282,49 +247,12 @@
                 top: 0;
                 color: #5fafff;
             }
-            .pagination {
-                display: flex;
-                justify-content: normal;
-                margin-top: 30px;
-                padding-top: 20px;
-                border-top: 1px solid #333;
-            }
-            .pagination a,
-            .pagination span {
-                padding: 10px 20px;
-                background: #181818;
-                color: #00ff7f;
-                text-decoration: none;
-                border-radius: 4px;
-                font-weight: 500;
-                border: 1px solid #333;
-                font-family:
-                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                    "Liberation Mono", "Courier New", monospace;
-            }
-            .pagination a:hover {
-                background: #222;
-                border-color: #00ff7f;
-            }
-            .pagination span {
-                background: #0a0a0a;
-                color: #666;
-                cursor: not-allowed;
-            }
             .empty-state {
                 text-align: center;
                 padding: 60px 20px;
                 color: #666;
                 font-style: italic;
-                font-family:
-                    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                    "Liberation Mono", "Courier New", monospace;
-            }
-            .scroll-up {
-                display: none;
-            }
-            .toggle-btn {
-                display: none;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
             }
             @media (max-width: 768px) {
                 body {
@@ -333,7 +261,7 @@
                 }
                 .layout {
                     flex-direction: column;
-                    height: auto;
+                    min-height: auto;
                     overflow: visible;
                 }
                 .sidebar {
@@ -378,9 +306,12 @@
                 }
                 .main-content {
                     margin-left: 0;
-                    height: auto;
+                    min-height: auto;
                     overflow: visible;
                 }
+            }
+            .toggle-btn {
+                display: none;
             }
         </style>
     </head>
@@ -454,61 +385,17 @@
                 <div class="content-wrapper">
                     <div class="profile-header">
                         <h2>@{{.User.Username}}</h2>
-                        <a href="/" class="back-link">← back to timeline</a>
+                        <a href="/u/{{.User.Username}}" class="back-link">← @{{.User.Username}}'s timeline</a>
                     </div>
 
-                    <div class="user-profile">
-                        <div class="user-info">
-                            <p>
-                                <strong>posts:</strong>
-                                {{.TotalPosts}}
-                            </p>
-                            {{if .User.DisplayName}}
-                            <p>
-                                <strong>display name:</strong>
-                                {{.User.DisplayName}}
-                            </p>
-                            {{end}} {{if .User.Summary}}
-                            <p><strong>bio:</strong> {{.User.Summary}}</p>
-                            {{end}}
-                            <p><strong>joined:</strong> {{.User.JoinedAgo}}</p>
-                        </div>
-                    </div>
-
-                    {{if .Posts}} {{range .Posts}}
                     <div class="post">
                         <div class="post-meta">
-                            <span class="post-caption">{{.TimeAgo}}</span>
-                            <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                            <span class="post-caption">{{.Post.TimeAgo}}</span>
                         </div>
                         <div class="post-content">
-                            <p class="post-text">{{.MessageHTML}}</p>
+                            <p class="post-text">{{.Post.MessageHTML}}</p>
                         </div>
                     </div>
-                    {{end}} {{if or .HasPrev .HasNext}}
-                    <div class="pagination">
-                        <div>
-                            {{if .HasPrev}}
-                            <a href="/u/{{$.User.Username}}?page={{.PrevPage}}"
-                                >← previous</a
-                            >
-                            {{else}}
-                            <span>← previous</span>
-                            {{end}}
-                        </div>
-                        <div>
-                            {{if .HasNext}}
-                            <a href="/u/{{$.User.Username}}?page={{.NextPage}}"
-                                >next →</a
-                            >
-                            {{else}}
-                            <span>next →</span>
-                            {{end}}
-                        </div>
-                    </div>
-                    {{end}} {{else}}
-                    <div class="empty-state">no posts yet.</div>
-                    {{end}}
                 </div>
             </div>
         </div>

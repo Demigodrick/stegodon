@@ -167,6 +167,9 @@
                 padding: 6px 10px;
                 font-size: 13px;
                 color: #ccc;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
             .post-author {
                 font-weight: 600;
@@ -174,6 +177,15 @@
                 text-decoration: none;
             }
             .post-author:hover {
+                text-decoration: underline;
+            }
+            .post-permalink {
+                color: #666;
+                text-decoration: none;
+                font-size: 12px;
+            }
+            .post-permalink:hover {
+                color: #00ff7f;
                 text-decoration: underline;
             }
             .post-content {
@@ -389,6 +401,7 @@
                     <div class="post">
                         <div class="post-meta">
                             <a href="/u/{{.Username}}" class="post-author">@{{.Username}}</a>
+                            <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
                         </div>
                         <div class="post-content">
                             <p class="post-time">{{.TimeAgo}}</p>

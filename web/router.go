@@ -63,6 +63,10 @@ func Router(conf *util.AppConfig) error {
 		HandleProfile(c, conf)
 	})
 
+	g.GET("/u/:username/:noteid", func(c *gin.Context) {
+		HandleSinglePost(c, conf)
+	})
+
 	// RSS Feed
 	g.GET("/feed", func(c *gin.Context) {
 

@@ -519,3 +519,82 @@ func TestTimeAgoPluralization(t *testing.T) {
 		})
 	}
 }
+
+func TestSinglePostPageDataStructure(t *testing.T) {
+	// Test SinglePostPageData structure
+	data := SinglePostPageData{
+		Title:   "@alice - 5 minutes ago",
+		Host:    "example.com",
+		SSHPort: 23232,
+		Post: PostView{
+			NoteId:   "123e4567-e89b-12d3-a456-426614174000",
+			Username: "alice",
+			Message:  "Hello, world!",
+			TimeAgo:  "5 minutes ago",
+		},
+		User: UserView{
+			Username:    "alice",
+			DisplayName: "Alice Wonderland",
+			Summary:     "Test bio",
+			JoinedAgo:   "1 day ago",
+		},
+	}
+
+	if data.Title != "@alice - 5 minutes ago" {
+		t.Error("Title should include username and time")
+	}
+	if data.Post.NoteId != "123e4567-e89b-12d3-a456-426614174000" {
+		t.Error("Post NoteId should be set")
+	}
+	if data.Post.Username != "alice" {
+		t.Error("Post username should be set")
+	}
+	if data.User.Username != "alice" {
+		t.Error("User username should be set")
+	}
+}
+
+func TestPostViewWithNoteId(t *testing.T) {
+	// Test PostView structure with NoteId
+	post := PostView{
+		NoteId:   "123e4567-e89b-12d3-a456-426614174000",
+		Username: "charlie",
+		Message:  "Hello, world!",
+		TimeAgo:  "5 minutes ago",
+	}
+
+	if post.NoteId != "123e4567-e89b-12d3-a456-426614174000" {
+		t.Error("NoteId should be set")
+	}
+	if post.Username != "charlie" {
+		t.Error("Username should be set")
+	}
+	if post.Message != "Hello, world!" {
+		t.Error("Message should be set")
+	}
+	if post.TimeAgo != "5 minutes ago" {
+		t.Error("TimeAgo should be set")
+	}
+}
+
+func TestSinglePostTitleFormat(t *testing.T) {
+	// Test single post page title formatting
+	tests := []struct {
+		username  string
+		timeAgo   string
+		wantTitle string
+	}{
+		{username: "alice", timeAgo: "5 minutes ago", wantTitle: "@alice - 5 minutes ago"},
+		{username: "bob", timeAgo: "1 hour ago", wantTitle: "@bob - 1 hour ago"},
+		{username: "user_123", timeAgo: "just now", wantTitle: "@user_123 - just now"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.username, func(t *testing.T) {
+			title := fmt.Sprintf("@%s - %s", tt.username, tt.timeAgo)
+			if title != tt.wantTitle {
+				t.Errorf("Expected title '%s', got '%s'", tt.wantTitle, title)
+			}
+		})
+	}
+}

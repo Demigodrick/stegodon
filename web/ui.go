@@ -11,6 +11,7 @@ import (
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/util"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type IndexPageData struct {
@@ -45,6 +46,7 @@ type UserView struct {
 }
 
 type PostView struct {
+	NoteId      string
 	Username    string
 	Message     string
 	MessageHTML template.HTML // HTML-rendered message with clickable links
@@ -123,6 +125,7 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
 		posts = append(posts, PostView{
+			NoteId:      note.Id.String(),
 			Username:    note.CreatedBy,
 			Message:     note.Message,
 			MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
@@ -203,6 +206,7 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
 		posts = append(posts, PostView{
+			NoteId:      note.Id.String(),
 			Username:    note.CreatedBy,
 			Message:     note.Message,
 			MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
@@ -235,4 +239,78 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	c.HTML(200, "profile.html", data)
+}
+
+type SinglePostPageData struct {
+	Title    string
+	Host     string
+	SSHPort  int
+	Post     PostView
+	User     UserView
+}
+
+func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
+	username := c.Param("username")
+	noteIdStr := c.Param("noteid")
+	database := db.GetDB()
+
+	// Parse note ID
+	noteId, err := uuid.Parse(noteIdStr)
+	if err != nil {
+		log.Printf("Invalid note ID: %s", noteIdStr)
+		c.HTML(404, "base.html", gin.H{"Title": "Not Found", "Error": "Post not found"})
+		return
+	}
+
+	// Get user account
+	err, account := database.ReadAccByUsername(username)
+	if err != nil {
+		log.Printf("User not found: %s", username)
+		c.HTML(404, "base.html", gin.H{"Title": "Not Found", "Error": "User not found"})
+		return
+	}
+
+	// Get the note
+	err, note := database.ReadNoteId(noteId)
+	if err != nil || note == nil {
+		log.Printf("Note not found: %s", noteIdStr)
+		c.HTML(404, "base.html", gin.H{"Title": "Not Found", "Error": "Post not found"})
+		return
+	}
+
+	// Verify the note belongs to this user
+	if note.CreatedBy != username {
+		log.Printf("Note %s does not belong to user %s", noteIdStr, username)
+		c.HTML(404, "base.html", gin.H{"Title": "Not Found", "Error": "Post not found"})
+		return
+	}
+
+	// Use SSLDomain if federation is enabled, otherwise use Host
+	host := conf.Conf.Host
+	if conf.Conf.WithAp {
+		host = conf.Conf.SslDomain
+	}
+
+	post := PostView{
+		NoteId:      note.Id.String(),
+		Username:    note.CreatedBy,
+		Message:     note.Message,
+		MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
+		TimeAgo:     formatTimeAgo(note.CreatedAt),
+	}
+
+	data := SinglePostPageData{
+		Title:   fmt.Sprintf("@%s - %s", username, formatTimeAgo(note.CreatedAt)),
+		Host:    host,
+		SSHPort: conf.Conf.SshPort,
+		Post:    post,
+		User: UserView{
+			Username:    account.Username,
+			DisplayName: account.DisplayName,
+			Summary:     account.Summary,
+			JoinedAgo:   formatTimeAgo(account.CreatedAt),
+		},
+	}
+
+	c.HTML(200, "post.html", data)
 }
