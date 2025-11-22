@@ -27,6 +27,11 @@ docker-compose up -d
 ```bash
 # Download the binary from GitHub Releases
 chmod +x stegodon
+
+# Check version
+./stegodon -v
+
+# Run
 ./stegodon
 ```
 
