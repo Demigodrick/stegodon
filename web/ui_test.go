@@ -119,6 +119,7 @@ func TestIndexPageDataStructure(t *testing.T) {
 		Title:    "Home",
 		Host:     "example.com",
 		SSHPort:  23232,
+		Version:  "1.0.0",
 		Posts:    []PostView{},
 		HasPrev:  false,
 		HasNext:  true,
@@ -135,6 +136,9 @@ func TestIndexPageDataStructure(t *testing.T) {
 	if data.SSHPort != 23232 {
 		t.Error("SSHPort should be set")
 	}
+	if data.Version != "1.0.0" {
+		t.Error("Version should be set")
+	}
 	if data.HasPrev {
 		t.Error("HasPrev should be false for first page")
 	}
@@ -149,6 +153,7 @@ func TestProfilePageDataStructure(t *testing.T) {
 		Title:   "@alice",
 		Host:    "example.com",
 		SSHPort: 23232,
+		Version: "1.0.0",
 		User: UserView{
 			Username:    "alice",
 			DisplayName: "Alice Wonderland",
@@ -171,6 +176,9 @@ func TestProfilePageDataStructure(t *testing.T) {
 	}
 	if data.User.DisplayName != "Alice Wonderland" {
 		t.Error("User display name should be set")
+	}
+	if data.Version != "1.0.0" {
+		t.Error("Version should be set")
 	}
 }
 
@@ -526,6 +534,7 @@ func TestSinglePostPageDataStructure(t *testing.T) {
 		Title:   "@alice - 5 minutes ago",
 		Host:    "example.com",
 		SSHPort: 23232,
+		Version: "1.0.0",
 		Post: PostView{
 			NoteId:   "123e4567-e89b-12d3-a456-426614174000",
 			Username: "alice",
@@ -551,6 +560,9 @@ func TestSinglePostPageDataStructure(t *testing.T) {
 	}
 	if data.User.Username != "alice" {
 		t.Error("User username should be set")
+	}
+	if data.Version != "1.0.0" {
+		t.Error("Version should be set")
 	}
 }
 

@@ -40,6 +40,7 @@ func main() {
 	// Setup logging (journald if enabled, otherwise standard logging)
 	util.SetupLogging(conf.Conf.WithJournald)
 
+	log.Printf("stegodon v%s", util.GetVersion())
 	log.Println("Configuration: ")
 	log.Println(util.PrettyPrint(conf))
 
