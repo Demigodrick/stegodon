@@ -266,6 +266,12 @@ func clearStatusAfter(d time.Duration) tea.Cmd {
 func loadFollowing(accountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
+
+		// Clean up any orphaned follows before loading
+		if err := database.CleanupOrphanedFollows(); err != nil {
+			log.Printf("Warning: Failed to cleanup orphaned follows: %v", err)
+		}
+
 		err, following := database.ReadFollowingByAccountId(accountId)
 		if err != nil {
 			log.Printf("Failed to load following: %v", err)

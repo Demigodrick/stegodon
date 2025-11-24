@@ -760,6 +760,27 @@ func (db *DB) AcceptFollowByURI(uri string) error {
 	})
 }
 
+// CleanupOrphanedFollows removes follow records that point to deleted remote accounts
+func (db *DB) CleanupOrphanedFollows() error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		// Delete remote follows (is_local = 0) where the target_account_id doesn't exist in remote_accounts
+		result, err := tx.Exec(`
+			DELETE FROM follows
+			WHERE is_local = 0
+			AND target_account_id NOT IN (SELECT id FROM remote_accounts)
+		`)
+		if err != nil {
+			return err
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected > 0 {
+			log.Printf("Cleaned up %d orphaned follow records", rowsAffected)
+		}
+		return nil
+	})
+}
+
 // Activity queries
 const (
 	sqlInsertActivity      = `INSERT INTO activities(id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -954,7 +975,14 @@ func (db *DB) DeleteDelivery(id uuid.UUID) error {
 // Follower queries
 const (
 	sqlSelectFollowersByAccountId = `SELECT id, account_id, target_account_id, uri, accepted, created_at, is_local FROM follows WHERE target_account_id = ? AND accepted = 1`
-	sqlSelectFollowingByAccountId = `SELECT id, account_id, target_account_id, uri, accepted, created_at, is_local FROM follows WHERE account_id = ? AND accepted = 1`
+	// Select following with LEFT JOIN to filter out orphaned remote follows
+	sqlSelectFollowingByAccountId = `
+		SELECT f.id, f.account_id, f.target_account_id, f.uri, f.accepted, f.created_at, f.is_local
+		FROM follows f
+		LEFT JOIN remote_accounts ra ON f.target_account_id = ra.id AND f.is_local = 0
+		WHERE f.account_id = ? AND f.accepted = 1
+		AND (f.is_local = 1 OR ra.id IS NOT NULL)
+	`
 )
 
 func (db *DB) ReadFollowersByAccountId(accountId uuid.UUID) (error, *[]domain.Follow) {
