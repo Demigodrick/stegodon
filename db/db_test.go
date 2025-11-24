@@ -1373,6 +1373,7 @@ func TestFollowersListNoDuplicates(t *testing.T) {
 		TargetAccountId: targetId,
 		URI:             "https://example.com/follows/1",
 		Accepted:        true,
+		IsLocal:         true, // Local follow between local accounts
 		CreatedAt:       time.Now(),
 	}
 	err := db.CreateFollow(follow1)
@@ -1386,6 +1387,7 @@ func TestFollowersListNoDuplicates(t *testing.T) {
 		TargetAccountId: targetId,
 		URI:             "https://example.com/follows/2",
 		Accepted:        true,
+		IsLocal:         true, // Local follow between local accounts
 		CreatedAt:       time.Now(),
 	}
 	err = db.CreateFollow(follow2)
@@ -1652,5 +1654,189 @@ func TestCountActiveUsers_Consistency(t *testing.T) {
 	// ActiveMonth should not exceed TotalUsers
 	if activeMonth > totalUsers {
 		t.Errorf("ActiveMonth (%d) should not exceed TotalUsers (%d)", activeMonth, totalUsers)
+	}
+}
+
+// TestReadActivityByObjectURI_WildcardEscaping tests that SQL wildcards are properly escaped
+func TestReadActivityByObjectURI_WildcardEscaping(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create activities with URIs containing wildcards
+	activities := []struct {
+		uri     string
+		content string
+	}{
+		{"https://example.com/posts/123", "Normal post"},
+		{"https://example.com/posts/12%", "Post with percent"},
+		{"https://example.com/posts/12_", "Post with underscore"},
+		{"https://example.com/posts/12\\", "Post with backslash"},
+	}
+
+	for _, act := range activities {
+		activity := &domain.Activity{
+			Id:           uuid.New(),
+			ActivityURI:  "https://example.com/activities/" + uuid.New().String(),
+			ActivityType: "Create",
+			ActorURI:     "https://example.com/users/alice",
+			ObjectURI:    act.uri,
+			RawJSON:      `{"id":"` + act.uri + `","type":"Note","content":"` + act.content + `"}`,
+			Processed:    true,
+			Local:        false,
+			CreatedAt:    time.Now(),
+		}
+		if err := db.CreateActivity(activity); err != nil {
+			t.Fatalf("Failed to create activity: %v", err)
+		}
+	}
+
+	// Test exact match for URI with percent (should not match as wildcard)
+	err, found := db.ReadActivityByObjectURI("https://example.com/posts/12%")
+	if err != nil {
+		t.Fatalf("ReadActivityByObjectURI failed: %v", err)
+	}
+	if found == nil {
+		t.Fatal("Expected to find activity with percent in URI")
+	}
+	if !strings.Contains(found.RawJSON, "Post with percent") {
+		t.Error("Found wrong activity - percent was treated as wildcard")
+	}
+
+	// Test exact match for URI with underscore (should not match as wildcard)
+	err, found = db.ReadActivityByObjectURI("https://example.com/posts/12_")
+	if err != nil {
+		t.Fatalf("ReadActivityByObjectURI failed: %v", err)
+	}
+	if found == nil {
+		t.Fatal("Expected to find activity with underscore in URI")
+	}
+	if !strings.Contains(found.RawJSON, "Post with underscore") {
+		t.Error("Found wrong activity - underscore was treated as wildcard")
+	}
+
+	// Test exact match for URI with backslash
+	err, found = db.ReadActivityByObjectURI("https://example.com/posts/12\\")
+	if err != nil {
+		t.Fatalf("ReadActivityByObjectURI failed: %v", err)
+	}
+	if found == nil {
+		t.Fatal("Expected to find activity with backslash in URI")
+	}
+	if !strings.Contains(found.RawJSON, "Post with backslash") {
+		t.Error("Found wrong activity - backslash escaping failed")
+	}
+}
+
+// TestCleanupOrphanedFollows_BothDirections tests cleanup of orphaned follows
+func TestCleanupOrphanedFollows_BothDirections(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create local account
+	localId := uuid.New()
+	createTestAccount(t, db, localId, "alice", "pubkey1", "webpub1", "webpriv1")
+
+	// Create remote accounts
+	remote1Id := uuid.New()
+	remote2Id := uuid.New()
+	remoteAcc1 := &domain.RemoteAccount{
+		Id:            remote1Id,
+		Username:      "bob",
+		Domain:        "remote.com",
+		ActorURI:      "https://remote.com/users/bob",
+		InboxURI:      "https://remote.com/users/bob/inbox",
+		PublicKeyPem:  "pubkey2",
+		LastFetchedAt: time.Now(),
+	}
+	remoteAcc2 := &domain.RemoteAccount{
+		Id:            remote2Id,
+		Username:      "charlie",
+		Domain:        "remote.com",
+		ActorURI:      "https://remote.com/users/charlie",
+		InboxURI:      "https://remote.com/users/charlie/inbox",
+		PublicKeyPem:  "pubkey3",
+		LastFetchedAt: time.Now(),
+	}
+	if err := db.CreateRemoteAccount(remoteAcc1); err != nil {
+		t.Fatalf("Failed to create remote account 1: %v", err)
+	}
+	if err := db.CreateRemoteAccount(remoteAcc2); err != nil {
+		t.Fatalf("Failed to create remote account 2: %v", err)
+	}
+
+	// Create follows:
+	// 1. Local follows remote (following)
+	follow1 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localId,
+		TargetAccountId: remote1Id,
+		URI:             "https://example.com/follows/1",
+		Accepted:        true,
+		IsLocal:         false,
+		CreatedAt:       time.Now(),
+	}
+	// 2. Remote follows local (follower)
+	follow2 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remote2Id,
+		TargetAccountId: localId,
+		URI:             "https://remote.com/follows/1",
+		Accepted:        true,
+		IsLocal:         false,
+		CreatedAt:       time.Now(),
+	}
+	// 3. Orphaned follow (remote account doesn't exist)
+	orphanedId := uuid.New()
+	follow3 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localId,
+		TargetAccountId: orphanedId, // This account doesn't exist
+		URI:             "https://example.com/follows/orphaned",
+		Accepted:        true,
+		IsLocal:         false,
+		CreatedAt:       time.Now(),
+	}
+
+	for _, f := range []*domain.Follow{follow1, follow2, follow3} {
+		if err := db.CreateFollow(f); err != nil {
+			t.Fatalf("Failed to create follow: %v", err)
+		}
+	}
+
+	// Run cleanup
+	if err := db.CleanupOrphanedFollows(); err != nil {
+		t.Fatalf("CleanupOrphanedFollows failed: %v", err)
+	}
+
+	// Verify: follow1 and follow2 should remain, follow3 should be deleted
+	err, f1 := db.ReadFollowByURI(follow1.URI)
+	if err != nil || f1 == nil {
+		t.Error("Valid follow (local->remote) was incorrectly deleted")
+	}
+
+	err, f2 := db.ReadFollowByURI(follow2.URI)
+	if err != nil || f2 == nil {
+		t.Error("Valid follow (remote->local) was incorrectly deleted")
+	}
+
+	err, f3 := db.ReadFollowByURI(follow3.URI)
+	if err == nil && f3 != nil {
+		t.Error("Orphaned follow should have been deleted")
+	}
+
+	// Delete remote account and verify cleanup removes follows
+	if err := db.DeleteRemoteAccount(remote1Id); err != nil {
+		t.Fatalf("Failed to delete remote account: %v", err)
+	}
+
+	// Run cleanup again
+	if err := db.CleanupOrphanedFollows(); err != nil {
+		t.Fatalf("CleanupOrphanedFollows failed: %v", err)
+	}
+
+	// Now follow1 should be gone too
+	err, f1 = db.ReadFollowByURI(follow1.URI)
+	if err == nil && f1 != nil {
+		t.Error("Follow should have been deleted after remote account deletion")
 	}
 }

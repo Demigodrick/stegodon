@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/feeds v1.2.0
 	github.com/mattn/go-runewidth v0.0.19
+	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/crypto v0.45.0
 	golang.org/x/time v0.14.0

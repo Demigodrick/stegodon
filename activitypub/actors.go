@@ -80,29 +80,48 @@ func FetchRemoteActor(actorURI string) (*domain.RemoteAccount, error) {
 		return nil, err
 	}
 
-	// Create RemoteAccount
-	remoteAcc := &domain.RemoteAccount{
-		Id:            uuid.New(),
-		Username:      actor.PreferredUsername,
-		Domain:        domainName,
-		ActorURI:      actor.ID,
-		DisplayName:   actor.Name,
-		Summary:       actor.Summary,
-		InboxURI:      actor.Inbox,
-		OutboxURI:     actor.Outbox,
-		PublicKeyPem:  actor.PublicKey.PublicKeyPem,
-		AvatarURL:     actor.Icon.URL,
-		LastFetchedAt: time.Now(),
-	}
-
-	// Store in database
+	// Check if remote account already exists
 	database := db.GetDB()
-	err = database.CreateRemoteAccount(remoteAcc)
-	if err != nil {
-		// If already exists, try to update
+	err, existingAcc := database.ReadRemoteAccountByURI(actor.ID)
+
+	var remoteAcc *domain.RemoteAccount
+	if err == nil && existingAcc != nil {
+		// Account exists - reuse the ID and update
+		remoteAcc = &domain.RemoteAccount{
+			Id:            existingAcc.Id, // Reuse existing ID
+			Username:      actor.PreferredUsername,
+			Domain:        domainName,
+			ActorURI:      actor.ID,
+			DisplayName:   actor.Name,
+			Summary:       actor.Summary,
+			InboxURI:      actor.Inbox,
+			OutboxURI:     actor.Outbox,
+			PublicKeyPem:  actor.PublicKey.PublicKeyPem,
+			AvatarURL:     actor.Icon.URL,
+			LastFetchedAt: time.Now(),
+		}
 		err = database.UpdateRemoteAccount(remoteAcc)
 		if err != nil {
-			return nil, fmt.Errorf("failed to store remote account: %w", err)
+			return nil, fmt.Errorf("failed to update remote account: %w", err)
+		}
+	} else {
+		// Account doesn't exist - create new
+		remoteAcc = &domain.RemoteAccount{
+			Id:            uuid.New(),
+			Username:      actor.PreferredUsername,
+			Domain:        domainName,
+			ActorURI:      actor.ID,
+			DisplayName:   actor.Name,
+			Summary:       actor.Summary,
+			InboxURI:      actor.Inbox,
+			OutboxURI:     actor.Outbox,
+			PublicKeyPem:  actor.PublicKey.PublicKeyPem,
+			AvatarURL:     actor.Icon.URL,
+			LastFetchedAt: time.Now(),
+		}
+		err = database.CreateRemoteAccount(remoteAcc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create remote account: %w", err)
 		}
 	}
 

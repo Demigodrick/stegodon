@@ -133,6 +133,12 @@ type followersLoadedMsg struct {
 func loadFollowers(accountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
+
+		// Clean up any orphaned follows before loading
+		if err := database.CleanupOrphanedFollows(); err != nil {
+			log.Printf("Warning: Failed to cleanup orphaned follows: %v", err)
+		}
+
 		err, followers := database.ReadFollowersByAccountId(accountId)
 		if err != nil {
 			log.Printf("Failed to load followers: %v", err)

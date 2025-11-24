@@ -763,11 +763,19 @@ func (db *DB) AcceptFollowByURI(uri string) error {
 // CleanupOrphanedFollows removes follow records that point to deleted remote accounts
 func (db *DB) CleanupOrphanedFollows() error {
 	return db.wrapTransaction(func(tx *sql.Tx) error {
-		// Delete remote follows (is_local = 0) where the target_account_id doesn't exist in remote_accounts
+		// Delete remote follows where the remote account (either follower or followee) doesn't exist
+		// For "Following" (local follows remote): target_account_id should be in remote_accounts
+		// For "Followers" (remote follows local): account_id should be in remote_accounts
 		result, err := tx.Exec(`
 			DELETE FROM follows
 			WHERE is_local = 0
-			AND target_account_id NOT IN (SELECT id FROM remote_accounts)
+			AND (
+				(account_id NOT IN (SELECT id FROM remote_accounts)
+				 AND account_id NOT IN (SELECT id FROM accounts))
+				OR
+				(target_account_id NOT IN (SELECT id FROM remote_accounts)
+				 AND target_account_id NOT IN (SELECT id FROM accounts))
+			)
 		`)
 		if err != nil {
 			return err
@@ -848,15 +856,20 @@ func (db *DB) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity
 	var activity domain.Activity
 	var idStr, actorURIStr string
 
+	// Escape LIKE special characters to prevent wildcard injection
+	escapedURI := strings.ReplaceAll(objectURI, "\\", "\\\\") // Escape backslash first
+	escapedURI = strings.ReplaceAll(escapedURI, "%", "\\%")
+	escapedURI = strings.ReplaceAll(escapedURI, "_", "\\_")
+
 	// Search for CREATE activities where the raw JSON contains the object URI
 	// Filter by activity_type='Create' to avoid finding Update/Delete activities
 	err := db.db.QueryRow(
 		`SELECT id, activity_uri, activity_type, actor_uri, raw_json, processed, local, created_at
 		 FROM activities
-		 WHERE activity_type = 'Create' AND raw_json LIKE ?
+		 WHERE activity_type = 'Create' AND raw_json LIKE ? ESCAPE '\'
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
-		"%\"id\":\""+objectURI+"\"%",
+		"%\"id\":\""+escapedURI+"\"%",
 	).Scan(&idStr, &activity.ActivityURI, &activity.ActivityType, &actorURIStr,
 		&activity.RawJSON, &activity.Processed, &activity.Local, &activity.CreatedAt)
 

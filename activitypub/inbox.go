@@ -1,6 +1,7 @@
 package activitypub
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,14 +43,22 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 		return
 	}
 
-	// Read request body
-	body, err := io.ReadAll(r.Body)
+	// Read request body with size limit (1MB max to prevent DoS)
+	const maxBodySize = 1 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
 		log.Printf("Inbox: Failed to read body: %v", err)
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
+
+	// Check if body was truncated (too large)
+	if len(body) == maxBodySize {
+		log.Printf("Inbox: Request body too large")
+		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 
 	// Parse activity
 	var activity Activity
@@ -68,6 +77,9 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 		http.Error(w, "Failed to verify actor", http.StatusBadRequest)
 		return
 	}
+
+	// Restore body for signature verification (body was consumed during read)
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	// Verify HTTP signature with actor's public key
 	_, err = VerifyRequest(r, remoteActor.PublicKeyPem)
@@ -162,7 +174,10 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 
 	// Mark activity as processed
 	activityRecord.Processed = true
-	database.UpdateActivity(activityRecord)
+	if err := database.UpdateActivity(activityRecord); err != nil {
+		log.Printf("Inbox: Failed to update activity: %v", err)
+		// Continue anyway, this is not critical
+	}
 
 	// Return 202 Accepted
 	w.WriteHeader(http.StatusAccepted)
@@ -239,8 +254,29 @@ func handleUndoActivity(body []byte, username string, remoteActor *domain.Remote
 	}
 
 	if obj.Type == "Follow" {
-		// Delete the follow relationship
+		// Verify authorization: Undo actor must match Follow actor
 		database := db.GetDB()
+
+		// Fetch the follow to verify ownership
+		err, follow := database.ReadFollowByURI(obj.ID)
+		if err != nil {
+			return fmt.Errorf("follow not found: %w", err)
+		}
+		if follow == nil {
+			return fmt.Errorf("follow not found")
+		}
+
+		// Verify the Undo actor matches the Follow actor
+		// For remote follows, the AccountId is the remote actor who created the follow
+		err, followActor := database.ReadRemoteAccountById(follow.AccountId)
+		if err != nil || followActor == nil {
+			return fmt.Errorf("follow actor not found")
+		}
+		if followActor.ActorURI != undo.Actor {
+			return fmt.Errorf("unauthorized: actor %s cannot undo follow created by %s", undo.Actor, followActor.ActorURI)
+		}
+
+		// Authorization passed, delete the follow relationship
 		if err := database.DeleteFollowByURI(obj.ID); err != nil {
 			return fmt.Errorf("failed to delete follow: %w", err)
 		}
@@ -282,11 +318,16 @@ func handleCreateActivity(body []byte, username string) error {
 	}
 	log.Printf("Inbox: Local account: %s (ID: %s)", localAccount.Username, localAccount.Id)
 
-	// Get the remote actor
+	// Get the remote actor (try cache first, fetch if not found)
 	err, remoteActor := database.ReadRemoteAccountByActorURI(create.Actor)
 	if err != nil || remoteActor == nil {
-		log.Printf("Inbox: Rejecting Create from unknown actor %s (not cached)", create.Actor)
-		return fmt.Errorf("unknown actor")
+		// Not in cache, try to fetch it
+		log.Printf("Inbox: Actor %s not cached, fetching...", create.Actor)
+		remoteActor, err = FetchRemoteActor(create.Actor)
+		if err != nil {
+			log.Printf("Inbox: Failed to fetch actor %s: %v", create.Actor, err)
+			return fmt.Errorf("unknown actor")
+		}
 	}
 	log.Printf("Inbox: Remote actor: %s@%s (ID: %s)", remoteActor.Username, remoteActor.Domain, remoteActor.Id)
 
@@ -299,37 +340,8 @@ func handleCreateActivity(body []byte, username string) error {
 
 	log.Printf("Inbox: Accepted post from followed user %s@%s (follow accepted: %v)", remoteActor.Username, remoteActor.Domain, follow.Accepted)
 
-	// Use the activity ID, not the object ID
-	activityURI := create.ID
-	if activityURI == "" {
-		// Fallback to object ID if activity ID is missing
-		activityURI = create.Object.ID
-	}
-
-	// Check if we already have this activity
-	err, existingActivity := database.ReadActivityByURI(activityURI)
-	if err == nil && existingActivity != nil {
-		log.Printf("Inbox: Activity %s already exists, skipping", activityURI)
-		return nil
-	}
-
-	// Store the incoming post activity
-	activity := &domain.Activity{
-		Id:           uuid.New(),
-		ActivityURI:  activityURI,
-		ActivityType: "Create",
-		ActorURI:     create.Actor,
-		ObjectURI:    create.Object.ID,
-		RawJSON:      string(body),
-		Processed:    true,
-		Local:        false,
-		CreatedAt:    time.Now(),
-	}
-
-	if err := database.CreateActivity(activity); err != nil {
-		log.Printf("Inbox: Failed to store Create activity: %v", err)
-		// Don't fail the request
-	}
+	// Note: Activity is already stored in HandleInbox before this function is called
+	// No need to store it again here
 
 	return nil
 }
@@ -501,7 +513,12 @@ func handleDeleteActivity(body []byte, username string) error {
 			return nil
 		}
 
-		// Delete the activity from the database
+		// Verify authorization: Delete actor must match Activity actor
+		if activity.ActorURI != delete.Actor {
+			return fmt.Errorf("unauthorized: actor %s cannot delete content created by %s", delete.Actor, activity.ActorURI)
+		}
+
+		// Authorization passed, delete the activity from the database
 		if err := database.DeleteActivity(activity.Id); err != nil {
 			return fmt.Errorf("failed to delete activity: %w", err)
 		}
