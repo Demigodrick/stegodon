@@ -198,6 +198,9 @@ func (m Model) View() string {
 				}
 
 				userText = fmt.Sprintf("• %s (local)", localAcc.Username)
+				if !follow.Accepted {
+					userText += " (pending)"
+				}
 			} else {
 				// Remote follow - look up in remote_accounts table
 				err, remoteAcc := database.ReadRemoteAccountById(follow.TargetAccountId)
@@ -216,6 +219,9 @@ func (m Model) View() string {
 					remoteAcc.Username,
 					remoteAcc.Domain,
 				)
+				if !follow.Accepted {
+					userText += " (pending)"
+				}
 			}
 
 			if i == m.Selected {

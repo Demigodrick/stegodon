@@ -1,6 +1,7 @@
 package followuser
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -381,5 +382,63 @@ func TestFollowResultMsg_UserFriendlyMessages(t *testing.T) {
 	// Should contain informational icon
 	if !strings.Contains(updatedModel.Status, "ℹ") {
 		t.Error("Expected informational message to have ℹ icon")
+	}
+}
+
+// TestFollowResultMsg_PendingFollow tests handling of pending follow requests
+func TestFollowResultMsg_PendingFollow(t *testing.T) {
+	accountId := uuid.New()
+	model := InitialModel(accountId)
+
+	tests := []struct {
+		name          string
+		errMsg        string
+		wantStatus    string
+		wantContain   string
+		wantNoError   bool
+	}{
+		{
+			name:        "follow pending lowercase",
+			errMsg:      "follow pending bob@mastodon.social",
+			wantContain: "Follow request pending",
+			wantNoError: true,
+		},
+		{
+			name:        "follow pending mixed case",
+			errMsg:      "Follow Pending alice@example.com",
+			wantContain: "Follow request pending",
+			wantNoError: true,
+		},
+		{
+			name:        "follow pending with context",
+			errMsg:      "cannot follow: follow pending charlie@pleroma.social",
+			wantContain: "Follow request pending",
+			wantNoError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := followResultMsg{
+				username: "testuser@example.com",
+				err:      errors.New(tt.errMsg),
+			}
+
+			updatedModel, _ := model.Update(msg)
+			m := updatedModel
+
+			if !strings.Contains(m.Status, tt.wantContain) {
+				t.Errorf("Expected Status to contain '%s', got: %s", tt.wantContain, m.Status)
+			}
+
+			if tt.wantNoError && m.Error != "" {
+				t.Errorf("Expected Error to be empty for pending follow, got: %s", m.Error)
+			}
+
+			// Should have informational icon
+			if !strings.Contains(m.Status, "ℹ") {
+				t.Error("Expected Status to have ℹ icon for pending follow")
+			}
+		})
 	}
 }

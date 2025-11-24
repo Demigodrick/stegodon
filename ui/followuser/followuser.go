@@ -62,10 +62,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case followResultMsg:
 		if msg.err != nil {
-			// Check if it's an "already following" message (case-insensitive)
+			// Check error type (case-insensitive)
 			errMsg := strings.ToLower(msg.err.Error())
 			if strings.Contains(errMsg, "already following") {
 				m.Status = fmt.Sprintf("ℹ Already following %s", msg.username)
+				m.Error = ""
+			} else if strings.Contains(errMsg, "follow pending") {
+				m.Status = fmt.Sprintf("ℹ Follow request pending for %s", msg.username)
 				m.Error = ""
 			} else if strings.Contains(errMsg, "self-follow not allowed") {
 				m.Status = "ℹ Self-follow not allowed on stegodon for now"

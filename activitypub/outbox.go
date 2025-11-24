@@ -334,9 +334,16 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 		return fmt.Errorf("failed to check existing follow: %w", err)
 	}
 	if existingFollow != nil {
-		// Already following
-		log.Printf("SendFollow: User %s is already following %s@%s", localAccount.Username, remoteActor.Username, remoteActor.Domain)
-		return fmt.Errorf("already following %s@%s", remoteActor.Username, remoteActor.Domain)
+		// Follow relationship already exists - check if accepted
+		if existingFollow.Accepted {
+			// Already following and accepted
+			log.Printf("SendFollow: User %s is already following %s@%s (accepted)", localAccount.Username, remoteActor.Username, remoteActor.Domain)
+			return fmt.Errorf("already following %s@%s", remoteActor.Username, remoteActor.Domain)
+		} else {
+			// Follow exists but pending acceptance
+			log.Printf("SendFollow: User %s has pending follow request to %s@%s", localAccount.Username, remoteActor.Username, remoteActor.Domain)
+			return fmt.Errorf("follow pending %s@%s", remoteActor.Username, remoteActor.Domain)
+		}
 	}
 
 	// Not following yet, create the follow

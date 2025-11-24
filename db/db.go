@@ -993,7 +993,7 @@ const (
 		SELECT f.id, f.account_id, f.target_account_id, f.uri, f.accepted, f.created_at, f.is_local
 		FROM follows f
 		LEFT JOIN remote_accounts ra ON f.target_account_id = ra.id AND f.is_local = 0
-		WHERE f.account_id = ? AND f.accepted = 1
+		WHERE f.account_id = ?
 		AND (f.is_local = 1 OR ra.id IS NOT NULL)
 	`
 )
