@@ -64,7 +64,7 @@ Environment variables override embedded defaults:
 
 ```bash
 # Basic settings
-STEGODON_HOST=127.0.0.1          # Server IP
+STEGODON_HOST=0.0.0.0          # Server IP (you can use 127.0.0.1 to prevent remote connections)
 STEGODON_SSHPORT=23232            # SSH port
 STEGODON_HTTPPORT=9999            # HTTP port
 
