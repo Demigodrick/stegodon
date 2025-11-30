@@ -275,6 +275,49 @@ func TestReadNoteIdNotFound(t *testing.T) {
 	}
 }
 
+func TestReadNoteIdTimestampParsing(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create a note
+	noteId, err := db.CreateNote(userId, "Test message")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Read the note back
+	err, note := db.ReadNoteId(noteId)
+	if err != nil {
+		t.Fatalf("ReadNoteId failed: %v", err)
+	}
+	if note == nil {
+		t.Fatal("Expected note, got nil")
+	}
+
+	// Verify timestamp is not zero time
+	if note.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero time - timestamp parsing failed")
+	}
+
+	// Verify timestamp is recent (within last minute)
+	timeSince := time.Since(note.CreatedAt)
+	if timeSince < 0 || timeSince > time.Minute {
+		t.Errorf("CreatedAt timestamp is not recent: %v ago (expected < 1 minute)", timeSince)
+	}
+
+	// Verify note content
+	if note.Message != "Test message" {
+		t.Errorf("Expected message 'Test message', got '%s'", note.Message)
+	}
+	if note.CreatedBy != "testuser" {
+		t.Errorf("Expected username 'testuser', got '%s'", note.CreatedBy)
+	}
+}
+
 func TestReadNotesByUserId(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.db.Close()

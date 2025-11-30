@@ -347,17 +347,29 @@ func (db *DB) ReadNotesByUsername(username string) (error, *[]domain.Note) {
 func (db *DB) ReadNoteId(id uuid.UUID) (error, *domain.Note) {
 	row := db.db.QueryRow(sqlSelectNoteById, id)
 	var note domain.Note
+	var createdAtStr string
 	var editedAtStr sql.NullString
-	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &note.CreatedAt, &editedAtStr)
+	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
+	if err != nil {
+		return err, nil
+	}
+
+	// Parse created_at timestamp
+	note.CreatedAt, err = parseTimestamp(createdAtStr)
+	if err != nil {
+		return err, nil
+	}
+
+	// Parse edited_at if present
 	if editedAtStr.Valid {
 		if parsedTime, err := parseTimestamp(editedAtStr.String); err == nil {
 			note.EditedAt = &parsedTime
 		}
 	}
-	return err, &note
+	return nil, &note
 }
 
 func (db *DB) ReadAllNotes() (error, *[]domain.Note) {
