@@ -26,6 +26,9 @@ var embeddedTemplates embed.FS
 //go:embed static/stegologo.png
 var embeddedLogo []byte
 
+//go:embed static/style.css
+var embeddedCSS []byte
+
 func Router(conf *util.AppConfig) error {
 	log.Printf("Starting RSS Feed server on %s:%d", conf.Conf.Host, conf.Conf.HttpPort)
 
@@ -36,7 +39,16 @@ func Router(conf *util.AppConfig) error {
 	g := gin.Default()
 	g.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	g.Static("/static", "./web/static")
+	// Serve embedded static assets
+	g.GET("/static/stegologo.png", func(c *gin.Context) {
+		c.Header("Content-Type", "image/png")
+		c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+		c.Data(200, "image/png", embeddedLogo)
+	})
+	g.GET("/static/style.css", func(c *gin.Context) {
+		c.Header("Content-Type", "text/css; charset=utf-8")
+		c.Data(200, "text/css; charset=utf-8", embeddedCSS)
+	})
 
 	// Global rate limiter: 10 requests per second per IP, burst of 20
 	globalLimiter := NewRateLimiter(rate.Limit(10), 20)
