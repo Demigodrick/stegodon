@@ -54,7 +54,8 @@ func InitialModel(accountId uuid.UUID, width, height int) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	m.isActive = true // Mark as active when initializing
+	// Don't set isActive here - value receiver means changes don't persist
+	// ActivateViewMsg handler sets it correctly by returning modified model
 	return tea.Batch(
 		loadLocalPosts(m.AccountId),
 		tickRefresh(),

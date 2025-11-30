@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,6 +45,15 @@ func main() {
 	log.Printf("stegodon v%s", util.GetVersion())
 	log.Println("Configuration: ")
 	log.Println(util.PrettyPrint(conf))
+
+	// Start pprof server for profiling
+	go func() {
+		log.Println("pprof server listening on localhost:6060")
+		log.Println("Access profiling at http://localhost:6060/debug/pprof/")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Printf("pprof server error: %v", err)
+		}
+	}()
 
 	// Resolve SSH host key path (local first, then user config dir)
 	sshKeyPath := util.ResolveFilePathWithSubdir(".ssh", "stegodonhostkey")

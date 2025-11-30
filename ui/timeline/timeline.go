@@ -80,7 +80,8 @@ func InitialModel(accountId uuid.UUID, width, height int) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	m.isActive = true // Mark as active when initializing
+	// Don't set isActive here - value receiver means changes don't persist
+	// ActivateViewMsg handler sets it correctly by returning modified model
 	return tea.Batch(
 		loadFederatedPosts(m.AccountId),
 		tickRefresh(),
@@ -222,7 +223,7 @@ type postsLoadedMsg struct {
 func loadFederatedPosts(accountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		err, activities := database.ReadFederatedActivities(accountId, 20)
+		err, activities := database.ReadFederatedActivities(accountId, 50) // Increased from 20 to 50
 		if err != nil {
 			log.Printf("Failed to load federated activities: %v", err)
 			return postsLoadedMsg{posts: []FederatedPost{}}

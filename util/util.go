@@ -22,6 +22,9 @@ import (
 //go:embed version.txt
 var embeddedVersion string
 
+// Pre-compiled regex patterns for performance
+var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
+
 type RsaKeyPair struct {
 	Private string
 	Public  string
@@ -305,12 +308,9 @@ func ValidateNoteLength(text string) error {
 // ignoring ANSI escape sequences and OSC 8 hyperlinks.
 // This ensures proper truncation for strings containing terminal formatting.
 func TruncateVisibleLength(s string, maxLen int) string {
-	// Regex to match ANSI escape sequences (including OSC 8 hyperlinks)
-	// Matches: \033[...m (SGR), \033]8;;...\033\\ (OSC 8)
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
-
+	// Use pre-compiled regex for performance (was being compiled on every call)
 	// Strip ANSI codes to count visible characters
-	visible := ansiRegex.ReplaceAllString(s, "")
+	visible := ansiEscapeRegex.ReplaceAllString(s, "")
 
 	// If visible length is within limit, return original (with formatting)
 	if len(visible) <= maxLen {
