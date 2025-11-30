@@ -82,13 +82,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case common.ActivateViewMsg:
 		// View is becoming active (user navigated here)
 		m.isActive = true
-		// Reload posts and start ticker
-		return m, tea.Batch(loadLocalPosts(m.AccountId), tickRefresh())
+		// Load data first, tick will be scheduled when data arrives
+		return m, loadLocalPosts(m.AccountId)
 
 	case refreshTickMsg:
 		// Only schedule next refresh if view is still active
 		if m.isActive {
-			return m, tea.Batch(loadLocalPosts(m.AccountId), tickRefresh())
+			return m, loadLocalPosts(m.AccountId) // Just load data, tick scheduled after load
 		}
 		// View is inactive, stop the ticker chain
 		return m, nil
@@ -96,6 +96,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case postsLoadedMsg:
 		m.Posts = msg.posts
 		// Don't reset offset on auto-refresh, only on manual Init
+
+		// Schedule next tick AFTER data loads (only if still active)
+		// This prevents tea.Batch() goroutine accumulation
+		if m.isActive {
+			return m, tickRefresh()
+		}
 		return m, nil
 
 	case tea.KeyMsg:

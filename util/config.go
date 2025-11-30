@@ -26,6 +26,7 @@ type AppConfig struct {
 		Closed          bool   `yaml:"closed"`
 		NodeDescription string `yaml:"nodeDescription"`
 		WithJournald    bool   `yaml:"withJournald"`
+		WithPprof       bool   `yaml:"withPprof"`
 	}
 }
 
@@ -73,6 +74,7 @@ func ReadConf() (*AppConfig, error) {
 	envClosed := os.Getenv("STEGODON_CLOSED")
 	envNodeDescription := os.Getenv("STEGODON_NODE_DESCRIPTION")
 	envWithJournald := os.Getenv("STEGODON_WITH_JOURNALD")
+	envWithPprof := os.Getenv("STEGODON_WITH_PPROF")
 
 	if envHost != "" {
 		c.Conf.Host = envHost
@@ -116,6 +118,10 @@ func ReadConf() (*AppConfig, error) {
 
 	if envWithJournald == "true" {
 		c.Conf.WithJournald = true
+	}
+
+	if envWithPprof == "true" {
+		c.Conf.WithPprof = true
 	}
 
 	return c, nil

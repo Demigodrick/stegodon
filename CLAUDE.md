@@ -63,6 +63,7 @@ Configuration is managed via environment variables:
 - `STEGODON_CLOSED` - Close registration for new users (default: false)
 - `STEGODON_NODE_DESCRIPTION` - Custom description for NodeInfo (default: "A SSH-first federated microblog")
 - `STEGODON_WITH_JOURNALD` - **Linux only** - Enable journald logging for systemd integration (default: false)
+- `STEGODON_WITH_PPROF` - Enable pprof profiling server on localhost:6060 (default: false)
 
 **File Locations** (as of single-binary distribution):
 - Configuration file: Checked in order:
@@ -125,6 +126,17 @@ Configuration is managed via environment variables:
   [Install]
   WantedBy=multi-user.target
   ```
+
+**For pprof profiling (performance debugging)**:
+- Set `STEGODON_WITH_PPROF=true` to enable the pprof HTTP server
+- Server listens on `localhost:6060` (not exposed externally)
+- Access profiling web interface at `http://localhost:6060/debug/pprof/`
+- Useful commands:
+  - CPU profile: `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`
+  - Heap profile: `go tool pprof http://localhost:6060/debug/pprof/heap`
+  - Goroutine count: `curl http://localhost:6060/debug/pprof/goroutine?debug=1 | grep "goroutine profile"`
+- **Security**: Only enable on localhost, never expose publicly
+- Useful for debugging performance issues, memory leaks, and goroutine leaks
 
 ## Architecture
 

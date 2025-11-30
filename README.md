@@ -81,6 +81,9 @@ STEGODON_NODE_DESCRIPTION="My personal microblog server"  # NodeInfo description
 
 # Logging (Linux only)
 STEGODON_WITH_JOURNALD=true       # Send logs to systemd journald
+
+# Profiling (development/debugging)
+STEGODON_WITH_PPROF=true          # Enable pprof profiler on localhost:6060
 ```
 
 **File locations:**
@@ -98,6 +101,21 @@ journalctl -t stegodon --since "1 hour ago"
 
 # View logs for a specific service
 journalctl -u stegodon.service -f
+```
+
+**Profiling (when STEGODON_WITH_PPROF=true):**
+```bash
+# Access web UI
+open http://localhost:6060/debug/pprof/
+
+# CPU profile (30 seconds)
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+
+# Heap profile
+go tool pprof http://localhost:6060/debug/pprof/heap
+
+# Goroutine count
+curl http://localhost:6060/debug/pprof/goroutine?debug=1 | grep "goroutine profile"
 ```
 
 ## ActivityPub Setup
