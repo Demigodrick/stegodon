@@ -53,18 +53,18 @@ func TestIsValidWebFingerUsername(t *testing.T) {
 		{"\nalice", false, "invalid characters"},
 
 		// Invalid usernames - other special characters not in allowed set
-		{"alice@bob", false, "invalid characters"}, // @ not allowed
-		{"alice#bob", false, "invalid characters"}, // # not allowed
-		{"alice%bob", false, "invalid characters"}, // % not allowed
-		{"alice^bob", false, "invalid characters"}, // ^ not allowed
+		{"alice@bob", false, "invalid characters"},  // @ not allowed
+		{"alice#bob", false, "invalid characters"},  // # not allowed
+		{"alice%bob", false, "invalid characters"},  // % not allowed
+		{"alice^bob", false, "invalid characters"},  // ^ not allowed
 		{"alice[bob]", false, "invalid characters"}, // [] not allowed
 		{"alice{bob}", false, "invalid characters"}, // {} not allowed
-		{"alice|bob", false, "invalid characters"}, // | not allowed
+		{"alice|bob", false, "invalid characters"},  // | not allowed
 		{"alice\\bob", false, "invalid characters"}, // \ not allowed
-		{"alice/bob", false, "invalid characters"}, // / not allowed
-		{"alice:bob", false, "invalid characters"}, // : not allowed
+		{"alice/bob", false, "invalid characters"},  // / not allowed
+		{"alice:bob", false, "invalid characters"},  // : not allowed
 		{"alice<bob>", false, "invalid characters"}, // <> not allowed
-		{"alice?bob", false, "invalid characters"}, // ? not allowed
+		{"alice?bob", false, "invalid characters"},  // ? not allowed
 	}
 
 	for _, tt := range tests {

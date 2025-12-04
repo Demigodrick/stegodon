@@ -590,3 +590,306 @@ func TestVerifyRequestWithPKIXPublicKey(t *testing.T) {
 		t.Errorf("Expected actor URI '%s', got '%s'", expectedActor, actorURI)
 	}
 }
+
+// ============================================================================
+// Additional edge case tests
+// ============================================================================
+
+// TestSignRequestWithLargeBody tests signing requests with large body content
+func TestSignRequestWithLargeBody(t *testing.T) {
+	privateKey, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	// Create a large body (1KB)
+	largeContent := make([]byte, 1024)
+	for i := range largeContent {
+		largeContent[i] = byte('a' + (i % 26))
+	}
+	body := []byte(`{"type":"Create","content":"` + string(largeContent) + `"}`)
+
+	req, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Host", "example.com")
+	req.Header.Set("Digest", calculateDigest(body))
+
+	keyId := "https://myserver.com/users/alice#main-key"
+	err = SignRequest(req, privateKey, keyId)
+	if err != nil {
+		t.Fatalf("SignRequest failed with large body: %v", err)
+	}
+
+	// Verify
+	req2, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to recreate request: %v", err)
+	}
+	req2.Header = req.Header.Clone()
+
+	_, err = VerifyRequest(req2, publicPEM)
+	if err != nil {
+		t.Fatalf("VerifyRequest failed with large body: %v", err)
+	}
+}
+
+// TestSignRequestWithUnicodeContent tests signing requests with unicode content
+func TestSignRequestWithUnicodeContent(t *testing.T) {
+	privateKey, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	body := []byte(`{"type":"Create","content":"Hello 世界 🌍 مرحبا"}`)
+
+	req, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Host", "example.com")
+	req.Header.Set("Digest", calculateDigest(body))
+
+	keyId := "https://myserver.com/users/alice#main-key"
+	err = SignRequest(req, privateKey, keyId)
+	if err != nil {
+		t.Fatalf("SignRequest failed with unicode: %v", err)
+	}
+
+	// Verify
+	req2, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to recreate request: %v", err)
+	}
+	req2.Header = req.Header.Clone()
+
+	_, err = VerifyRequest(req2, publicPEM)
+	if err != nil {
+		t.Fatalf("VerifyRequest failed with unicode: %v", err)
+	}
+}
+
+// TestSignRequestWithSpecialPathCharacters tests signing requests with special URL paths
+func TestSignRequestWithSpecialPathCharacters(t *testing.T) {
+	privateKey, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	paths := []string{
+		"https://example.com/users/alice@domain.com/inbox",
+		"https://example.com/users/alice%40domain.com/inbox",
+		"https://example.com:8080/inbox",
+	}
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			body := []byte(`{"type":"Follow"}`)
+
+			req, err := http.NewRequest("POST", path, bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/activity+json")
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Host", req.URL.Host)
+			req.Header.Set("Digest", calculateDigest(body))
+
+			keyId := "https://myserver.com/users/alice#main-key"
+			err = SignRequest(req, privateKey, keyId)
+			if err != nil {
+				t.Fatalf("SignRequest failed for path %s: %v", path, err)
+			}
+
+			// Verify
+			req2, err := http.NewRequest("POST", path, bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("Failed to recreate request: %v", err)
+			}
+			req2.Header = req.Header.Clone()
+
+			_, err = VerifyRequest(req2, publicPEM)
+			if err != nil {
+				t.Fatalf("VerifyRequest failed for path %s: %v", path, err)
+			}
+		})
+	}
+}
+
+// TestVerifyRequestMissingSignatureHeader tests verification with missing signature header
+func TestVerifyRequestMissingSignatureHeader(t *testing.T) {
+	_, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	body := []byte(`{"type":"Follow"}`)
+	req, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	// No Signature header
+
+	_, err = VerifyRequest(req, publicPEM)
+	if err == nil {
+		t.Error("Expected error for missing signature header")
+	}
+}
+
+// TestVerifyRequestMissingDigestHeader tests verification with missing digest header
+func TestVerifyRequestMissingDigestHeader(t *testing.T) {
+	privateKey, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	body := []byte(`{"type":"Follow"}`)
+	req, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Host", "example.com")
+	req.Header.Set("Digest", calculateDigest(body))
+
+	keyId := "https://myserver.com/users/alice#main-key"
+	err = SignRequest(req, privateKey, keyId)
+	if err != nil {
+		t.Fatalf("SignRequest failed: %v", err)
+	}
+
+	// Remove digest header
+	req2, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to recreate request: %v", err)
+	}
+	req2.Header = req.Header.Clone()
+	req2.Header.Del("Digest")
+
+	_, err = VerifyRequest(req2, publicPEM)
+	if err == nil {
+		t.Error("Expected error for missing digest header")
+	}
+}
+
+// TestDigestCalculationConsistency tests that digest calculation is consistent
+func TestDigestCalculationConsistency(t *testing.T) {
+	body := []byte(`{"type":"Create","object":{"content":"Hello, World!"}}`)
+
+	digest1 := calculateDigest(body)
+	digest2 := calculateDigest(body)
+
+	if digest1 != digest2 {
+		t.Error("Digest calculation should be consistent for same input")
+	}
+
+	// Different input should produce different digest
+	body2 := []byte(`{"type":"Create","object":{"content":"Different content"}}`)
+	digest3 := calculateDigest(body2)
+
+	if digest1 == digest3 {
+		t.Error("Different inputs should produce different digests")
+	}
+}
+
+// TestKeyIdFragmentExtraction tests extraction of actor URI from various keyId formats
+func TestKeyIdFragmentExtraction(t *testing.T) {
+	privateKey, publicKey, err := generateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	publicPEM, err := publicKeyToPEM(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to convert public key to PEM: %v", err)
+	}
+
+	tests := []struct {
+		keyId         string
+		expectedActor string
+	}{
+		{
+			keyId:         "https://example.com/users/alice#main-key",
+			expectedActor: "https://example.com/users/alice",
+		},
+		{
+			keyId:         "https://example.com/users/bob#publicKey",
+			expectedActor: "https://example.com/users/bob",
+		},
+		{
+			keyId:         "https://example.com/actor",
+			expectedActor: "https://example.com/actor",
+		},
+		{
+			keyId:         "https://example.com/@alice#main-key",
+			expectedActor: "https://example.com/@alice",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.keyId, func(t *testing.T) {
+			body := []byte(`{"type":"Create"}`)
+			req, err := http.NewRequest("POST", "https://target.com/inbox", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/activity+json")
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Host", "target.com")
+			req.Header.Set("Digest", calculateDigest(body))
+
+			err = SignRequest(req, privateKey, tt.keyId)
+			if err != nil {
+				t.Fatalf("SignRequest failed: %v", err)
+			}
+
+			req2, err := http.NewRequest("POST", "https://target.com/inbox", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("Failed to recreate request: %v", err)
+			}
+			req2.Header = req.Header.Clone()
+
+			actorURI, err := VerifyRequest(req2, publicPEM)
+			if err != nil {
+				t.Fatalf("VerifyRequest failed: %v", err)
+			}
+
+			if actorURI != tt.expectedActor {
+				t.Errorf("Expected actor URI '%s', got '%s'", tt.expectedActor, actorURI)
+			}
+		})
+	}
+}

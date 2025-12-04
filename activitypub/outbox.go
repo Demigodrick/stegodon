@@ -11,14 +11,20 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 )
 
-// SendActivity sends an activity to a remote inbox
+// SendActivity sends an activity to a remote inbox.
+// This is the production wrapper that uses the default HTTP client.
 func SendActivity(activity any, inboxURI string, localAccount *domain.Account, conf *util.AppConfig) error {
+	return SendActivityWithDeps(activity, inboxURI, localAccount, conf, defaultHTTPClient)
+}
+
+// SendActivityWithDeps sends an activity to a remote inbox.
+// This version accepts dependencies for testing.
+func SendActivityWithDeps(activity any, inboxURI string, localAccount *domain.Account, conf *util.AppConfig, client HTTPClient) error {
 	// Marshal activity to JSON
 	activityJSON, err := json.Marshal(activity)
 	if err != nil {
@@ -55,7 +61,6 @@ func SendActivity(activity any, inboxURI string, localAccount *domain.Account, c
 	}
 
 	// Send request
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -70,8 +75,15 @@ func SendActivity(activity any, inboxURI string, localAccount *domain.Account, c
 	return nil
 }
 
-// SendAccept sends an Accept activity in response to a Follow
+// SendAccept sends an Accept activity in response to a Follow.
+// This is the production wrapper that uses the default HTTP client.
 func SendAccept(localAccount *domain.Account, remoteActor *domain.RemoteAccount, followID string, conf *util.AppConfig) error {
+	return SendAcceptWithDeps(localAccount, remoteActor, followID, conf, defaultHTTPClient)
+}
+
+// SendAcceptWithDeps sends an Accept activity in response to a Follow.
+// This version accepts dependencies for testing.
+func SendAcceptWithDeps(localAccount *domain.Account, remoteActor *domain.RemoteAccount, followID string, conf *util.AppConfig, client HTTPClient) error {
 	acceptID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 
@@ -88,11 +100,18 @@ func SendAccept(localAccount *domain.Account, remoteActor *domain.RemoteAccount,
 		},
 	}
 
-	return SendActivity(accept, remoteActor.InboxURI, localAccount, conf)
+	return SendActivityWithDeps(accept, remoteActor.InboxURI, localAccount, conf, client)
 }
 
-// SendCreate sends a Create activity for a new note
+// SendCreate sends a Create activity for a new note.
+// This is the production wrapper that uses the default database.
 func SendCreate(note *domain.Note, localAccount *domain.Account, conf *util.AppConfig) error {
+	return SendCreateWithDeps(note, localAccount, conf, NewDBWrapper())
+}
+
+// SendCreateWithDeps sends a Create activity for a new note.
+// This version accepts dependencies for testing.
+func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *util.AppConfig, database Database) error {
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
 	createID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
@@ -129,7 +148,6 @@ func SendCreate(note *domain.Note, localAccount *domain.Account, conf *util.AppC
 	}
 
 	// Get all followers and queue delivery to their inboxes
-	database := db.GetDB()
 	err, followers := database.ReadFollowersByAccountId(localAccount.Id)
 	if err != nil {
 		log.Printf("Outbox: Failed to get followers: %v", err)
@@ -169,8 +187,15 @@ func SendCreate(note *domain.Note, localAccount *domain.Account, conf *util.AppC
 	return nil
 }
 
-// SendUpdate sends an Update activity to all followers when a note is edited
+// SendUpdate sends an Update activity to all followers when a note is edited.
+// This is the production wrapper that uses the default database.
 func SendUpdate(note *domain.Note, localAccount *domain.Account, conf *util.AppConfig) error {
+	return SendUpdateWithDeps(note, localAccount, conf, NewDBWrapper())
+}
+
+// SendUpdateWithDeps sends an Update activity to all followers when a note is edited.
+// This version accepts dependencies for testing.
+func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *util.AppConfig, database Database) error {
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
 	updateID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
@@ -213,7 +238,6 @@ func SendUpdate(note *domain.Note, localAccount *domain.Account, conf *util.AppC
 	}
 
 	// Get all followers and queue delivery to their inboxes
-	database := db.GetDB()
 	err, followers := database.ReadFollowersByAccountId(localAccount.Id)
 	if err != nil {
 		log.Printf("Outbox: Failed to get followers for Update: %v", err)
@@ -251,8 +275,15 @@ func SendUpdate(note *domain.Note, localAccount *domain.Account, conf *util.AppC
 	return nil
 }
 
-// SendDelete sends a Delete activity to all followers when a note is deleted
+// SendDelete sends a Delete activity to all followers when a note is deleted.
+// This is the production wrapper that uses the default database.
 func SendDelete(noteId uuid.UUID, localAccount *domain.Account, conf *util.AppConfig) error {
+	return SendDeleteWithDeps(noteId, localAccount, conf, NewDBWrapper())
+}
+
+// SendDeleteWithDeps sends a Delete activity to all followers when a note is deleted.
+// This version accepts dependencies for testing.
+func SendDeleteWithDeps(noteId uuid.UUID, localAccount *domain.Account, conf *util.AppConfig, database Database) error {
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, noteId.String())
 	deleteID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
@@ -273,7 +304,6 @@ func SendDelete(noteId uuid.UUID, localAccount *domain.Account, conf *util.AppCo
 	}
 
 	// Get all followers and queue delivery to their inboxes
-	database := db.GetDB()
 	err, followers := database.ReadFollowersByAccountId(localAccount.Id)
 	if err != nil {
 		log.Printf("Outbox: Failed to get followers for Delete: %v", err)
@@ -311,10 +341,17 @@ func SendDelete(noteId uuid.UUID, localAccount *domain.Account, conf *util.AppCo
 	return nil
 }
 
-// SendFollow sends a Follow activity to a remote actor
+// SendFollow sends a Follow activity to a remote actor.
+// This is the production wrapper that uses the default HTTP client and database.
 func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.AppConfig) error {
+	return SendFollowWithDeps(localAccount, remoteActorURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendFollowWithDeps sends a Follow activity to a remote actor.
+// This version accepts dependencies for testing.
+func SendFollowWithDeps(localAccount *domain.Account, remoteActorURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
 	// Fetch remote actor
-	remoteActor, err := GetOrFetchActor(remoteActorURI)
+	remoteActor, err := GetOrFetchActorWithDeps(remoteActorURI, client, database)
 	if err != nil {
 		return fmt.Errorf("failed to fetch remote actor: %w", err)
 	}
@@ -326,7 +363,6 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 	}
 
 	// Check if already following this user
-	database := db.GetDB()
 	err, existingFollow := database.ReadFollowByAccountIds(localAccount.Id, remoteActor.Id)
 	if err != sql.ErrNoRows && err != nil {
 		// Database error (not "not found")
@@ -373,11 +409,18 @@ func SendFollow(localAccount *domain.Account, remoteActorURI string, conf *util.
 	}
 
 	// Send Follow activity
-	return SendActivity(follow, remoteActor.InboxURI, localAccount, conf)
+	return SendActivityWithDeps(follow, remoteActor.InboxURI, localAccount, conf, client)
 }
 
-// SendUndo sends an Undo activity for a Follow (i.e., unfollow)
+// SendUndo sends an Undo activity for a Follow (i.e., unfollow).
+// This is the production wrapper that uses the default HTTP client.
 func SendUndo(localAccount *domain.Account, follow *domain.Follow, remoteActor *domain.RemoteAccount, conf *util.AppConfig) error {
+	return SendUndoWithDeps(localAccount, follow, remoteActor, conf, defaultHTTPClient)
+}
+
+// SendUndoWithDeps sends an Undo activity for a Follow (i.e., unfollow).
+// This version accepts dependencies for testing.
+func SendUndoWithDeps(localAccount *domain.Account, follow *domain.Follow, remoteActor *domain.RemoteAccount, conf *util.AppConfig, client HTTPClient) error {
 	undoID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 
@@ -396,7 +439,7 @@ func SendUndo(localAccount *domain.Account, follow *domain.Follow, remoteActor *
 	}
 
 	log.Printf("Outbox: Sending Undo (unfollow) from %s to %s@%s", localAccount.Username, remoteActor.Username, remoteActor.Domain)
-	return SendActivity(undo, remoteActor.InboxURI, localAccount, conf)
+	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
 }
 
 // mustMarshal marshals v to JSON, panicking on error

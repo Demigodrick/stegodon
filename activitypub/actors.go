@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/google/uuid"
 )
+
+// defaultHTTPClient is the default HTTP client for production use
+var defaultHTTPClient HTTPClient = NewDefaultHTTPClient(10 * time.Second)
 
 // ActorResponse represents the JSON structure of an ActivityPub actor
 type ActorResponse struct {
@@ -36,8 +38,15 @@ type ActorResponse struct {
 	} `json:"publicKey"`
 }
 
-// FetchRemoteActor fetches an actor from a remote server and stores in cache
+// FetchRemoteActor fetches an actor from a remote server and stores in cache.
+// This is the production wrapper that uses the default HTTP client and database.
 func FetchRemoteActor(actorURI string) (*domain.RemoteAccount, error) {
+	return FetchRemoteActorWithDeps(actorURI, defaultHTTPClient, NewDBWrapper())
+}
+
+// FetchRemoteActorWithDeps fetches an actor from a remote server and stores in cache.
+// This version accepts dependencies for testing.
+func FetchRemoteActorWithDeps(actorURI string, client HTTPClient, database Database) (*domain.RemoteAccount, error) {
 	// Create HTTP request with Accept: application/activity+json
 	req, err := http.NewRequest("GET", actorURI, nil)
 	if err != nil {
@@ -47,7 +56,6 @@ func FetchRemoteActor(actorURI string) (*domain.RemoteAccount, error) {
 	req.Header.Set("Accept", "application/activity+json")
 	req.Header.Set("User-Agent", "stegodon/1.0 ActivityPub")
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -81,7 +89,6 @@ func FetchRemoteActor(actorURI string) (*domain.RemoteAccount, error) {
 	}
 
 	// Check if remote account already exists
-	database := db.GetDB()
 	err, existingAcc := database.ReadRemoteAccountByURI(actor.ID)
 
 	var remoteAcc *domain.RemoteAccount
@@ -128,10 +135,15 @@ func FetchRemoteActor(actorURI string) (*domain.RemoteAccount, error) {
 	return remoteAcc, nil
 }
 
-// GetOrFetchActor returns actor from cache or fetches if not cached/stale
+// GetOrFetchActor returns actor from cache or fetches if not cached/stale.
+// This is the production wrapper that uses the default HTTP client and database.
 func GetOrFetchActor(actorURI string) (*domain.RemoteAccount, error) {
-	database := db.GetDB()
+	return GetOrFetchActorWithDeps(actorURI, defaultHTTPClient, NewDBWrapper())
+}
 
+// GetOrFetchActorWithDeps returns actor from cache or fetches if not cached/stale.
+// This version accepts dependencies for testing.
+func GetOrFetchActorWithDeps(actorURI string, client HTTPClient, database Database) (*domain.RemoteAccount, error) {
 	// Check cache first
 	err, cached := database.ReadRemoteAccountByURI(actorURI)
 	if err == nil && cached != nil {
@@ -142,7 +154,7 @@ func GetOrFetchActor(actorURI string) (*domain.RemoteAccount, error) {
 	}
 
 	// Fetch fresh data
-	return FetchRemoteActor(actorURI)
+	return FetchRemoteActorWithDeps(actorURI, client, database)
 }
 
 // extractDomain extracts the domain from an actor URI

@@ -9,11 +9,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 )
+
+// InboxDeps holds dependencies for inbox handlers (for testing)
+type InboxDeps struct {
+	Database   Database
+	HTTPClient HTTPClient
+}
 
 // Activity represents a generic ActivityPub activity
 type Activity struct {
@@ -35,6 +40,16 @@ type FollowActivity struct {
 
 // HandleInbox processes incoming ActivityPub activities
 func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *util.AppConfig) {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	HandleInboxWithDeps(w, r, username, conf, deps)
+}
+
+// HandleInboxWithDeps processes incoming ActivityPub activities.
+// This version accepts dependencies for testing.
+func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string, conf *util.AppConfig, deps *InboxDeps) {
 	// Verify HTTP signature
 	signature := r.Header.Get("Signature")
 	if signature == "" {
@@ -71,7 +86,7 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 	log.Printf("Inbox: Received %s from %s", activity.Type, activity.Actor)
 
 	// Fetch remote actor to verify and cache
-	remoteActor, err := GetOrFetchActor(activity.Actor)
+	remoteActor, err := GetOrFetchActorWithDeps(activity.Actor, deps.HTTPClient, deps.Database)
 	if err != nil {
 		log.Printf("Inbox: Failed to fetch actor %s: %v", activity.Actor, err)
 		http.Error(w, "Failed to verify actor", http.StatusBadRequest)
@@ -90,7 +105,7 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 	}
 
 	// Store activity in database
-	database := db.GetDB()
+	database := deps.Database
 
 	// Extract ObjectURI from the activity's object field
 	objectURI := ""
@@ -127,43 +142,43 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 	// Process activity based on type
 	switch activity.Type {
 	case "Follow":
-		if err := handleFollowActivity(body, username, remoteActor, conf); err != nil {
+		if err := handleFollowActivityWithDeps(body, username, remoteActor, conf, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Follow: %v", err)
 			http.Error(w, "Failed to process Follow", http.StatusInternalServerError)
 			return
 		}
 	case "Undo":
-		if err := handleUndoActivity(body, username, remoteActor); err != nil {
+		if err := handleUndoActivityWithDeps(body, username, remoteActor, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Undo: %v", err)
 			http.Error(w, "Failed to process Undo", http.StatusInternalServerError)
 			return
 		}
 	case "Create":
-		if err := handleCreateActivity(body, username); err != nil {
+		if err := handleCreateActivityWithDeps(body, username, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Create: %v", err)
 			http.Error(w, "Failed to process Create", http.StatusInternalServerError)
 			return
 		}
 	case "Like":
-		if err := handleLikeActivity(body, username); err != nil {
+		if err := handleLikeActivityWithDeps(body, username, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Like: %v", err)
 			http.Error(w, "Failed to process Like", http.StatusInternalServerError)
 			return
 		}
 	case "Accept":
 		// Accept activities are confirmations of Follow requests
-		if err := handleAcceptActivity(body, username); err != nil {
+		if err := handleAcceptActivityWithDeps(body, username, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Accept: %v", err)
 			// Don't fail the request
 		}
 	case "Update":
-		if err := handleUpdateActivity(body, username); err != nil {
+		if err := handleUpdateActivityWithDeps(body, username, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Update: %v", err)
 			http.Error(w, "Failed to process Update", http.StatusInternalServerError)
 			return
 		}
 	case "Delete":
-		if err := handleDeleteActivity(body, username); err != nil {
+		if err := handleDeleteActivityWithDeps(body, username, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Delete: %v", err)
 			http.Error(w, "Failed to process Delete", http.StatusInternalServerError)
 			return
@@ -185,6 +200,16 @@ func HandleInbox(w http.ResponseWriter, r *http.Request, username string, conf *
 
 // handleFollowActivity processes a Follow activity
 func handleFollowActivity(body []byte, username string, remoteActor *domain.RemoteAccount, conf *util.AppConfig) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleFollowActivityWithDeps(body, username, remoteActor, conf, deps)
+}
+
+// handleFollowActivityWithDeps processes a Follow activity.
+// This version accepts dependencies for testing.
+func handleFollowActivityWithDeps(body []byte, username string, remoteActor *domain.RemoteAccount, conf *util.AppConfig, deps *InboxDeps) error {
 	var follow FollowActivity
 	if err := json.Unmarshal(body, &follow); err != nil {
 		return fmt.Errorf("failed to parse Follow activity: %w", err)
@@ -193,7 +218,7 @@ func handleFollowActivity(body []byte, username string, remoteActor *domain.Remo
 	log.Printf("Inbox: Processing Follow from %s@%s", remoteActor.Username, remoteActor.Domain)
 
 	// Get local account
-	database := db.GetDB()
+	database := deps.Database
 	err, localAccount := database.ReadAccByUsername(username)
 	if err != nil {
 		return fmt.Errorf("local account not found: %w", err)
@@ -224,7 +249,7 @@ func handleFollowActivity(body []byte, username string, remoteActor *domain.Remo
 	}
 
 	// Send Accept activity
-	if err := SendAccept(localAccount, remoteActor, follow.ID, conf); err != nil {
+	if err := SendAcceptWithDeps(localAccount, remoteActor, follow.ID, conf, deps.HTTPClient); err != nil {
 		return fmt.Errorf("failed to send Accept: %w", err)
 	}
 
@@ -234,6 +259,16 @@ func handleFollowActivity(body []byte, username string, remoteActor *domain.Remo
 
 // handleUndoActivity processes an Undo activity (e.g., Undo Follow)
 func handleUndoActivity(body []byte, username string, remoteActor *domain.RemoteAccount) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleUndoActivityWithDeps(body, username, remoteActor, deps)
+}
+
+// handleUndoActivityWithDeps processes an Undo activity (e.g., Undo Follow).
+// This version accepts dependencies for testing.
+func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domain.RemoteAccount, deps *InboxDeps) error {
 	// Parse the Undo activity
 	var undo struct {
 		Type   string          `json:"type"`
@@ -255,7 +290,7 @@ func handleUndoActivity(body []byte, username string, remoteActor *domain.Remote
 
 	if obj.Type == "Follow" {
 		// Verify authorization: Undo actor must match Follow actor
-		database := db.GetDB()
+		database := deps.Database
 
 		// Fetch the follow to verify ownership
 		err, follow := database.ReadFollowByURI(obj.ID)
@@ -288,6 +323,16 @@ func handleUndoActivity(body []byte, username string, remoteActor *domain.Remote
 
 // handleCreateActivity processes a Create activity (incoming post/note)
 func handleCreateActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleCreateActivityWithDeps(body, username, deps)
+}
+
+// handleCreateActivityWithDeps processes a Create activity (incoming post/note).
+// This version accepts dependencies for testing.
+func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	var create struct {
 		ID     string `json:"id"`
 		Type   string `json:"type"`
@@ -308,7 +353,7 @@ func handleCreateActivity(body []byte, username string) error {
 	log.Printf("Inbox: Received post from %s", create.Actor)
 
 	// Validate that we follow this actor (prevent spam)
-	database := db.GetDB()
+	database := deps.Database
 
 	// Get the local account
 	err, localAccount := database.ReadAccByUsername(username)
@@ -323,7 +368,7 @@ func handleCreateActivity(body []byte, username string) error {
 	if err != nil || remoteActor == nil {
 		// Not in cache, try to fetch it
 		log.Printf("Inbox: Actor %s not cached, fetching...", create.Actor)
-		remoteActor, err = FetchRemoteActor(create.Actor)
+		remoteActor, err = FetchRemoteActorWithDeps(create.Actor, deps.HTTPClient, deps.Database)
 		if err != nil {
 			log.Printf("Inbox: Failed to fetch actor %s: %v", create.Actor, err)
 			return fmt.Errorf("unknown actor")
@@ -348,6 +393,16 @@ func handleCreateActivity(body []byte, username string) error {
 
 // handleLikeActivity processes a Like activity
 func handleLikeActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleLikeActivityWithDeps(body, username, deps)
+}
+
+// handleLikeActivityWithDeps processes a Like activity.
+// This version accepts dependencies for testing.
+func handleLikeActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	log.Printf("Inbox: Processing Like activity for %s", username)
 	// TODO: Store like in likes table
 	return nil
@@ -355,6 +410,16 @@ func handleLikeActivity(body []byte, username string) error {
 
 // handleAcceptActivity processes an Accept activity (response to Follow)
 func handleAcceptActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleAcceptActivityWithDeps(body, username, deps)
+}
+
+// handleAcceptActivityWithDeps processes an Accept activity (response to Follow).
+// This version accepts dependencies for testing.
+func handleAcceptActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	var accept struct {
 		Type   string `json:"type"`
 		Actor  string `json:"actor"`
@@ -383,7 +448,7 @@ func handleAcceptActivity(body []byte, username string) error {
 	}
 
 	// Update the follow to accepted=true
-	database := db.GetDB()
+	database := deps.Database
 	if err := database.AcceptFollowByURI(followID); err != nil {
 		return fmt.Errorf("failed to accept follow: %w", err)
 	}
@@ -394,6 +459,16 @@ func handleAcceptActivity(body []byte, username string) error {
 
 // handleUpdateActivity processes an Update activity (e.g., profile updates, post edits)
 func handleUpdateActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleUpdateActivityWithDeps(body, username, deps)
+}
+
+// handleUpdateActivityWithDeps processes an Update activity (e.g., profile updates, post edits).
+// This version accepts dependencies for testing.
+func handleUpdateActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	var update struct {
 		ID     string          `json:"id"`
 		Type   string          `json:"type"`
@@ -416,12 +491,12 @@ func handleUpdateActivity(body []byte, username string) error {
 
 	log.Printf("Inbox: Processing Update for %s (type: %s) from %s", objectType.ID, objectType.Type, update.Actor)
 
-	database := db.GetDB()
+	database := deps.Database
 
 	switch objectType.Type {
 	case "Person":
 		// Profile update - re-fetch and update cached actor
-		remoteActor, err := GetOrFetchActor(update.Actor)
+		remoteActor, err := GetOrFetchActorWithDeps(update.Actor, deps.HTTPClient, deps.Database)
 		if err != nil {
 			return fmt.Errorf("failed to fetch updated actor: %w", err)
 		}
@@ -454,6 +529,16 @@ func handleUpdateActivity(body []byte, username string) error {
 
 // handleDeleteActivity processes a Delete activity (e.g., post deletion, account deletion)
 func handleDeleteActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleDeleteActivityWithDeps(body, username, deps)
+}
+
+// handleDeleteActivityWithDeps processes a Delete activity (e.g., post deletion, account deletion).
+// This version accepts dependencies for testing.
+func handleDeleteActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	var delete struct {
 		ID     string `json:"id"`
 		Type   string `json:"type"`
@@ -465,7 +550,7 @@ func handleDeleteActivity(body []byte, username string) error {
 		return fmt.Errorf("failed to parse Delete activity: %w", err)
 	}
 
-	database := db.GetDB()
+	database := deps.Database
 
 	// Object can be either a string URI or an embedded object
 	var objectURI string
@@ -506,7 +591,6 @@ func handleDeleteActivity(body []byte, username string) error {
 		}
 	} else {
 		// Object deletion (post, note, etc.) - find the activity containing this object
-		database := db.GetDB()
 		err, activity := database.ReadActivityByObjectURI(objectURI)
 		if err != nil || activity == nil {
 			log.Printf("Inbox: Activity with object %s not found for deletion, ignoring", objectURI)

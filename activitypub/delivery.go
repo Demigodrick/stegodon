@@ -11,10 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/util"
 )
+
+// DeliveryDeps holds dependencies for delivery operations
+type DeliveryDeps struct {
+	Database   Database
+	HTTPClient HTTPClient
+}
 
 // StartDeliveryWorker starts a background worker that processes the delivery queue
 func StartDeliveryWorker(conf *util.AppConfig) {
@@ -28,9 +33,20 @@ func StartDeliveryWorker(conf *util.AppConfig) {
 	}()
 }
 
-// processDeliveryQueue processes pending deliveries from the queue
+// processDeliveryQueue processes pending deliveries from the queue.
+// This is the production wrapper that uses the default database.
 func processDeliveryQueue(conf *util.AppConfig) {
-	database := db.GetDB()
+	deps := &DeliveryDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	processDeliveryQueueWithDeps(conf, deps)
+}
+
+// processDeliveryQueueWithDeps processes pending deliveries from the queue.
+// This version accepts dependencies for testing.
+func processDeliveryQueueWithDeps(conf *util.AppConfig, deps *DeliveryDeps) {
+	database := deps.Database
 
 	// Get pending deliveries (max 50 at a time)
 	err, items := database.ReadPendingDeliveries(50)
@@ -46,7 +62,7 @@ func processDeliveryQueue(conf *util.AppConfig) {
 	log.Printf("DeliveryWorker: Processing %d pending deliveries", len(*items))
 
 	for _, item := range *items {
-		if err := deliverActivity(&item, conf); err != nil {
+		if err := deliverActivityWithDeps(&item, conf, deps); err != nil {
 			// Failed delivery - retry with exponential backoff
 			item.Attempts++
 			backoffMinutes := []int{1, 5, 15, 60, 240, 1440}[min(item.Attempts-1, 5)]
@@ -69,8 +85,19 @@ func processDeliveryQueue(conf *util.AppConfig) {
 	}
 }
 
-// deliverActivity attempts to deliver a single activity to an inbox
+// deliverActivity attempts to deliver a single activity to an inbox.
+// This is the production wrapper that uses the default database and HTTP client.
 func deliverActivity(item *domain.DeliveryQueueItem, conf *util.AppConfig) error {
+	deps := &DeliveryDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return deliverActivityWithDeps(item, conf, deps)
+}
+
+// deliverActivityWithDeps attempts to deliver a single activity to an inbox.
+// This version accepts dependencies for testing.
+func deliverActivityWithDeps(item *domain.DeliveryQueueItem, conf *util.AppConfig, deps *DeliveryDeps) error {
 	// Parse the activity JSON
 	var activity map[string]any
 	if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
@@ -92,7 +119,7 @@ func deliverActivity(item *domain.DeliveryQueueItem, conf *util.AppConfig) error
 	username := parts[len(parts)-1]
 
 	// Get local account
-	database := db.GetDB()
+	database := deps.Database
 	err, localAccount := database.ReadAccByUsername(username)
 	if err != nil {
 		return fmt.Errorf("failed to get local account: %w", err)
@@ -129,7 +156,7 @@ func deliverActivity(item *domain.DeliveryQueueItem, conf *util.AppConfig) error
 	}
 
 	// Send request
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := deps.HTTPClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

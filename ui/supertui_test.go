@@ -373,4 +373,3 @@ func TestDeleteAccountModelUpdatedAfterUsernameChange(t *testing.T) {
 		t.Error("deleteAccountModel should have same Summary as mainModel.account")
 	}
 }
-

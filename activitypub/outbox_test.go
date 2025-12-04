@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/deemkeen/stegodon/domain"
+	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 )
 
@@ -1159,5 +1160,920 @@ func TestSendFollow_PendingFollowDetection(t *testing.T) {
 				t.Errorf("Expected error to contain '%s', got '%s'", tt.expectedError, errMsg)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// Integration tests using dependency injection
+// These tests use mock HTTP client and mock database
+// ============================================================================
+
+// TestSendActivityWithDeps_Success tests sending activity successfully
+func TestSendActivityWithDeps_Success(t *testing.T) {
+	mockHTTP := NewMockHTTPClient()
+
+	// Create test account with keypair
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+
+	// Set up successful response from remote inbox
+	inboxURI := "https://remote.example.com/inbox"
+	mockHTTP.SetResponse(inboxURI, 202, []byte("Accepted"))
+
+	// Create test config
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	// Create test activity
+	activity := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       "https://local.example.com/activities/123",
+		"type":     "Follow",
+		"actor":    "https://local.example.com/users/alice",
+		"object":   "https://remote.example.com/users/bob",
+	}
+
+	// Send the activity
+	err = SendActivityWithDeps(activity, inboxURI, account, conf, mockHTTP)
+	if err != nil {
+		t.Fatalf("SendActivityWithDeps failed: %v", err)
+	}
+
+	// Verify HTTP request was made
+	if len(mockHTTP.Requests) != 1 {
+		t.Errorf("Expected 1 HTTP request, got %d", len(mockHTTP.Requests))
+	}
+
+	// Verify request properties
+	req := mockHTTP.Requests[0]
+	if req.Method != "POST" {
+		t.Errorf("Expected POST method, got %s", req.Method)
+	}
+	if req.URL.String() != inboxURI {
+		t.Errorf("Expected URL %s, got %s", inboxURI, req.URL.String())
+	}
+	if req.Header.Get("Content-Type") != "application/activity+json" {
+		t.Error("Expected Content-Type: application/activity+json")
+	}
+	if req.Header.Get("Signature") == "" {
+		t.Error("Expected Signature header")
+	}
+	if req.Header.Get("Digest") == "" {
+		t.Error("Expected Digest header")
+	}
+}
+
+// TestSendActivityWithDeps_RemoteError tests handling of remote server errors
+func TestSendActivityWithDeps_RemoteError(t *testing.T) {
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	inboxURI := "https://remote.example.com/inbox"
+
+	// Set up error response
+	mockHTTP.SetResponse(inboxURI, 500, []byte("Internal Server Error"))
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	activity := map[string]any{
+		"type": "Follow",
+	}
+
+	err = SendActivityWithDeps(activity, inboxURI, account, conf, mockHTTP)
+	if err == nil {
+		t.Error("Expected error for 500 response")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("Error should mention status code: %v", err)
+	}
+}
+
+// TestSendActivityWithDeps_NetworkError tests handling of network errors
+func TestSendActivityWithDeps_NetworkError(t *testing.T) {
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	inboxURI := "https://remote.example.com/inbox"
+
+	// Set up network error
+	mockHTTP.SetError(inboxURI, &mockNetworkError{message: "connection refused"})
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	activity := map[string]any{
+		"type": "Follow",
+	}
+
+	err = SendActivityWithDeps(activity, inboxURI, account, conf, mockHTTP)
+	if err == nil {
+		t.Error("Expected error for network failure")
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Errorf("Error should mention request failure: %v", err)
+	}
+}
+
+// TestSendAcceptWithDeps tests sending Accept activity
+func TestSendAcceptWithDeps_Success(t *testing.T) {
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+
+	followID := "https://remote.example.com/follows/123"
+
+	// Set up successful response
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, []byte("Accepted"))
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendAcceptWithDeps(account, remoteActor, followID, conf, mockHTTP)
+	if err != nil {
+		t.Fatalf("SendAcceptWithDeps failed: %v", err)
+	}
+
+	// Verify HTTP request was made
+	if len(mockHTTP.Requests) != 1 {
+		t.Errorf("Expected 1 HTTP request, got %d", len(mockHTTP.Requests))
+	}
+
+	// Verify request body contains Accept activity
+	req := mockHTTP.Requests[0]
+	if req.Method != "POST" {
+		t.Errorf("Expected POST method, got %s", req.Method)
+	}
+}
+
+// TestSendFollowWithDeps_NewFollow tests sending a new follow request
+func TestSendFollowWithDeps_NewFollow(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Set up remote actor response
+	remoteActorURI := "https://remote.example.com/users/bob"
+	actorResponse := ActorResponse{
+		ID:                remoteActorURI,
+		Type:              "Person",
+		PreferredUsername: "bob",
+		Name:              "Bob",
+		Inbox:             "https://remote.example.com/users/bob/inbox",
+	}
+	actorResponse.PublicKey.PublicKeyPem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+
+	err = mockHTTP.SetJSONResponse(remoteActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set mock response: %v", err)
+	}
+
+	// Set up successful inbox response
+	mockHTTP.SetResponse("https://remote.example.com/users/bob/inbox", 202, []byte("Accepted"))
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendFollowWithDeps(account, remoteActorURI, conf, mockHTTP, mockDB)
+	if err != nil {
+		t.Fatalf("SendFollowWithDeps failed: %v", err)
+	}
+
+	// Verify follow was stored in database
+	if len(mockDB.Follows) != 1 {
+		t.Errorf("Expected 1 follow record, got %d", len(mockDB.Follows))
+	}
+
+	// Verify follow is pending (not accepted)
+	for _, follow := range mockDB.Follows {
+		if follow.Accepted {
+			t.Error("New follow should be pending, not accepted")
+		}
+	}
+
+	// Verify 2 HTTP requests: actor fetch + inbox POST
+	if len(mockHTTP.Requests) != 2 {
+		t.Errorf("Expected 2 HTTP requests, got %d", len(mockHTTP.Requests))
+	}
+}
+
+// TestSendFollowWithDeps_SelfFollow tests self-follow prevention
+func TestSendFollowWithDeps_SelfFollow(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Set up remote actor that matches local user
+	remoteActorURI := "https://local.example.com/users/alice"
+	actorResponse := ActorResponse{
+		ID:                remoteActorURI,
+		Type:              "Person",
+		PreferredUsername: "alice",
+		Name:              "Alice",
+		Inbox:             "https://local.example.com/users/alice/inbox",
+	}
+	actorResponse.PublicKey.PublicKeyPem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+
+	err = mockHTTP.SetJSONResponse(remoteActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set mock response: %v", err)
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendFollowWithDeps(account, remoteActorURI, conf, mockHTTP, mockDB)
+	if err == nil {
+		t.Error("Expected error for self-follow")
+	}
+	if !strings.Contains(err.Error(), "self-follow") {
+		t.Errorf("Error should mention self-follow: %v", err)
+	}
+
+	// Verify no follow was stored
+	if len(mockDB.Follows) != 0 {
+		t.Error("Self-follow should not create follow record")
+	}
+}
+
+// TestSendFollowWithDeps_AlreadyFollowing tests duplicate follow prevention
+func TestSendFollowWithDeps_AlreadyFollowing(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Set up remote actor
+	remoteActorURI := "https://remote.example.com/users/bob"
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      remoteActorURI,
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "test-key",
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add existing accepted follow
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       account.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/follows/123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	actorResponse := ActorResponse{
+		ID:                remoteActorURI,
+		Type:              "Person",
+		PreferredUsername: "bob",
+		Name:              "Bob",
+		Inbox:             "https://remote.example.com/users/bob/inbox",
+	}
+	actorResponse.PublicKey.PublicKeyPem = "test-key"
+
+	err = mockHTTP.SetJSONResponse(remoteActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set mock response: %v", err)
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendFollowWithDeps(account, remoteActorURI, conf, mockHTTP, mockDB)
+	if err == nil {
+		t.Error("Expected error for already following")
+	}
+	if !strings.Contains(err.Error(), "already following") {
+		t.Errorf("Error should mention already following: %v", err)
+	}
+}
+
+// TestSendFollowWithDeps_PendingFollow tests pending follow detection
+func TestSendFollowWithDeps_PendingFollow(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Set up remote actor
+	remoteActorURI := "https://remote.example.com/users/bob"
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      remoteActorURI,
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "test-key",
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add existing pending follow
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       account.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/follows/123",
+		Accepted:        false, // Pending
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	actorResponse := ActorResponse{
+		ID:                remoteActorURI,
+		Type:              "Person",
+		PreferredUsername: "bob",
+		Name:              "Bob",
+		Inbox:             "https://remote.example.com/users/bob/inbox",
+	}
+	actorResponse.PublicKey.PublicKeyPem = "test-key"
+
+	err = mockHTTP.SetJSONResponse(remoteActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set mock response: %v", err)
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendFollowWithDeps(account, remoteActorURI, conf, mockHTTP, mockDB)
+	if err == nil {
+		t.Error("Expected error for pending follow")
+	}
+	if !strings.Contains(err.Error(), "follow pending") {
+		t.Errorf("Error should mention pending follow: %v", err)
+	}
+}
+
+// TestSendUndoWithDeps tests sending Undo (unfollow) activity
+func TestSendUndoWithDeps_Success(t *testing.T) {
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	account := CreateTestAccount("alice", keypair)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       account.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/follows/123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+
+	// Set up successful response
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, []byte("Accepted"))
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err = SendUndoWithDeps(account, follow, remoteActor, conf, mockHTTP)
+	if err != nil {
+		t.Fatalf("SendUndoWithDeps failed: %v", err)
+	}
+
+	// Verify HTTP request was made
+	if len(mockHTTP.Requests) != 1 {
+		t.Errorf("Expected 1 HTTP request, got %d", len(mockHTTP.Requests))
+	}
+}
+
+// mockNetworkError is a mock network error for testing (if not already defined)
+type mockOutboxNetworkError struct {
+	message string
+}
+
+func (e *mockOutboxNetworkError) Error() string {
+	return e.message
+}
+
+// ============================================================================
+// Tests for SendCreate, SendUpdate, SendDelete with dependency injection
+// ============================================================================
+
+// TestSendCreateWithDeps_NoFollowers tests creating a note with no followers
+func TestSendCreateWithDeps_NoFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// No followers added to mock DB
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Hello, world!",
+		CreatedAt: time.Now(),
+	}
+
+	err := SendCreateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendCreateWithDeps should not fail with no followers: %v", err)
+	}
+
+	// Verify no delivery items were queued
+	if len(mockDB.DeliveryQueue) != 0 {
+		t.Errorf("Expected 0 delivery queue items, got %d", len(mockDB.DeliveryQueue))
+	}
+}
+
+// TestSendCreateWithDeps_WithFollowers tests creating a note that gets delivered to followers
+func TestSendCreateWithDeps_WithFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Add two remote followers
+	remoteActor1 := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote1.example.com",
+		ActorURI: "https://remote1.example.com/users/bob",
+		InboxURI: "https://remote1.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor1)
+
+	remoteActor2 := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "carol",
+		Domain:   "remote2.example.com",
+		ActorURI: "https://remote2.example.com/users/carol",
+		InboxURI: "https://remote2.example.com/users/carol/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor2)
+
+	// Add follow relationships (remote actors following local account)
+	follow1 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor1.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote1.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow1)
+
+	follow2 := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor2.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote2.example.com/follows/2",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow2)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Hello, followers!",
+		CreatedAt: time.Now(),
+	}
+
+	err := SendCreateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendCreateWithDeps failed: %v", err)
+	}
+
+	// Verify delivery items were queued for each follower
+	if len(mockDB.DeliveryQueue) != 2 {
+		t.Errorf("Expected 2 delivery queue items, got %d", len(mockDB.DeliveryQueue))
+	}
+
+	// Verify delivery queue contents
+	inboxURIs := make(map[string]bool)
+	for _, item := range mockDB.DeliveryQueue {
+		inboxURIs[item.InboxURI] = true
+
+		// Verify activity JSON contains expected fields
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		if activity["type"] != "Create" {
+			t.Errorf("Expected activity type 'Create', got %v", activity["type"])
+		}
+
+		obj, ok := activity["object"].(map[string]any)
+		if !ok {
+			t.Error("Expected object to be a map")
+			continue
+		}
+
+		if obj["type"] != "Note" {
+			t.Errorf("Expected object type 'Note', got %v", obj["type"])
+		}
+
+		if obj["content"] != "Hello, followers!" {
+			t.Errorf("Expected content 'Hello, followers!', got %v", obj["content"])
+		}
+	}
+
+	if !inboxURIs["https://remote1.example.com/users/bob/inbox"] {
+		t.Error("Expected delivery to remote1")
+	}
+	if !inboxURIs["https://remote2.example.com/users/carol/inbox"] {
+		t.Error("Expected delivery to remote2")
+	}
+}
+
+// TestSendUpdateWithDeps_NoFollowers tests updating a note with no followers
+func TestSendUpdateWithDeps_NoFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	editedAt := time.Now()
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Updated message",
+		CreatedAt: time.Now().Add(-1 * time.Hour),
+		EditedAt:  &editedAt,
+	}
+
+	err := SendUpdateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendUpdateWithDeps should not fail with no followers: %v", err)
+	}
+
+	if len(mockDB.DeliveryQueue) != 0 {
+		t.Errorf("Expected 0 delivery queue items, got %d", len(mockDB.DeliveryQueue))
+	}
+}
+
+// TestSendUpdateWithDeps_WithFollowers tests updating a note that gets delivered to followers
+func TestSendUpdateWithDeps_WithFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Add one follower
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	editedAt := time.Now()
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Updated content",
+		CreatedAt: time.Now().Add(-1 * time.Hour),
+		EditedAt:  &editedAt,
+	}
+
+	err := SendUpdateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendUpdateWithDeps failed: %v", err)
+	}
+
+	// Verify delivery item was queued
+	if len(mockDB.DeliveryQueue) != 1 {
+		t.Fatalf("Expected 1 delivery queue item, got %d", len(mockDB.DeliveryQueue))
+	}
+
+	// Verify activity is Update type
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		if activity["type"] != "Update" {
+			t.Errorf("Expected activity type 'Update', got %v", activity["type"])
+		}
+
+		obj, ok := activity["object"].(map[string]any)
+		if !ok {
+			t.Error("Expected object to be a map")
+			continue
+		}
+
+		if obj["updated"] == nil {
+			t.Error("Expected 'updated' timestamp in object")
+		}
+	}
+}
+
+// TestSendUpdateWithDeps_NoEditedAt tests Update with nil EditedAt (uses CreatedAt)
+func TestSendUpdateWithDeps_NoEditedAt(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	createdAt := time.Now().Add(-1 * time.Hour)
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Content without edit timestamp",
+		CreatedAt: createdAt,
+		EditedAt:  nil, // No edit timestamp
+	}
+
+	err := SendUpdateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendUpdateWithDeps failed: %v", err)
+	}
+
+	// Verify activity uses CreatedAt for updated timestamp
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		obj := activity["object"].(map[string]any)
+		if obj["updated"] != createdAt.Format(time.RFC3339) {
+			t.Errorf("Expected 'updated' to equal CreatedAt when EditedAt is nil")
+		}
+	}
+}
+
+// TestSendDeleteWithDeps_NoFollowers tests deleting a note with no followers
+func TestSendDeleteWithDeps_NoFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	noteId := uuid.New()
+
+	err := SendDeleteWithDeps(noteId, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendDeleteWithDeps should not fail with no followers: %v", err)
+	}
+
+	if len(mockDB.DeliveryQueue) != 0 {
+		t.Errorf("Expected 0 delivery queue items, got %d", len(mockDB.DeliveryQueue))
+	}
+}
+
+// TestSendDeleteWithDeps_WithFollowers tests deleting a note that gets delivered to followers
+func TestSendDeleteWithDeps_WithFollowers(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	// Add follower
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	noteId := uuid.New()
+
+	err := SendDeleteWithDeps(noteId, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendDeleteWithDeps failed: %v", err)
+	}
+
+	// Verify delivery item was queued
+	if len(mockDB.DeliveryQueue) != 1 {
+		t.Fatalf("Expected 1 delivery queue item, got %d", len(mockDB.DeliveryQueue))
+	}
+
+	// Verify activity is Delete type
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		if activity["type"] != "Delete" {
+			t.Errorf("Expected activity type 'Delete', got %v", activity["type"])
+		}
+
+		// For Delete, object is a URI string
+		objStr, ok := activity["object"].(string)
+		if !ok {
+			t.Error("Expected object to be a string URI for Delete activity")
+			continue
+		}
+
+		expectedNoteURI := "https://local.example.com/notes/" + noteId.String()
+		if objStr != expectedNoteURI {
+			t.Errorf("Expected object URI %s, got %s", expectedNoteURI, objStr)
+		}
+	}
+}
+
+// TestSendCreateWithDeps_MarkdownConversion tests that markdown links are converted to HTML
+func TestSendCreateWithDeps_MarkdownConversion(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Check out [this link](https://example.com)!",
+		CreatedAt: time.Now(),
+	}
+
+	err := SendCreateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendCreateWithDeps failed: %v", err)
+	}
+
+	// Verify content was converted to HTML
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		obj := activity["object"].(map[string]any)
+		content := obj["content"].(string)
+
+		// Should contain HTML anchor tag
+		if !strings.Contains(content, "<a href=") {
+			t.Errorf("Expected markdown link to be converted to HTML, got: %s", content)
+		}
+
+		if obj["mediaType"] != "text/html" {
+			t.Errorf("Expected mediaType 'text/html', got %v", obj["mediaType"])
+		}
 	}
 }

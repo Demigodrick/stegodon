@@ -391,11 +391,11 @@ func TestFollowResultMsg_PendingFollow(t *testing.T) {
 	model := InitialModel(accountId)
 
 	tests := []struct {
-		name          string
-		errMsg        string
-		wantStatus    string
-		wantContain   string
-		wantNoError   bool
+		name        string
+		errMsg      string
+		wantStatus  string
+		wantContain string
+		wantNoError bool
 	}{
 		{
 			name:        "follow pending lowercase",

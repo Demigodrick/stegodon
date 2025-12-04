@@ -51,8 +51,8 @@ var (
 type Model struct {
 	AccountId  uuid.UUID
 	Posts      []FederatedPost
-	Offset     int  // Pagination offset
-	Selected   int  // Currently selected post index
+	Offset     int // Pagination offset
+	Selected   int // Currently selected post index
 	Width      int
 	Height     int
 	isActive   bool // Track if this view is currently visible (prevents ticker leaks)

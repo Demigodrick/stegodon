@@ -1,12 +1,19 @@
 package activitypub
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/deemkeen/stegodon/domain"
+	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 )
 
@@ -822,4 +829,1800 @@ func TestHandleCreateActivity_ActorCacheRefetch(t *testing.T) {
 
 	// The updated handleCreateActivity now calls FetchRemoteActor
 	// if ReadRemoteAccountByActorURI returns nil, improving reliability
+}
+
+// ============================================================================
+// Integration Tests with Mock HTTP Server
+// ============================================================================
+
+// TestMockServerWebFinger tests WebFinger discovery through mock server
+func TestMockServerWebFinger(t *testing.T) {
+	mock := NewMockActivityPubServer()
+	defer mock.Close()
+
+	// Create test key pair
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate test keypair: %v", err)
+	}
+
+	// Set up actor response
+	actor := CreateTestActorResponse(mock.Server.URL, "testuser", keypair.PublicPEM)
+	mock.SetActorResponse(actor)
+
+	// Verify actor response is set correctly
+	if mock.ActorResponse == nil {
+		t.Fatal("Actor response should be set")
+	}
+
+	if mock.ActorResponse.PreferredUsername != "testuser" {
+		t.Errorf("Expected username 'testuser', got '%s'", mock.ActorResponse.PreferredUsername)
+	}
+
+	if mock.ActorResponse.Inbox != mock.Server.URL+"/users/testuser/inbox" {
+		t.Errorf("Inbox URL mismatch")
+	}
+}
+
+// TestMockServerActivityDelivery tests activity delivery to mock inbox
+func TestMockServerActivityDelivery(t *testing.T) {
+	mock := NewMockActivityPubServer()
+	defer mock.Close()
+
+	// Track received activities
+	var receivedActivity map[string]any
+	mock.InboxHandler = func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedActivity)
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	// Create test activity
+	actorURI := mock.Server.URL + "/users/sender"
+	activityJSON := CreateTestFollowActivity(actorURI, mock.Server.URL+"/users/testuser")
+
+	// Parse and verify the generated activity
+	var activity map[string]any
+	if err := json.Unmarshal([]byte(activityJSON), &activity); err != nil {
+		t.Fatalf("Failed to parse generated activity: %v", err)
+	}
+
+	if activity["type"] != "Follow" {
+		t.Errorf("Expected type 'Follow', got '%v'", activity["type"])
+	}
+
+	if activity["actor"] != actorURI {
+		t.Errorf("Expected actor '%s', got '%v'", actorURI, activity["actor"])
+	}
+}
+
+// TestTestHelperActivityGeneration tests all activity generation helpers
+func TestTestHelperActivityGeneration(t *testing.T) {
+	actorURI := "https://example.com/users/alice"
+	objectURI := "https://example.com/notes/123"
+
+	tests := []struct {
+		name         string
+		activityJSON string
+		expectedType string
+	}{
+		{
+			name:         "Follow activity",
+			activityJSON: CreateTestFollowActivity(actorURI, objectURI),
+			expectedType: "Follow",
+		},
+		{
+			name:         "Accept activity",
+			activityJSON: CreateTestAcceptActivity(actorURI, objectURI),
+			expectedType: "Accept",
+		},
+		{
+			name:         "Create activity",
+			activityJSON: CreateTestCreateActivity(actorURI, "Test content"),
+			expectedType: "Create",
+		},
+		{
+			name:         "Like activity",
+			activityJSON: CreateTestLikeActivity(actorURI, objectURI),
+			expectedType: "Like",
+		},
+		{
+			name:         "Delete activity",
+			activityJSON: CreateTestDeleteActivity(actorURI, objectURI),
+			expectedType: "Delete",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			activity, err := ValidateActivityJSON(tt.activityJSON)
+			if err != nil {
+				t.Fatalf("Activity validation failed: %v", err)
+			}
+
+			if activity["type"] != tt.expectedType {
+				t.Errorf("Expected type '%s', got '%v'", tt.expectedType, activity["type"])
+			}
+
+			if activity["actor"] != actorURI {
+				t.Errorf("Expected actor '%s', got '%v'", actorURI, activity["actor"])
+			}
+		})
+	}
+}
+
+// TestTestHelperUndoActivity tests Undo activity generation
+func TestTestHelperUndoActivity(t *testing.T) {
+	actorURI := "https://example.com/users/alice"
+	targetURI := "https://example.com/users/bob"
+
+	// Create a Follow activity to undo
+	followActivity := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       actorURI + "/activities/follow-123",
+		"type":     "Follow",
+		"actor":    actorURI,
+		"object":   targetURI,
+	}
+
+	// Create Undo for the Follow
+	undoJSON := CreateTestUndoActivity(actorURI, followActivity)
+
+	activity, err := ValidateActivityJSON(undoJSON)
+	if err != nil {
+		t.Fatalf("Undo activity validation failed: %v", err)
+	}
+
+	if activity["type"] != "Undo" {
+		t.Errorf("Expected type 'Undo', got '%v'", activity["type"])
+	}
+
+	// Verify embedded object
+	embeddedObj, ok := activity["object"].(map[string]any)
+	if !ok {
+		t.Fatal("Undo object should be a map")
+	}
+
+	if embeddedObj["type"] != "Follow" {
+		t.Errorf("Expected embedded type 'Follow', got '%v'", embeddedObj["type"])
+	}
+}
+
+// TestTestHelperUpdateActivity tests Update activity generation
+func TestTestHelperUpdateActivity(t *testing.T) {
+	actorURI := "https://example.com/users/alice"
+
+	updatedNote := map[string]any{
+		"id":      "https://example.com/notes/123",
+		"type":    "Note",
+		"content": "Updated content",
+	}
+
+	updateJSON := CreateTestUpdateActivity(actorURI, updatedNote)
+
+	activity, err := ValidateActivityJSON(updateJSON)
+	if err != nil {
+		t.Fatalf("Update activity validation failed: %v", err)
+	}
+
+	if activity["type"] != "Update" {
+		t.Errorf("Expected type 'Update', got '%v'", activity["type"])
+	}
+}
+
+// TestValidateActivityJSON tests the activity validation helper
+func TestValidateActivityJSON(t *testing.T) {
+	tests := []struct {
+		name        string
+		json        string
+		expectError bool
+		errorField  string
+	}{
+		{
+			name:        "Valid activity",
+			json:        `{"type": "Follow", "actor": "https://example.com/users/alice", "object": "https://example.com/users/bob"}`,
+			expectError: false,
+		},
+		{
+			name:        "Missing type",
+			json:        `{"actor": "https://example.com/users/alice", "object": "https://example.com/users/bob"}`,
+			expectError: true,
+			errorField:  "type",
+		},
+		{
+			name:        "Missing actor",
+			json:        `{"type": "Follow", "object": "https://example.com/users/bob"}`,
+			expectError: true,
+			errorField:  "actor",
+		},
+		{
+			name:        "Invalid JSON",
+			json:        `{not valid}`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateActivityJSON(tt.json)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				if tt.errorField != "" {
+					if valErr, ok := err.(*ValidationError); ok {
+						if valErr.Field != tt.errorField {
+							t.Errorf("Expected error field '%s', got '%s'", tt.errorField, valErr.Field)
+						}
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestKeyPairGeneration tests RSA key pair generation for tests
+func TestKeyPairGeneration(t *testing.T) {
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	// Verify private key
+	if keypair.PrivateKey == nil {
+		t.Error("Private key should not be nil")
+	}
+
+	// Verify PEM encoding
+	if !strings.Contains(keypair.PrivatePEM, "PRIVATE KEY") {
+		t.Error("Private PEM should contain PRIVATE KEY header")
+	}
+
+	if !strings.Contains(keypair.PublicPEM, "PUBLIC KEY") {
+		t.Error("Public PEM should contain PUBLIC KEY header")
+	}
+
+	// Verify keys can be parsed back
+	parsedPrivate, err := ParsePrivateKey(keypair.PrivatePEM)
+	if err != nil {
+		t.Errorf("Failed to parse private key: %v", err)
+	}
+	if parsedPrivate == nil {
+		t.Error("Parsed private key should not be nil")
+	}
+
+	parsedPublic, err := ParsePublicKey(keypair.PublicPEM)
+	if err != nil {
+		t.Errorf("Failed to parse public key: %v", err)
+	}
+	if parsedPublic == nil {
+		t.Error("Parsed public key should not be nil")
+	}
+}
+
+// TestHTTPSignatureWithMock tests HTTP signature creation and verification
+func TestHTTPSignatureWithMock(t *testing.T) {
+	// Generate test key pair
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	// Create a mock request
+	body := []byte(`{"type":"Follow","actor":"https://example.com/users/alice"}`)
+	req, err := http.NewRequest("POST", "https://example.com/inbox", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Calculate digest for the body
+	hash := sha256.Sum256(body)
+	digest := "SHA-256=" + base64.StdEncoding.EncodeToString(hash[:])
+
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Host", "example.com")
+	req.Header.Set("Digest", digest)
+
+	// Sign the request
+	keyID := "https://example.com/users/alice#main-key"
+	err = SignRequest(req, keypair.PrivateKey, keyID)
+	if err != nil {
+		t.Fatalf("Failed to sign request: %v", err)
+	}
+
+	// Verify signature header was added
+	sig := req.Header.Get("Signature")
+	if sig == "" {
+		t.Error("Signature header should be set")
+	}
+
+	// Verify signature contains required parts
+	if !strings.Contains(sig, "keyId=") {
+		t.Error("Signature should contain keyId")
+	}
+	if !strings.Contains(sig, "algorithm=") {
+		t.Error("Signature should contain algorithm")
+	}
+	if !strings.Contains(sig, "headers=") {
+		t.Error("Signature should contain headers")
+	}
+	if !strings.Contains(sig, "signature=") {
+		t.Error("Signature should contain signature")
+	}
+}
+
+// TestCreateTestRemoteAccount tests remote account creation helper
+func TestCreateTestRemoteAccount(t *testing.T) {
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	serverURL := "https://example.com"
+	username := "testuser"
+
+	account := CreateTestRemoteAccount(serverURL, username, keypair.PublicPEM)
+
+	if account.Username != username {
+		t.Errorf("Expected username '%s', got '%s'", username, account.Username)
+	}
+
+	if account.Domain != "example.com" {
+		t.Errorf("Expected domain 'example.com', got '%s'", account.Domain)
+	}
+
+	if account.ActorURI != serverURL+"/users/"+username {
+		t.Errorf("Expected actor URI '%s/users/%s', got '%s'", serverURL, username, account.ActorURI)
+	}
+
+	if account.InboxURI != serverURL+"/users/"+username+"/inbox" {
+		t.Errorf("Expected inbox URI '%s/users/%s/inbox', got '%s'", serverURL, username, account.InboxURI)
+	}
+}
+
+// TestCreateTestAccount tests local account creation helper
+func TestCreateTestAccount(t *testing.T) {
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	username := "alice"
+	account := CreateTestAccount(username, keypair)
+
+	if account.Username != username {
+		t.Errorf("Expected username '%s', got '%s'", username, account.Username)
+	}
+
+	if account.WebPublicKey != keypair.PublicPEM {
+		t.Error("Account should have correct public key")
+	}
+
+	if account.WebPrivateKey != keypair.PrivatePEM {
+		t.Error("Account should have correct private key")
+	}
+
+	if account.FirstTimeLogin != domain.FALSE {
+		t.Error("Test account should not be first time login")
+	}
+}
+
+// TestExtractDomainFromURL tests domain extraction helper
+func TestExtractDomainFromURL(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://example.com", "example.com"},
+		{"http://example.com", "example.com"},
+		{"https://example.com:8080", "example.com:8080"},
+		{"example.com", "example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			result := extractDomainFromURL(tt.url)
+			if result != tt.expected {
+				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Integration Tests for Inbox Handlers with Dependency Injection
+// ============================================================================
+
+// TestHandleFollowActivityWithDeps_Success tests successful Follow processing
+func TestHandleFollowActivityWithDeps_Success(t *testing.T) {
+	// Setup mock database
+	mockDB := NewMockDatabase()
+
+	// Create local account
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Create remote actor
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Create keypair for signing
+	keypair, err := GenerateTestKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate keypair: %v", err)
+	}
+	localAccount.WebPrivateKey = keypair.PrivatePEM
+	localAccount.WebPublicKey = keypair.PublicPEM
+
+	// Setup mock HTTP client
+	mockHTTP := NewMockHTTPClient()
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, nil)
+
+	// Create deps
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	// Create Follow activity
+	followBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/follow-123",
+		"type": "Follow",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/users/alice"
+	}`)
+
+	// Create config
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	// Call handler
+	err = handleFollowActivityWithDeps(followBody, "alice", remoteActor, conf, deps)
+	if err != nil {
+		t.Fatalf("handleFollowActivityWithDeps failed: %v", err)
+	}
+
+	// Verify follow was created
+	if len(mockDB.Follows) != 1 {
+		t.Errorf("Expected 1 follow, got %d", len(mockDB.Follows))
+	}
+
+	// Verify Accept was sent
+	if len(mockHTTP.Requests) != 1 {
+		t.Errorf("Expected 1 HTTP request (Accept), got %d", len(mockHTTP.Requests))
+	}
+}
+
+// TestHandleFollowActivityWithDeps_DuplicateFollow tests duplicate Follow handling
+func TestHandleFollowActivityWithDeps_DuplicateFollow(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add existing follow
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: localAccount.Id,
+		URI:             "https://remote.example.com/activities/follow-existing",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	keypair, _ := GenerateTestKeyPair()
+	localAccount.WebPrivateKey = keypair.PrivatePEM
+	localAccount.WebPublicKey = keypair.PublicPEM
+
+	mockHTTP := NewMockHTTPClient()
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, nil)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	followBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/follow-456",
+		"type": "Follow",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/users/alice"
+	}`)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	err := handleFollowActivityWithDeps(followBody, "alice", remoteActor, conf, deps)
+	if err != nil {
+		t.Fatalf("handleFollowActivityWithDeps failed: %v", err)
+	}
+
+	// Should still only have 1 follow (duplicate not created)
+	if len(mockDB.Follows) != 1 {
+		t.Errorf("Expected 1 follow (no duplicate), got %d", len(mockDB.Follows))
+	}
+
+	// Accept should still be sent
+	if len(mockHTTP.Requests) != 1 {
+		t.Errorf("Expected 1 HTTP request (Accept), got %d", len(mockHTTP.Requests))
+	}
+}
+
+// TestHandleUndoActivityWithDeps_Success tests successful Undo Follow processing
+func TestHandleUndoActivityWithDeps_Success(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add existing follow to be undone
+	followURI := "https://remote.example.com/activities/follow-123"
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: localAccount.Id,
+		URI:             followURI,
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-456",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/follow-123",
+			"type": "Follow"
+		}
+	}`)
+
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteActor, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps failed: %v", err)
+	}
+
+	// Verify follow was deleted
+	if len(mockDB.Follows) != 0 {
+		t.Errorf("Expected 0 follows after undo, got %d", len(mockDB.Follows))
+	}
+}
+
+// TestHandleUndoActivityWithDeps_Unauthorized tests unauthorized Undo rejection
+func TestHandleUndoActivityWithDeps_Unauthorized(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Original follower
+	originalFollower := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(originalFollower)
+
+	// Malicious actor trying to undo someone else's follow
+	maliciousActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "eve",
+		Domain:   "evil.example.com",
+		ActorURI: "https://evil.example.com/users/eve",
+		InboxURI: "https://evil.example.com/users/eve/inbox",
+	}
+	mockDB.AddRemoteAccount(maliciousActor)
+
+	// Follow created by bob
+	followURI := "https://remote.example.com/activities/follow-123"
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       originalFollower.Id,
+		TargetAccountId: localAccount.Id,
+		URI:             followURI,
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Eve tries to undo bob's follow
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://evil.example.com/activities/undo-789",
+		"type": "Undo",
+		"actor": "https://evil.example.com/users/eve",
+		"object": {
+			"id": "https://remote.example.com/activities/follow-123",
+			"type": "Follow"
+		}
+	}`)
+
+	err := handleUndoActivityWithDeps(undoBody, "alice", maliciousActor, deps)
+	if err == nil {
+		t.Fatal("Expected error for unauthorized undo, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "unauthorized") {
+		t.Errorf("Expected 'unauthorized' error, got: %v", err)
+	}
+
+	// Follow should still exist
+	if len(mockDB.Follows) != 1 {
+		t.Errorf("Expected follow to still exist, got %d follows", len(mockDB.Follows))
+	}
+}
+
+// TestHandleAcceptActivityWithDeps_Success tests successful Accept processing
+func TestHandleAcceptActivityWithDeps_Success(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add pending follow (not yet accepted)
+	followURI := "https://local.example.com/activities/follow-123"
+	pendingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             followURI,
+		Accepted:        false, // Pending
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(pendingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Accept with string object
+	acceptBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/accept-456",
+		"type": "Accept",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/activities/follow-123"
+	}`)
+
+	err := handleAcceptActivityWithDeps(acceptBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAcceptActivityWithDeps failed: %v", err)
+	}
+
+	// Verify follow is now accepted
+	_, follow := mockDB.ReadFollowByURI(followURI)
+	if follow == nil {
+		t.Fatal("Follow not found after accept")
+	}
+	if !follow.Accepted {
+		t.Error("Expected follow to be accepted")
+	}
+}
+
+// TestHandleAcceptActivityWithDeps_ObjectAsMap tests Accept with embedded Follow object
+func TestHandleAcceptActivityWithDeps_ObjectAsMap(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	followURI := "https://local.example.com/activities/follow-123"
+	pendingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             followURI,
+		Accepted:        false,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(pendingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Accept with embedded object
+	acceptBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/accept-456",
+		"type": "Accept",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://local.example.com/activities/follow-123",
+			"type": "Follow"
+		}
+	}`)
+
+	err := handleAcceptActivityWithDeps(acceptBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAcceptActivityWithDeps failed: %v", err)
+	}
+
+	_, follow := mockDB.ReadFollowByURI(followURI)
+	if follow == nil || !follow.Accepted {
+		t.Error("Expected follow to be accepted")
+	}
+}
+
+// TestHandleCreateActivityWithDeps_Success tests successful Create processing
+func TestHandleCreateActivityWithDeps_Success(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship (we follow bob)
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/789",
+			"type": "Note",
+			"content": "Hello world!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
+	}
+}
+
+// TestHandleCreateActivityWithDeps_NotFollowing tests rejection of Create from non-followed actor
+func TestHandleCreateActivityWithDeps_NotFollowing(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// No follow relationship
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/789",
+			"type": "Note",
+			"content": "Spam message!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	if err == nil {
+		t.Fatal("Expected error for Create from non-followed actor")
+	}
+
+	if !strings.Contains(err.Error(), "not following") {
+		t.Errorf("Expected 'not following' error, got: %v", err)
+	}
+}
+
+// TestHandleDeleteActivityWithDeps_PostDeletion tests successful post deletion
+func TestHandleDeleteActivityWithDeps_PostDeletion(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	actorURI := "https://remote.example.com/users/bob"
+	objectURI := "https://remote.example.com/notes/123"
+
+	// Add activity to be deleted
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create-456",
+		ActivityType: "Create",
+		ActorURI:     actorURI,
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create"}`,
+		Processed:    true,
+		Local:        false,
+		CreatedAt:    time.Now(),
+	}
+	mockDB.AddActivity(activity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	deleteBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/delete-789",
+		"type": "Delete",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://remote.example.com/notes/123"
+	}`)
+
+	err := handleDeleteActivityWithDeps(deleteBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleDeleteActivityWithDeps failed: %v", err)
+	}
+
+	// Verify activity was deleted
+	if len(mockDB.Activities) != 0 {
+		t.Errorf("Expected 0 activities after delete, got %d", len(mockDB.Activities))
+	}
+}
+
+// TestHandleDeleteActivityWithDeps_Unauthorized tests unauthorized deletion rejection
+func TestHandleDeleteActivityWithDeps_Unauthorized(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	objectURI := "https://remote.example.com/notes/123"
+
+	// Activity created by bob
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create-456",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create"}`,
+		Processed:    true,
+		Local:        false,
+		CreatedAt:    time.Now(),
+	}
+	mockDB.AddActivity(activity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Eve tries to delete bob's post
+	deleteBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://evil.example.com/activities/delete-789",
+		"type": "Delete",
+		"actor": "https://evil.example.com/users/eve",
+		"object": "https://remote.example.com/notes/123"
+	}`)
+
+	err := handleDeleteActivityWithDeps(deleteBody, "alice", deps)
+	if err == nil {
+		t.Fatal("Expected error for unauthorized delete")
+	}
+
+	if !strings.Contains(err.Error(), "unauthorized") {
+		t.Errorf("Expected 'unauthorized' error, got: %v", err)
+	}
+
+	// Activity should still exist
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected activity to still exist, got %d activities", len(mockDB.Activities))
+	}
+}
+
+// TestHandleDeleteActivityWithDeps_ActorDeletion tests actor account deletion
+func TestHandleDeleteActivityWithDeps_ActorDeletion(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	actorURI := "https://remote.example.com/users/bob"
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: actorURI,
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow from remote actor
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: localAccount.Id,
+		URI:             "https://remote.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Actor deletes themselves (object == actor)
+	deleteBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/delete-account",
+		"type": "Delete",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://remote.example.com/users/bob"
+	}`)
+
+	err := handleDeleteActivityWithDeps(deleteBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleDeleteActivityWithDeps failed: %v", err)
+	}
+
+	// Verify remote account was deleted
+	if len(mockDB.RemoteAccounts) != 0 {
+		t.Errorf("Expected 0 remote accounts after delete, got %d", len(mockDB.RemoteAccounts))
+	}
+
+	// Verify follows were deleted
+	if len(mockDB.Follows) != 0 {
+		t.Errorf("Expected 0 follows after actor delete, got %d", len(mockDB.Follows))
+	}
+}
+
+// TestHandleUpdateActivityWithDeps_NoteUpdate tests Note/Article update processing
+func TestHandleUpdateActivityWithDeps_NoteUpdate(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteURI := "https://remote.example.com/notes/123"
+
+	// Add existing activity with the note
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create-456",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    noteURI,
+		RawJSON:      `{"type":"Create","object":{"content":"Original content"}}`,
+		Processed:    true,
+		Local:        false,
+		CreatedAt:    time.Now(),
+	}
+	mockDB.AddActivity(activity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	updateBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/update-789",
+		"type": "Update",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/123",
+			"type": "Note",
+			"content": "Updated content"
+		}
+	}`)
+
+	err := handleUpdateActivityWithDeps(updateBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleUpdateActivityWithDeps failed: %v", err)
+	}
+
+	// Verify activity was updated
+	_, updatedActivity := mockDB.ReadActivityByObjectURI(noteURI)
+	if updatedActivity == nil {
+		t.Fatal("Activity not found after update")
+	}
+	if !strings.Contains(updatedActivity.RawJSON, "Updated content") {
+		t.Error("Activity RawJSON should contain updated content")
+	}
+}
+
+// TestHandleLikeActivityWithDeps tests Like activity processing (placeholder)
+func TestHandleLikeActivityWithDeps(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	likeBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/like-123",
+		"type": "Like",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/notes/456"
+	}`)
+
+	// Like handler is currently a placeholder, should not error
+	err := handleLikeActivityWithDeps(likeBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleLikeActivityWithDeps failed: %v", err)
+	}
+}
+
+// ============================================================================
+// HandleInboxWithDeps Integration Tests (with httptest)
+// ============================================================================
+
+// createSignedRequest creates a properly signed HTTP request for testing
+func createSignedRequest(t *testing.T, method, url string, body []byte, keypair *TestKeyPair, keyID string) *http.Request {
+	t.Helper()
+
+	req := httptest.NewRequest(method, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/activity+json")
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Host", req.Host)
+
+	// Calculate digest
+	hash := sha256.Sum256(body)
+	digest := "SHA-256=" + base64.StdEncoding.EncodeToString(hash[:])
+	req.Header.Set("Digest", digest)
+
+	// Sign the request
+	if err := SignRequest(req, keypair.PrivateKey, keyID); err != nil {
+		t.Fatalf("Failed to sign request: %v", err)
+	}
+
+	return req
+}
+
+// TestHandleInboxWithDeps_MissingSignature tests rejection of unsigned requests
+func TestHandleInboxWithDeps_MissingSignature(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{"type":"Follow","actor":"https://remote.example.com/users/bob"}`)
+	req := httptest.NewRequest("POST", "/users/alice/inbox", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/activity+json")
+	// No Signature header
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized, got %d", rr.Code)
+	}
+
+	if !strings.Contains(rr.Body.String(), "Missing signature") {
+		t.Errorf("Expected 'Missing signature' error, got: %s", rr.Body.String())
+	}
+}
+
+// TestHandleInboxWithDeps_InvalidJSON tests rejection of invalid JSON
+func TestHandleInboxWithDeps_InvalidJSON(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	// Create keypair
+	keypair, _ := GenerateTestKeyPair()
+
+	// Create remote actor with public key
+	remoteActor := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: keypair.PublicPEM,
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	// Invalid JSON body
+	body := []byte(`{invalid json}`)
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 Bad Request, got %d", rr.Code)
+	}
+}
+
+// TestHandleInboxWithDeps_UnknownActor tests rejection when actor cannot be fetched
+func TestHandleInboxWithDeps_UnknownActor(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	// No actor in DB, and HTTP fetch will fail
+	mockHTTP.SetError("https://unknown.example.com/users/eve", &mockNetworkError{message: "connection refused"})
+
+	keypair, _ := GenerateTestKeyPair()
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"type": "Follow",
+		"actor": "https://unknown.example.com/users/eve",
+		"object": "https://local.example.com/users/alice"
+	}`)
+
+	keyID := "https://unknown.example.com/users/eve#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 Bad Request, got %d", rr.Code)
+	}
+
+	if !strings.Contains(rr.Body.String(), "Failed to verify actor") {
+		t.Errorf("Expected 'Failed to verify actor' error, got: %s", rr.Body.String())
+	}
+}
+
+// TestHandleInboxWithDeps_InvalidSignature tests rejection of invalid signatures
+func TestHandleInboxWithDeps_InvalidSignature(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	// Create two different keypairs - one for signing, one for verification
+	signingKeypair, _ := GenerateTestKeyPair()
+	verifyKeypair, _ := GenerateTestKeyPair() // Different keypair!
+
+	// Remote actor has different public key than what was used to sign
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  verifyKeypair.PublicPEM, // Different from signing key
+		LastFetchedAt: time.Now(),              // Fresh cache
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"type": "Follow",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/users/alice"
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	// Sign with signingKeypair but verify with verifyKeypair (mismatch!)
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, signingKeypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized, got %d", rr.Code)
+	}
+
+	if !strings.Contains(rr.Body.String(), "Invalid signature") {
+		t.Errorf("Expected 'Invalid signature' error, got: %s", rr.Body.String())
+	}
+}
+
+// TestHandleInboxWithDeps_FollowSuccess tests successful Follow activity processing
+func TestHandleInboxWithDeps_FollowSuccess(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	// Local account being followed
+	localAccount := &domain.Account{
+		Id:            uuid.New(),
+		Username:      "alice",
+		WebPrivateKey: keypair.PrivatePEM,
+		WebPublicKey:  keypair.PublicPEM,
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote actor doing the following
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Mock Accept delivery
+	mockHTTP.SetResponse("https://remote.example.com/users/bob/inbox", 202, nil)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/follow-123",
+		"type": "Follow",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/users/alice"
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 Accepted, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify follow was created
+	if len(mockDB.Follows) != 1 {
+		t.Errorf("Expected 1 follow, got %d", len(mockDB.Follows))
+	}
+
+	// Verify activity was stored
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity, got %d", len(mockDB.Activities))
+	}
+
+	// Verify activity was marked as processed
+	for _, act := range mockDB.Activities {
+		if !act.Processed {
+			t.Error("Activity should be marked as processed")
+		}
+	}
+}
+
+// TestHandleInboxWithDeps_AcceptSuccess tests successful Accept activity processing
+func TestHandleInboxWithDeps_AcceptSuccess(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	// Local account that sent the follow
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote actor accepting the follow
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Pending follow to be accepted
+	followURI := "https://local.example.com/activities/follow-123"
+	pendingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             followURI,
+		Accepted:        false,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(pendingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/accept-456",
+		"type": "Accept",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/activities/follow-123"
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 Accepted, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify follow was accepted
+	_, follow := mockDB.ReadFollowByURI(followURI)
+	if follow == nil {
+		t.Fatal("Follow not found")
+	}
+	if !follow.Accepted {
+		t.Error("Follow should be accepted")
+	}
+}
+
+// TestHandleInboxWithDeps_UndoSuccess tests successful Undo Follow processing
+func TestHandleInboxWithDeps_UndoSuccess(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	// Local account being unfollowed
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote actor undoing their follow
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Existing follow to be undone
+	followURI := "https://remote.example.com/activities/follow-123"
+	existingFollow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: localAccount.Id,
+		URI:             followURI,
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(existingFollow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-456",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/follow-123",
+			"type": "Follow"
+		}
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 Accepted, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify follow was deleted
+	if len(mockDB.Follows) != 0 {
+		t.Errorf("Expected 0 follows after undo, got %d", len(mockDB.Follows))
+	}
+}
+
+// TestHandleInboxWithDeps_DeleteSuccess tests successful Delete activity processing
+func TestHandleInboxWithDeps_DeleteSuccess(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	// Local account
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	actorURI := "https://remote.example.com/users/bob"
+	objectURI := "https://remote.example.com/notes/123"
+
+	// Remote actor
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      actorURI,
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Activity to be deleted
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create-456",
+		ActivityType: "Create",
+		ActorURI:     actorURI,
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create"}`,
+		Processed:    true,
+		Local:        false,
+		CreatedAt:    time.Now(),
+	}
+	mockDB.AddActivity(activity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/delete-789",
+		"type": "Delete",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://remote.example.com/notes/123"
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 Accepted, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify activity was deleted (only the new Delete activity remains)
+	// Note: HandleInbox creates a new activity record for the Delete itself
+	createActivities := 0
+	for _, act := range mockDB.Activities {
+		if act.ActivityType == "Create" {
+			createActivities++
+		}
+	}
+	if createActivities != 0 {
+		t.Errorf("Expected Create activity to be deleted, got %d Create activities", createActivities)
+	}
+}
+
+// TestHandleInboxWithDeps_UnsupportedType tests handling of unsupported activity types
+func TestHandleInboxWithDeps_UnsupportedType(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	// Local account
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote actor
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	// Unsupported activity type "Announce"
+	body := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://other.example.com/notes/456"
+	}`)
+
+	keyID := "https://remote.example.com/users/bob#main-key"
+	req := createSignedRequest(t, "POST", "/users/alice/inbox", body, keypair, keyID)
+
+	rr := httptest.NewRecorder()
+	HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+	// Should still return 202 (unsupported types are logged but not rejected)
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 Accepted for unsupported type, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Activity should still be stored
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (stored even if unsupported), got %d", len(mockDB.Activities))
+	}
+}
+
+// TestHandleInboxWithDeps_ObjectURIExtraction tests extraction of objectURI from different formats
+func TestHandleInboxWithDeps_ObjectURIExtraction(t *testing.T) {
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  keypair.PublicPEM,
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockHTTP,
+	}
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	tests := []struct {
+		name           string
+		body           string
+		expectedObjURI string
+	}{
+		{
+			name: "object_as_string",
+			body: `{
+				"@context": "https://www.w3.org/ns/activitystreams",
+				"id": "https://remote.example.com/activities/1",
+				"type": "Announce",
+				"actor": "https://remote.example.com/users/bob",
+				"object": "https://example.com/notes/string-uri"
+			}`,
+			expectedObjURI: "https://example.com/notes/string-uri",
+		},
+		{
+			name: "object_as_map",
+			body: `{
+				"@context": "https://www.w3.org/ns/activitystreams",
+				"id": "https://remote.example.com/activities/2",
+				"type": "Announce",
+				"actor": "https://remote.example.com/users/bob",
+				"object": {
+					"id": "https://example.com/notes/map-uri",
+					"type": "Note"
+				}
+			}`,
+			expectedObjURI: "https://example.com/notes/map-uri",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear activities
+			mockDB.Activities = make(map[uuid.UUID]*domain.Activity)
+
+			keyID := "https://remote.example.com/users/bob#main-key"
+			req := createSignedRequest(t, "POST", "/users/alice/inbox", []byte(tt.body), keypair, keyID)
+
+			rr := httptest.NewRecorder()
+			HandleInboxWithDeps(rr, req, "alice", conf, deps)
+
+			if rr.Code != http.StatusAccepted {
+				t.Errorf("Expected 202, got %d", rr.Code)
+			}
+
+			// Check stored activity has correct ObjectURI
+			for _, act := range mockDB.Activities {
+				if act.ObjectURI != tt.expectedObjURI {
+					t.Errorf("Expected ObjectURI '%s', got '%s'", tt.expectedObjURI, act.ObjectURI)
+				}
+			}
+		})
+	}
 }
