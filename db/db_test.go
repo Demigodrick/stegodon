@@ -107,6 +107,20 @@ func setupTestDB(t *testing.T) *DB {
 		account_id TEXT
 	)`)
 
+	// Create hashtag tables
+	db.db.Exec(`CREATE TABLE IF NOT EXISTS hashtags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		usage_count INTEGER DEFAULT 0,
+		last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`)
+
+	db.db.Exec(`CREATE TABLE IF NOT EXISTS note_hashtags (
+		note_id TEXT NOT NULL,
+		hashtag_id INTEGER NOT NULL,
+		PRIMARY KEY (note_id, hashtag_id)
+	)`)
+
 	return db
 }
 
@@ -1881,5 +1895,375 @@ func TestCleanupOrphanedFollows_BothDirections(t *testing.T) {
 	err, f1 = db.ReadFollowByURI(follow1.URI)
 	if err == nil && f1 != nil {
 		t.Error("Follow should have been deleted after remote account deletion")
+	}
+}
+
+// Hashtag tests
+
+func TestCreateOrUpdateHashtag(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create new hashtag
+	id1, err := db.CreateOrUpdateHashtag("golang")
+	if err != nil {
+		t.Fatalf("CreateOrUpdateHashtag failed: %v", err)
+	}
+	if id1 == 0 {
+		t.Error("Expected non-zero hashtag ID")
+	}
+
+	// Verify hashtag was created with usage_count = 1
+	var name string
+	var usageCount int
+	err = db.db.QueryRow("SELECT name, usage_count FROM hashtags WHERE id = ?", id1).Scan(&name, &usageCount)
+	if err != nil {
+		t.Fatalf("Failed to query hashtag: %v", err)
+	}
+	if name != "golang" {
+		t.Errorf("Expected name 'golang', got '%s'", name)
+	}
+	if usageCount != 1 {
+		t.Errorf("Expected usage_count 1, got %d", usageCount)
+	}
+
+	// Update existing hashtag (should increment usage_count)
+	id2, err := db.CreateOrUpdateHashtag("golang")
+	if err != nil {
+		t.Fatalf("CreateOrUpdateHashtag (update) failed: %v", err)
+	}
+	if id2 != id1 {
+		t.Errorf("Expected same ID on update, got %d vs %d", id1, id2)
+	}
+
+	// Verify usage_count incremented
+	err = db.db.QueryRow("SELECT usage_count FROM hashtags WHERE id = ?", id1).Scan(&usageCount)
+	if err != nil {
+		t.Fatalf("Failed to query hashtag: %v", err)
+	}
+	if usageCount != 2 {
+		t.Errorf("Expected usage_count 2 after update, got %d", usageCount)
+	}
+}
+
+func TestCreateOrUpdateHashtag_CaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create hashtag
+	id1, err := db.CreateOrUpdateHashtag("GoLang")
+	if err != nil {
+		t.Fatalf("CreateOrUpdateHashtag failed: %v", err)
+	}
+
+	// Verify it's stored as lowercase
+	var name string
+	err = db.db.QueryRow("SELECT name FROM hashtags WHERE id = ?", id1).Scan(&name)
+	if err != nil {
+		t.Fatalf("Failed to query hashtag: %v", err)
+	}
+	if name != "golang" {
+		t.Errorf("Expected lowercase 'golang', got '%s'", name)
+	}
+
+	// Update with different case should update the same record
+	id2, err := db.CreateOrUpdateHashtag("GOLANG")
+	if err != nil {
+		t.Fatalf("CreateOrUpdateHashtag (different case) failed: %v", err)
+	}
+	if id2 != id1 {
+		t.Errorf("Expected same ID for case-insensitive match, got %d vs %d", id1, id2)
+	}
+}
+
+func TestLinkNoteHashtags(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user and note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+	noteId, err := db.CreateNote(userId, "Test note #golang #rust")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Create hashtags
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	rustId, _ := db.CreateOrUpdateHashtag("rust")
+
+	// Link note to hashtags
+	err = db.LinkNoteHashtags(noteId, []int64{golangId, rustId})
+	if err != nil {
+		t.Fatalf("LinkNoteHashtags failed: %v", err)
+	}
+
+	// Verify links were created
+	var count int
+	err = db.db.QueryRow("SELECT COUNT(*) FROM note_hashtags WHERE note_id = ?", noteId.String()).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query note_hashtags: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 hashtag links, got %d", count)
+	}
+}
+
+func TestLinkNoteHashtags_Duplicate(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user and note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+	noteId, err := db.CreateNote(userId, "Test note #golang")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Create hashtag
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+
+	// Link note to hashtag
+	err = db.LinkNoteHashtags(noteId, []int64{golangId})
+	if err != nil {
+		t.Fatalf("LinkNoteHashtags failed: %v", err)
+	}
+
+	// Try to link again (should be ignored due to INSERT OR IGNORE)
+	err = db.LinkNoteHashtags(noteId, []int64{golangId})
+	if err != nil {
+		t.Fatalf("LinkNoteHashtags (duplicate) should not error: %v", err)
+	}
+
+	// Verify only one link exists
+	var count int
+	err = db.db.QueryRow("SELECT COUNT(*) FROM note_hashtags WHERE note_id = ?", noteId.String()).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query note_hashtags: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 hashtag link after duplicate insert, got %d", count)
+	}
+}
+
+func TestReadHashtagsByNoteId(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user and note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+	noteId, err := db.CreateNote(userId, "Test note #golang #rust #fediverse")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Create and link hashtags
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	rustId, _ := db.CreateOrUpdateHashtag("rust")
+	fediverseId, _ := db.CreateOrUpdateHashtag("fediverse")
+	err = db.LinkNoteHashtags(noteId, []int64{golangId, rustId, fediverseId})
+	if err != nil {
+		t.Fatalf("LinkNoteHashtags failed: %v", err)
+	}
+
+	// Read hashtags
+	err, hashtags := db.ReadHashtagsByNoteId(noteId)
+	if err != nil {
+		t.Fatalf("ReadHashtagsByNoteId failed: %v", err)
+	}
+	if len(hashtags) != 3 {
+		t.Errorf("Expected 3 hashtags, got %d", len(hashtags))
+	}
+
+	// Verify all hashtags are present
+	hashtagMap := make(map[string]bool)
+	for _, h := range hashtags {
+		hashtagMap[h] = true
+	}
+	if !hashtagMap["golang"] {
+		t.Error("Expected 'golang' in hashtags")
+	}
+	if !hashtagMap["rust"] {
+		t.Error("Expected 'rust' in hashtags")
+	}
+	if !hashtagMap["fediverse"] {
+		t.Error("Expected 'fediverse' in hashtags")
+	}
+}
+
+func TestReadHashtagsByNoteId_NoHashtags(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user and note without hashtags
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+	noteId, err := db.CreateNote(userId, "Test note without hashtags")
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Read hashtags (should return empty slice)
+	err, hashtags := db.ReadHashtagsByNoteId(noteId)
+	if err != nil {
+		t.Fatalf("ReadHashtagsByNoteId failed: %v", err)
+	}
+	if len(hashtags) != 0 {
+		t.Errorf("Expected 0 hashtags, got %d", len(hashtags))
+	}
+}
+
+func TestReadNotesByHashtag(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create notes with hashtags
+	note1Id, _ := db.CreateNote(userId, "Note 1 #golang")
+	note2Id, _ := db.CreateNote(userId, "Note 2 #golang #rust")
+	note3Id, _ := db.CreateNote(userId, "Note 3 #rust")
+
+	// Create and link hashtags
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	rustId, _ := db.CreateOrUpdateHashtag("rust")
+	db.LinkNoteHashtags(note1Id, []int64{golangId})
+	db.LinkNoteHashtags(note2Id, []int64{golangId, rustId})
+	db.LinkNoteHashtags(note3Id, []int64{rustId})
+
+	// Read notes by #golang
+	err, notes := db.ReadNotesByHashtag("golang", 10, 0)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag failed: %v", err)
+	}
+	if len(*notes) != 2 {
+		t.Errorf("Expected 2 notes with #golang, got %d", len(*notes))
+	}
+
+	// Read notes by #rust
+	err, notes = db.ReadNotesByHashtag("rust", 10, 0)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag failed: %v", err)
+	}
+	if len(*notes) != 2 {
+		t.Errorf("Expected 2 notes with #rust, got %d", len(*notes))
+	}
+
+	// Read notes by non-existent hashtag
+	err, notes = db.ReadNotesByHashtag("nonexistent", 10, 0)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag failed: %v", err)
+	}
+	if len(*notes) != 0 {
+		t.Errorf("Expected 0 notes with #nonexistent, got %d", len(*notes))
+	}
+}
+
+func TestReadNotesByHashtag_Pagination(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create 5 notes with #golang
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	for i := 0; i < 5; i++ {
+		noteId, _ := db.CreateNote(userId, "Note #golang")
+		db.LinkNoteHashtags(noteId, []int64{golangId})
+	}
+
+	// Test limit
+	err, notes := db.ReadNotesByHashtag("golang", 3, 0)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag failed: %v", err)
+	}
+	if len(*notes) != 3 {
+		t.Errorf("Expected 3 notes with limit=3, got %d", len(*notes))
+	}
+
+	// Test offset
+	err, notes = db.ReadNotesByHashtag("golang", 3, 3)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag with offset failed: %v", err)
+	}
+	if len(*notes) != 2 {
+		t.Errorf("Expected 2 notes with limit=3 offset=3, got %d", len(*notes))
+	}
+}
+
+func TestReadNotesByHashtag_CaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user and note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+	noteId, _ := db.CreateNote(userId, "Note #GoLang")
+
+	// Create and link hashtag
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	db.LinkNoteHashtags(noteId, []int64{golangId})
+
+	// Search with different case
+	err, notes := db.ReadNotesByHashtag("GOLANG", 10, 0)
+	if err != nil {
+		t.Fatalf("ReadNotesByHashtag failed: %v", err)
+	}
+	if len(*notes) != 1 {
+		t.Errorf("Expected 1 note with case-insensitive search, got %d", len(*notes))
+	}
+}
+
+func TestCountNotesByHashtag(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create notes with hashtags
+	note1Id, _ := db.CreateNote(userId, "Note 1 #golang")
+	note2Id, _ := db.CreateNote(userId, "Note 2 #golang #rust")
+	note3Id, _ := db.CreateNote(userId, "Note 3 #golang")
+
+	// Create and link hashtags
+	golangId, _ := db.CreateOrUpdateHashtag("golang")
+	rustId, _ := db.CreateOrUpdateHashtag("rust")
+	db.LinkNoteHashtags(note1Id, []int64{golangId})
+	db.LinkNoteHashtags(note2Id, []int64{golangId, rustId})
+	db.LinkNoteHashtags(note3Id, []int64{golangId})
+
+	// Count notes by #golang
+	count, err := db.CountNotesByHashtag("golang")
+	if err != nil {
+		t.Fatalf("CountNotesByHashtag failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 notes with #golang, got %d", count)
+	}
+
+	// Count notes by #rust
+	count, err = db.CountNotesByHashtag("rust")
+	if err != nil {
+		t.Fatalf("CountNotesByHashtag failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 note with #rust, got %d", count)
+	}
+
+	// Count notes by non-existent hashtag
+	count, err = db.CountNotesByHashtag("nonexistent")
+	if err != nil {
+		t.Fatalf("CountNotesByHashtag failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 notes with #nonexistent, got %d", count)
 	}
 }

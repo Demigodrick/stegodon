@@ -126,11 +126,15 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
+		// First convert markdown links, then highlight hashtags
+		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+
 		posts = append(posts, PostView{
 			NoteId:      note.Id.String(),
 			Username:    note.CreatedBy,
 			Message:     note.Message,
-			MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
+			MessageHTML: template.HTML(messageHTML),
 			TimeAgo:     formatTimeAgo(note.CreatedAt),
 		})
 	}
@@ -208,11 +212,15 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
+		// First convert markdown links, then highlight hashtags
+		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+
 		posts = append(posts, PostView{
 			NoteId:      note.Id.String(),
 			Username:    note.CreatedBy,
 			Message:     note.Message,
-			MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
+			MessageHTML: template.HTML(messageHTML),
 			TimeAgo:     formatTimeAgo(note.CreatedAt),
 		})
 	}
@@ -252,6 +260,20 @@ type SinglePostPageData struct {
 	Version string
 	Post    PostView
 	User    UserView
+}
+
+type TagPageData struct {
+	Title      string
+	Host       string
+	SSHPort    int
+	Version    string
+	Tag        string
+	Posts      []PostView
+	TotalPosts int
+	HasPrev    bool
+	HasNext    bool
+	PrevPage   int
+	NextPage   int
 }
 
 func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
@@ -296,11 +318,15 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		host = conf.Conf.SslDomain
 	}
 
+	// First convert markdown links, then highlight hashtags
+	messageHTML := util.MarkdownLinksToHTML(note.Message)
+	messageHTML = util.HighlightHashtagsHTML(messageHTML)
+
 	post := PostView{
 		NoteId:      note.Id.String(),
 		Username:    note.CreatedBy,
 		Message:     note.Message,
-		MessageHTML: template.HTML(util.MarkdownLinksToHTML(note.Message)),
+		MessageHTML: template.HTML(messageHTML),
 		TimeAgo:     formatTimeAgo(note.CreatedAt),
 	}
 
@@ -319,4 +345,82 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	c.HTML(200, "post.html", data)
+}
+
+func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
+	tag := c.Param("tag")
+	database := db.GetDB()
+
+	// Pagination
+	page := 1
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	postsPerPage := 20
+	offset := (page - 1) * postsPerPage
+
+	// Get total count for pagination
+	totalPosts, err := database.CountNotesByHashtag(tag)
+	if err != nil {
+		log.Printf("Failed to count notes for hashtag %s: %v", tag, err)
+		totalPosts = 0
+	}
+
+	// Get notes with this hashtag
+	err, notes := database.ReadNotesByHashtag(tag, postsPerPage, offset)
+	if err != nil {
+		log.Printf("Failed to read notes for hashtag %s: %v", tag, err)
+		c.HTML(500, "base.html", gin.H{"Title": "Error", "Error": "Failed to load tagged posts"})
+		return
+	}
+
+	if notes == nil {
+		notes = &[]domain.Note{}
+	}
+
+	// Convert to PostView with hashtag-highlighted content
+	posts := make([]PostView, 0, len(*notes))
+	for _, note := range *notes {
+		// First convert markdown links, then highlight hashtags
+		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+
+		posts = append(posts, PostView{
+			NoteId:      note.Id.String(),
+			Username:    note.CreatedBy,
+			Message:     note.Message,
+			MessageHTML: template.HTML(messageHTML),
+			TimeAgo:     formatTimeAgo(note.CreatedAt),
+		})
+	}
+
+	// Use SSLDomain if federation is enabled, otherwise use Host
+	host := conf.Conf.Host
+	if conf.Conf.WithAp {
+		host = conf.Conf.SslDomain
+	}
+
+	end := offset + postsPerPage
+	if end > totalPosts {
+		end = totalPosts
+	}
+
+	data := TagPageData{
+		Title:      fmt.Sprintf("#%s", tag),
+		Host:       host,
+		SSHPort:    conf.Conf.SshPort,
+		Version:    util.GetVersion(),
+		Tag:        tag,
+		Posts:      posts,
+		TotalPosts: totalPosts,
+		HasPrev:    page > 1,
+		HasNext:    end < totalPosts,
+		PrevPage:   page - 1,
+		NextPage:   page + 1,
+	}
+
+	c.HTML(200, "tag.html", data)
 }

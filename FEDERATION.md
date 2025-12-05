@@ -68,6 +68,9 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 
 - Outgoing posts use `mediaType: text/html`
 - Markdown links are converted to HTML anchor tags
+- Hashtags are parsed and included in the `tag` array with type `Hashtag`
+- Hashtag HTML format: `<a href="..." class="hashtag" rel="tag">#<span>tag</span></a>`
+- JSON-LD context includes `Hashtag: as:Hashtag` when hashtags are present
 - Incoming content stored as-is in activity JSON
 
 ## Notable behaviors
@@ -86,7 +89,6 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - Direct messages
 - Media attachments
 - Content warnings (`sensitive` flag)
-- Hashtags
 - Mentions parsing
 - Replies and threading
 - ActivityPub C2S (Client-to-Server)

@@ -74,6 +74,11 @@ func Router(conf *util.AppConfig) error {
 		HandleSinglePost(c, conf)
 	})
 
+	// Tag page
+	g.GET("/tags/:tag", func(c *gin.Context) {
+		HandleTagFeed(c, conf)
+	})
+
 	// RSS Feed
 	g.GET("/feed", func(c *gin.Context) {
 

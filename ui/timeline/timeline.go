@@ -262,7 +262,9 @@ func (m Model) View() string {
 					s.WriteString(contentFormatted)
 				} else {
 					// For regular content, truncate and pad manually
-					truncatedContent := util.TruncateVisibleLength(post.Content, contentMaxWidth)
+					// Highlight hashtags before display
+					highlightedContent := util.HighlightHashtagsTerminal(post.Content)
+					truncatedContent := util.TruncateVisibleLength(highlightedContent, contentMaxWidth)
 					contentVisibleLen := util.CountVisibleChars(truncatedContent)
 					contentPaddingNeeded := contentMaxWidth - contentVisibleLen
 					if contentPaddingNeeded < 0 {
@@ -280,9 +282,11 @@ func (m Model) View() string {
 				unselectedStyle := lipgloss.NewStyle().
 					Width(contentWidth)
 
+				// Highlight hashtags before display
+				highlightedContent := util.HighlightHashtagsTerminal(post.Content)
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render(post.Actor))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(post.Content, 150)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(highlightedContent, 150)))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")

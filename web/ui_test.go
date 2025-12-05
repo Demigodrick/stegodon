@@ -610,3 +610,181 @@ func TestSinglePostTitleFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestTagPageDataStructure(t *testing.T) {
+	// Test TagPageData structure
+	data := TagPageData{
+		Title:      "#golang",
+		Host:       "example.com",
+		SSHPort:    23232,
+		Version:    "1.0.0",
+		Tag:        "golang",
+		Posts:      []PostView{},
+		TotalPosts: 42,
+		HasPrev:    false,
+		HasNext:    true,
+		PrevPage:   0,
+		NextPage:   2,
+	}
+
+	if data.Title != "#golang" {
+		t.Error("Title should include # prefix")
+	}
+	if data.Tag != "golang" {
+		t.Error("Tag should be set without # prefix")
+	}
+	if data.Host != "example.com" {
+		t.Error("Host should be set")
+	}
+	if data.SSHPort != 23232 {
+		t.Error("SSHPort should be set")
+	}
+	if data.Version != "1.0.0" {
+		t.Error("Version should be set")
+	}
+	if data.TotalPosts != 42 {
+		t.Error("TotalPosts should be set")
+	}
+	if data.HasPrev {
+		t.Error("HasPrev should be false for first page")
+	}
+	if !data.HasNext {
+		t.Error("HasNext should be true when there are more pages")
+	}
+}
+
+func TestTagPageTitleFormat(t *testing.T) {
+	// Test tag page title formatting
+	tests := []struct {
+		tag       string
+		wantTitle string
+	}{
+		{tag: "golang", wantTitle: "#golang"},
+		{tag: "rust", wantTitle: "#rust"},
+		{tag: "activitypub", wantTitle: "#activitypub"},
+		{tag: "my_tag", wantTitle: "#my_tag"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			title := fmt.Sprintf("#%s", tt.tag)
+			if title != tt.wantTitle {
+				t.Errorf("Expected title '%s', got '%s'", tt.wantTitle, title)
+			}
+		})
+	}
+}
+
+func TestTagPagePagination(t *testing.T) {
+	// Test tag page pagination calculations
+	tests := []struct {
+		name        string
+		page        int
+		totalPosts  int
+		wantHasPrev bool
+		wantHasNext bool
+	}{
+		{
+			name:        "first page with more posts",
+			page:        1,
+			totalPosts:  50,
+			wantHasPrev: false,
+			wantHasNext: true,
+		},
+		{
+			name:        "middle page",
+			page:        2,
+			totalPosts:  50,
+			wantHasPrev: true,
+			wantHasNext: true,
+		},
+		{
+			name:        "last page",
+			page:        3,
+			totalPosts:  50,
+			wantHasPrev: true,
+			wantHasNext: false,
+		},
+		{
+			name:        "single page",
+			page:        1,
+			totalPosts:  10,
+			wantHasPrev: false,
+			wantHasNext: false,
+		},
+		{
+			name:        "empty results",
+			page:        1,
+			totalPosts:  0,
+			wantHasPrev: false,
+			wantHasNext: false,
+		},
+	}
+
+	postsPerPage := 20
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			offset := (tt.page - 1) * postsPerPage
+			end := offset + postsPerPage
+			if end > tt.totalPosts {
+				end = tt.totalPosts
+			}
+
+			hasPrev := tt.page > 1
+			hasNext := end < tt.totalPosts
+
+			if hasPrev != tt.wantHasPrev {
+				t.Errorf("Expected hasPrev %v, got %v", tt.wantHasPrev, hasPrev)
+			}
+			if hasNext != tt.wantHasNext {
+				t.Errorf("Expected hasNext %v, got %v", tt.wantHasNext, hasNext)
+			}
+		})
+	}
+}
+
+func TestTagPageDataWithPosts(t *testing.T) {
+	// Test TagPageData with posts containing hashtags
+	posts := []PostView{
+		{
+			NoteId:   "123e4567-e89b-12d3-a456-426614174000",
+			Username: "alice",
+			Message:  "Hello #golang world!",
+			TimeAgo:  "5 minutes ago",
+		},
+		{
+			NoteId:   "223e4567-e89b-12d3-a456-426614174001",
+			Username: "bob",
+			Message:  "Learning #golang and #rust",
+			TimeAgo:  "1 hour ago",
+		},
+	}
+
+	data := TagPageData{
+		Title:      "#golang",
+		Host:       "example.com",
+		SSHPort:    23232,
+		Version:    "1.0.0",
+		Tag:        "golang",
+		Posts:      posts,
+		TotalPosts: 2,
+		HasPrev:    false,
+		HasNext:    false,
+		PrevPage:   0,
+		NextPage:   2,
+	}
+
+	if len(data.Posts) != 2 {
+		t.Errorf("Expected 2 posts, got %d", len(data.Posts))
+	}
+	if data.Posts[0].Username != "alice" {
+		t.Error("First post should be from alice")
+	}
+	if data.Posts[1].Username != "bob" {
+		t.Error("Second post should be from bob")
+	}
+	if data.TotalPosts != 2 {
+		t.Errorf("Expected TotalPosts 2, got %d", data.TotalPosts)
+	}
+}

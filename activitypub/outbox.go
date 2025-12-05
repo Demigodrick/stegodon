@@ -115,12 +115,58 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
 	createID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
 
 	// Convert Markdown links to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+	// Convert hashtags to ActivityPub-compliant HTML links
+	contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
+
+	// Build the Note object
+	noteObj := map[string]any{
+		"id":           noteURI,
+		"type":         "Note",
+		"attributedTo": actorURI,
+		"content":      contentHTML,
+		"mediaType":    "text/html",
+		"published":    note.CreatedAt.Format(time.RFC3339),
+		"to": []string{
+			"https://www.w3.org/ns/activitystreams#Public",
+		},
+		"cc": []string{
+			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
+		},
+	}
+
+	// Extract hashtags and add to tag array
+	hashtags := util.ParseHashtags(note.Message)
+	if len(hashtags) > 0 {
+		tags := make([]map[string]any, 0, len(hashtags))
+		for _, tag := range hashtags {
+			tags = append(tags, map[string]any{
+				"type": "Hashtag",
+				"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
+				"name": "#" + tag,
+			})
+		}
+		noteObj["tag"] = tags
+	}
+
+	// Build context - include Hashtag definition if we have hashtags
+	var context any
+	if len(hashtags) > 0 {
+		context = []any{
+			"https://www.w3.org/ns/activitystreams",
+			map[string]any{
+				"Hashtag": "as:Hashtag",
+			},
+		}
+	} else {
+		context = "https://www.w3.org/ns/activitystreams"
+	}
 
 	create := map[string]any{
-		"@context":  "https://www.w3.org/ns/activitystreams",
+		"@context":  context,
 		"id":        createID,
 		"type":      "Create",
 		"actor":     actorURI,
@@ -131,20 +177,7 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		"cc": []string{
 			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
 		},
-		"object": map[string]any{
-			"id":           noteURI,
-			"type":         "Note",
-			"attributedTo": actorURI,
-			"content":      contentHTML,
-			"mediaType":    "text/html",
-			"published":    note.CreatedAt.Format(time.RFC3339),
-			"to": []string{
-				"https://www.w3.org/ns/activitystreams#Public",
-			},
-			"cc": []string{
-				fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
-			},
-		},
+		"object": noteObj,
 	}
 
 	// Get all followers and queue delivery to their inboxes
@@ -199,6 +232,7 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
 	updateID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
 
 	// Use EditedAt if available, otherwise use CreatedAt
 	updatedTime := note.CreatedAt
@@ -208,9 +242,55 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 
 	// Convert Markdown links to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+	// Convert hashtags to ActivityPub-compliant HTML links
+	contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
+
+	// Build the Note object
+	noteObj := map[string]any{
+		"id":           noteURI,
+		"type":         "Note",
+		"attributedTo": actorURI,
+		"content":      contentHTML,
+		"mediaType":    "text/html",
+		"published":    note.CreatedAt.Format(time.RFC3339),
+		"updated":      updatedTime.Format(time.RFC3339),
+		"to": []string{
+			"https://www.w3.org/ns/activitystreams#Public",
+		},
+		"cc": []string{
+			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
+		},
+	}
+
+	// Extract hashtags and add to tag array
+	hashtags := util.ParseHashtags(note.Message)
+	if len(hashtags) > 0 {
+		tags := make([]map[string]any, 0, len(hashtags))
+		for _, tag := range hashtags {
+			tags = append(tags, map[string]any{
+				"type": "Hashtag",
+				"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
+				"name": "#" + tag,
+			})
+		}
+		noteObj["tag"] = tags
+	}
+
+	// Build context - include Hashtag definition if we have hashtags
+	var context any
+	if len(hashtags) > 0 {
+		context = []any{
+			"https://www.w3.org/ns/activitystreams",
+			map[string]any{
+				"Hashtag": "as:Hashtag",
+			},
+		}
+	} else {
+		context = "https://www.w3.org/ns/activitystreams"
+	}
 
 	update := map[string]any{
-		"@context": "https://www.w3.org/ns/activitystreams",
+		"@context": context,
 		"id":       updateID,
 		"type":     "Update",
 		"actor":    actorURI,
@@ -220,21 +300,7 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		"cc": []string{
 			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
 		},
-		"object": map[string]any{
-			"id":           noteURI,
-			"type":         "Note",
-			"attributedTo": actorURI,
-			"content":      contentHTML,
-			"mediaType":    "text/html",
-			"published":    note.CreatedAt.Format(time.RFC3339),
-			"updated":      updatedTime.Format(time.RFC3339),
-			"to": []string{
-				"https://www.w3.org/ns/activitystreams#Public",
-			},
-			"cc": []string{
-				fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
-			},
-		},
+		"object": noteObj,
 	}
 
 	// Get all followers and queue delivery to their inboxes

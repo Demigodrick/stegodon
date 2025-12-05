@@ -650,3 +650,266 @@ func TestCountVisibleCharsEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHashtags(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "single hashtag",
+			input:    "Hello #world",
+			expected: []string{"world"},
+		},
+		{
+			name:     "multiple hashtags",
+			input:    "Check out #golang and #rust programming",
+			expected: []string{"golang", "rust"},
+		},
+		{
+			name:     "case insensitivity",
+			input:    "#Hello #WORLD #GoLang",
+			expected: []string{"hello", "world", "golang"},
+		},
+		{
+			name:     "deduplication",
+			input:    "#test #Test #TEST #test",
+			expected: []string{"test"},
+		},
+		{
+			name:     "hashtag with numbers",
+			input:    "#Go123 #test456",
+			expected: []string{"go123", "test456"},
+		},
+		{
+			name:     "hashtag with underscores",
+			input:    "#my_tag #hello_world_test",
+			expected: []string{"my_tag", "hello_world_test"},
+		},
+		{
+			name:     "invalid - starts with number",
+			input:    "#123 #456test",
+			expected: []string{},
+		},
+		{
+			name:     "single letter hashtag",
+			input:    "#a #b #c",
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "double hash - one valid",
+			input:    "##double",
+			expected: []string{"double"},
+		},
+		{
+			name:     "no hashtags",
+			input:    "Hello world without any tags",
+			expected: []string{},
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []string{},
+		},
+		{
+			name:     "hashtag at start",
+			input:    "#first is the hashtag",
+			expected: []string{"first"},
+		},
+		{
+			name:     "hashtag at end",
+			input:    "The hashtag is #last",
+			expected: []string{"last"},
+		},
+		{
+			name:     "only hashtag",
+			input:    "#solo",
+			expected: []string{"solo"},
+		},
+		{
+			name:     "hashtags in URL should match",
+			input:    "Visit https://example.com/#section with #hashtag",
+			expected: []string{"section", "hashtag"},
+		},
+		{
+			name:     "hashtag after punctuation",
+			input:    "Hello,#tag1 world.#tag2 test!#tag3",
+			expected: []string{"tag1", "tag2", "tag3"},
+		},
+		{
+			name:     "mixed valid and invalid",
+			input:    "#valid #123invalid #also_valid #_invalid",
+			expected: []string{"valid", "also_valid"},
+		},
+		{
+			name:     "hashtag with newline",
+			input:    "#tag1\n#tag2",
+			expected: []string{"tag1", "tag2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseHashtags(tt.input)
+
+			// Check length
+			if len(result) != len(tt.expected) {
+				t.Errorf("ParseHashtags(%q) returned %d tags, expected %d. Got: %v, Expected: %v",
+					tt.input, len(result), len(tt.expected), result, tt.expected)
+				return
+			}
+
+			// Check contents
+			for i, tag := range result {
+				if tag != tt.expected[i] {
+					t.Errorf("ParseHashtags(%q)[%d] = %q, expected %q",
+						tt.input, i, tag, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseHashtagsPreservesOrder(t *testing.T) {
+	input := "#first #second #third #fourth"
+	result := ParseHashtags(input)
+
+	expected := []string{"first", "second", "third", "fourth"}
+	if len(result) != len(expected) {
+		t.Fatalf("Expected %d tags, got %d", len(expected), len(result))
+	}
+
+	for i, tag := range result {
+		if tag != expected[i] {
+			t.Errorf("Order mismatch at index %d: got %q, expected %q", i, tag, expected[i])
+		}
+	}
+}
+
+// Tests for HighlightHashtagsTerminal
+
+func TestHighlightHashtagsTerminal_SingleHashtag(t *testing.T) {
+	input := "Hello #world!"
+	result := HighlightHashtagsTerminal(input)
+
+	// Check for ANSI color codes
+	if !strings.Contains(result, "\033[38;5;75m#world\033[39m") {
+		t.Errorf("Expected colored hashtag, got: %s", result)
+	}
+}
+
+func TestHighlightHashtagsTerminal_MultipleHashtags(t *testing.T) {
+	input := "Hello #golang and #rust!"
+	result := HighlightHashtagsTerminal(input)
+
+	// Check for ANSI color codes for both hashtags
+	if !strings.Contains(result, "\033[38;5;75m#golang\033[39m") {
+		t.Errorf("Expected colored #golang, got: %s", result)
+	}
+	if !strings.Contains(result, "\033[38;5;75m#rust\033[39m") {
+		t.Errorf("Expected colored #rust, got: %s", result)
+	}
+}
+
+func TestHighlightHashtagsTerminal_NoHashtags(t *testing.T) {
+	input := "Hello world!"
+	result := HighlightHashtagsTerminal(input)
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+func TestHighlightHashtagsTerminal_PreservesOtherText(t *testing.T) {
+	input := "Check out #golang for web development."
+	result := HighlightHashtagsTerminal(input)
+
+	// Should preserve text around hashtag
+	if !strings.Contains(result, "Check out ") {
+		t.Error("Expected prefix text to be preserved")
+	}
+	if !strings.Contains(result, " for web development.") {
+		t.Error("Expected suffix text to be preserved")
+	}
+}
+
+// Tests for HighlightHashtagsHTML
+
+func TestHighlightHashtagsHTML_SingleHashtag(t *testing.T) {
+	input := "Hello #world!"
+	result := HighlightHashtagsHTML(input)
+
+	expected := `Hello <a href="/tags/world" class="hashtag">#world</a>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestHighlightHashtagsHTML_MultipleHashtags(t *testing.T) {
+	input := "Hello #golang and #rust!"
+	result := HighlightHashtagsHTML(input)
+
+	if !strings.Contains(result, `<a href="/tags/golang" class="hashtag">#golang</a>`) {
+		t.Errorf("Expected golang hashtag link, got: %s", result)
+	}
+	if !strings.Contains(result, `<a href="/tags/rust" class="hashtag">#rust</a>`) {
+		t.Errorf("Expected rust hashtag link, got: %s", result)
+	}
+}
+
+func TestHighlightHashtagsHTML_NoHashtags(t *testing.T) {
+	input := "Hello world!"
+	result := HighlightHashtagsHTML(input)
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+// Tests for HashtagsToActivityPubHTML
+
+func TestHashtagsToActivityPubHTML_SingleHashtag(t *testing.T) {
+	input := "Hello #world!"
+	result := HashtagsToActivityPubHTML(input, "https://example.com")
+
+	expected := `Hello <a href="https://example.com/tags/world" class="hashtag" rel="tag">#<span>world</span></a>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestHashtagsToActivityPubHTML_MultipleHashtags(t *testing.T) {
+	input := "Hello #golang and #rust!"
+	result := HashtagsToActivityPubHTML(input, "https://example.com")
+
+	if !strings.Contains(result, `<a href="https://example.com/tags/golang" class="hashtag" rel="tag">#<span>golang</span></a>`) {
+		t.Errorf("Expected golang hashtag link, got: %s", result)
+	}
+	if !strings.Contains(result, `<a href="https://example.com/tags/rust" class="hashtag" rel="tag">#<span>rust</span></a>`) {
+		t.Errorf("Expected rust hashtag link, got: %s", result)
+	}
+}
+
+func TestHashtagsToActivityPubHTML_NoHashtags(t *testing.T) {
+	input := "Hello world!"
+	result := HashtagsToActivityPubHTML(input, "https://example.com")
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+func TestHashtagsToActivityPubHTML_CaseInsensitive(t *testing.T) {
+	input := "Hello #GoLang!"
+	result := HashtagsToActivityPubHTML(input, "https://example.com")
+
+	// Should be lowercase in output
+	expected := `Hello <a href="https://example.com/tags/golang" class="hashtag" rel="tag">#<span>golang</span></a>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}

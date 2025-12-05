@@ -137,13 +137,14 @@ func (m Model) View() string {
 		for i := start; i < end; i++ {
 			post := m.Posts[i]
 
-			// Convert Markdown links to OSC 8 hyperlinks
+			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags
 			messageWithLinks := util.MarkdownLinksToTerminal(post.Message)
+			messageWithLinksAndHashtags := util.HighlightHashtagsTerminal(messageWithLinks)
 
 			// Render in vertical layout like notes list
 			timeStr := timeStyle.Render(formatTime(post.CreatedAt))
 			authorStr := authorStyle.Render("@" + post.CreatedBy)
-			contentStr := contentStyle.Render(util.TruncateVisibleLength(messageWithLinks, 150))
+			contentStr := contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, 150))
 
 			postContent := lipgloss.JoinVertical(lipgloss.Left, timeStr, authorStr, contentStr)
 			s.WriteString(postContent)

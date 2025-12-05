@@ -24,6 +24,7 @@ var embeddedVersion string
 
 // Pre-compiled regex patterns for performance
 var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
+var hashtagRegex = regexp.MustCompile(`#([a-zA-Z][a-zA-Z0-9_]*)`)
 
 type RsaKeyPair struct {
 	Private string
@@ -361,4 +362,55 @@ func TruncateVisibleLength(s string, maxLen int) string {
 	result += "\x1b[0m"
 
 	return result
+}
+
+// ParseHashtags extracts hashtags from text and returns them as lowercase, deduplicated strings.
+// Hashtags must start with a letter and can contain letters, numbers, and underscores.
+// Examples: #hello, #Go123, #my_tag are valid; #123, #_ are not.
+func ParseHashtags(text string) []string {
+	matches := hashtagRegex.FindAllStringSubmatch(text, -1)
+
+	// Use map for deduplication (lowercase)
+	seen := make(map[string]bool)
+	tags := make([]string, 0, len(matches))
+
+	for _, match := range matches {
+		if len(match) >= 2 {
+			tag := strings.ToLower(match[1])
+			if !seen[tag] {
+				seen[tag] = true
+				tags = append(tags, tag)
+			}
+		}
+	}
+
+	return tags
+}
+
+// HighlightHashtagsTerminal colors hashtags in text for terminal display.
+// Uses cyan color (ANSI 36) for hashtags to make them visually distinct.
+func HighlightHashtagsTerminal(text string) string {
+	// Use the same regex pattern as hashtagRegex
+	return hashtagRegex.ReplaceAllString(text, "\033[38;5;75m#$1\033[39m")
+}
+
+// HighlightHashtagsHTML converts hashtags in text to clickable HTML links.
+// Each hashtag becomes a link to /tags/{tag} page.
+func HighlightHashtagsHTML(text string) string {
+	return hashtagRegex.ReplaceAllString(text, `<a href="/tags/$1" class="hashtag">#$1</a>`)
+}
+
+// HashtagsToActivityPubHTML converts hashtags in text to ActivityPub-compliant HTML links.
+// Uses the format: <a href="https://hostname/tags/tag" class="hashtag" rel="tag">#<span>tag</span></a>
+// The baseURL should be the full https:// URL of the server (e.g., "https://example.com")
+func HashtagsToActivityPubHTML(text string, baseURL string) string {
+	return hashtagRegex.ReplaceAllStringFunc(text, func(match string) string {
+		// match is the full hashtag including # (e.g., "#something")
+		submatches := hashtagRegex.FindStringSubmatch(match)
+		if len(submatches) >= 2 {
+			tag := strings.ToLower(submatches[1])
+			return fmt.Sprintf(`<a href="%s/tags/%s" class="hashtag" rel="tag">#<span>%s</span></a>`, baseURL, tag, tag)
+		}
+		return match
+	})
 }

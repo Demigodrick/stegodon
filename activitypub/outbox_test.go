@@ -2077,3 +2077,242 @@ func TestSendCreateWithDeps_MarkdownConversion(t *testing.T) {
 		}
 	}
 }
+
+// TestSendCreateWithDeps_Hashtags tests that hashtags are included in the tag array
+func TestSendCreateWithDeps_Hashtags(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Hello #golang and #fediverse!",
+		CreatedAt: time.Now(),
+	}
+
+	err := SendCreateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendCreateWithDeps failed: %v", err)
+	}
+
+	// Verify hashtags are in the tag array
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		// Verify @context includes Hashtag definition
+		context, ok := activity["@context"].([]any)
+		if !ok {
+			t.Error("Expected @context to be an array when hashtags are present")
+			continue
+		}
+		if len(context) < 2 {
+			t.Errorf("Expected @context to have at least 2 elements, got %d", len(context))
+		}
+		// Check that the second element contains Hashtag definition
+		if contextMap, ok := context[1].(map[string]any); ok {
+			if contextMap["Hashtag"] != "as:Hashtag" {
+				t.Errorf("Expected Hashtag definition in context, got %v", contextMap["Hashtag"])
+			}
+		} else {
+			t.Error("Expected second context element to be a map with Hashtag definition")
+		}
+
+		obj := activity["object"].(map[string]any)
+		tags, ok := obj["tag"].([]any)
+		if !ok {
+			t.Error("Expected 'tag' array in object")
+			continue
+		}
+
+		if len(tags) != 2 {
+			t.Errorf("Expected 2 hashtags in tag array, got %d", len(tags))
+		}
+
+		// Verify hashtag structure
+		hashtagNames := make(map[string]bool)
+		for _, tag := range tags {
+			tagMap := tag.(map[string]any)
+			if tagMap["type"] != "Hashtag" {
+				t.Errorf("Expected tag type 'Hashtag', got %v", tagMap["type"])
+			}
+			name := tagMap["name"].(string)
+			hashtagNames[name] = true
+
+			// Verify href format
+			href := tagMap["href"].(string)
+			if !strings.HasPrefix(href, "https://local.example.com/tags/") {
+				t.Errorf("Expected href to start with https://local.example.com/tags/, got %s", href)
+			}
+		}
+
+		if !hashtagNames["#golang"] {
+			t.Error("Expected '#golang' in hashtags")
+		}
+		if !hashtagNames["#fediverse"] {
+			t.Error("Expected '#fediverse' in hashtags")
+		}
+	}
+}
+
+// TestSendCreateWithDeps_NoHashtags tests that notes without hashtags don't have tag array
+func TestSendCreateWithDeps_NoHashtags(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Hello world, no hashtags here!",
+		CreatedAt: time.Now(),
+	}
+
+	err := SendCreateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendCreateWithDeps failed: %v", err)
+	}
+
+	// Verify no tag array in the object and context is simple string
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		// Verify @context is a simple string (not array) when no hashtags
+		context, ok := activity["@context"].(string)
+		if !ok {
+			t.Error("Expected @context to be a simple string when no hashtags are present")
+		} else if context != "https://www.w3.org/ns/activitystreams" {
+			t.Errorf("Expected @context to be ActivityStreams URL, got %s", context)
+		}
+
+		obj := activity["object"].(map[string]any)
+		if _, ok := obj["tag"]; ok {
+			t.Error("Expected no 'tag' array for note without hashtags")
+		}
+	}
+}
+
+// TestSendUpdateWithDeps_Hashtags tests that Update activity includes hashtags
+func TestSendUpdateWithDeps_Hashtags(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := CreateTestAccount("alice", keypair)
+	mockDB.AddAccount(account)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       remoteActor.Id,
+		TargetAccountId: account.Id,
+		URI:             "https://remote.example.com/follows/1",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+
+	editedAt := time.Now()
+	note := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: account.Username,
+		Message:   "Updated with #rust and #activitypub",
+		CreatedAt: time.Now().Add(-1 * time.Hour),
+		EditedAt:  &editedAt,
+	}
+
+	err := SendUpdateWithDeps(note, account, conf, mockDB)
+	if err != nil {
+		t.Errorf("SendUpdateWithDeps failed: %v", err)
+	}
+
+	// Verify hashtags are in the tag array
+	for _, item := range mockDB.DeliveryQueue {
+		var activity map[string]any
+		if err := json.Unmarshal([]byte(item.ActivityJSON), &activity); err != nil {
+			t.Errorf("Failed to parse activity JSON: %v", err)
+			continue
+		}
+
+		if activity["type"] != "Update" {
+			t.Errorf("Expected activity type 'Update', got %v", activity["type"])
+		}
+
+		obj := activity["object"].(map[string]any)
+		tags, ok := obj["tag"].([]any)
+		if !ok {
+			t.Error("Expected 'tag' array in object for Update activity")
+			continue
+		}
+
+		if len(tags) != 2 {
+			t.Errorf("Expected 2 hashtags in tag array, got %d", len(tags))
+		}
+	}
+}

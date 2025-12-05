@@ -416,3 +416,15 @@ h2 {
 .user-info strong {
   color: #5fafff;
 }
+
+/* Hashtag styling */
+.hashtag {
+  color: #5fafff;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.hashtag:hover {
+  text-decoration: underline;
+  color: #7fc8ff;
+}

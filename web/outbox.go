@@ -75,8 +75,17 @@ func getOutboxPage(actor string, page int, conf *util.AppConfig) (error, string)
 	// Check if there are more items
 	hasMore := false
 	items := []any{}
+	hasHashtags := false
 
 	if notes != nil {
+		// Check if any notes have hashtags
+		for _, note := range *notes {
+			if len(util.ParseHashtags(note.Message)) > 0 {
+				hasHashtags = true
+				break
+			}
+		}
+
 		if len(*notes) > itemsPerPage {
 			hasMore = true
 			// Trim the extra item
@@ -87,8 +96,21 @@ func getOutboxPage(actor string, page int, conf *util.AppConfig) (error, string)
 		}
 	}
 
+	// Build context - include Hashtag definition if any notes have hashtags
+	var context any
+	if hasHashtags {
+		context = []any{
+			"https://www.w3.org/ns/activitystreams",
+			map[string]any{
+				"Hashtag": "as:Hashtag",
+			},
+		}
+	} else {
+		context = "https://www.w3.org/ns/activitystreams"
+	}
+
 	collectionPage := map[string]any{
-		"@context":     "https://www.w3.org/ns/activitystreams",
+		"@context":     context,
 		"id":           pageURL,
 		"type":         "OrderedCollectionPage",
 		"partOf":       outboxURL,
@@ -127,6 +149,8 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 
 		// Convert Markdown links to HTML for ActivityPub content
 		contentHTML := util.MarkdownLinksToHTML(note.Message)
+		// Convert hashtags to ActivityPub-compliant HTML links
+		contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
 
 		// Build the Note object
 		noteObj := map[string]any{
@@ -146,6 +170,20 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 		// Add updated field if note was edited
 		if note.EditedAt != nil {
 			noteObj["updated"] = note.EditedAt.Format("2006-01-02T15:04:05Z")
+		}
+
+		// Extract hashtags and add to tag array
+		hashtags := util.ParseHashtags(note.Message)
+		if len(hashtags) > 0 {
+			tags := make([]map[string]any, 0, len(hashtags))
+			for _, tag := range hashtags {
+				tags = append(tags, map[string]any{
+					"type": "Hashtag",
+					"href": fmt.Sprintf("%s/tags/%s", baseURL, tag),
+					"name": "#" + tag,
+				})
+			}
+			noteObj["tag"] = tags
 		}
 
 		// Build the Create activity wrapping the Note

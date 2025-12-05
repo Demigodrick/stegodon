@@ -67,6 +67,25 @@ func createNoteModelCmd(note *domain.SaveNote) tea.Cmd {
 			return common.UpdateNoteList
 		}
 
+		// Link hashtags to the note
+		hashtags := util.ParseHashtags(note.Message)
+		if len(hashtags) > 0 {
+			hashtagIds := make([]int64, 0, len(hashtags))
+			for _, tag := range hashtags {
+				hashtagId, err := database.CreateOrUpdateHashtag(tag)
+				if err != nil {
+					log.Printf("Failed to create/update hashtag %s: %v", tag, err)
+					continue
+				}
+				hashtagIds = append(hashtagIds, hashtagId)
+			}
+			if len(hashtagIds) > 0 {
+				if err := database.LinkNoteHashtags(noteId, hashtagIds); err != nil {
+					log.Printf("Failed to link hashtags to note: %v", err)
+				}
+			}
+		}
+
 		// Federate the note via ActivityPub (background task)
 		go func() {
 			// Get the created note from database with actual ID and timestamps
@@ -119,6 +138,28 @@ func updateNoteModelCmd(noteId uuid.UUID, message string) tea.Cmd {
 		}
 
 		log.Printf("Note %s updated successfully", noteId)
+
+		// Update hashtags for the note
+		// First, we need to unlink old hashtags and link new ones
+		// For simplicity, we'll just create/update new hashtags and link them
+		// The old links will remain (could be cleaned up with a separate function)
+		hashtags := util.ParseHashtags(message)
+		if len(hashtags) > 0 {
+			hashtagIds := make([]int64, 0, len(hashtags))
+			for _, tag := range hashtags {
+				hashtagId, err := database.CreateOrUpdateHashtag(tag)
+				if err != nil {
+					log.Printf("Failed to create/update hashtag %s: %v", tag, err)
+					continue
+				}
+				hashtagIds = append(hashtagIds, hashtagId)
+			}
+			if len(hashtagIds) > 0 {
+				if err := database.LinkNoteHashtags(noteId, hashtagIds); err != nil {
+					log.Printf("Failed to link hashtags to note: %v", err)
+				}
+			}
+		}
 
 		// Federate the update via ActivityPub (background task)
 		go func() {

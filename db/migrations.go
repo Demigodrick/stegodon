@@ -95,6 +95,33 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_delivery_queue_next_retry ON delivery_queue(next_retry_at);
 	`
 
+	// Hashtags table
+	sqlCreateHashtagsTable = `CREATE TABLE IF NOT EXISTS hashtags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		usage_count INTEGER DEFAULT 0,
+		last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+
+	sqlCreateHashtagsIndices = `
+		CREATE INDEX IF NOT EXISTS idx_hashtags_name ON hashtags(name);
+		CREATE INDEX IF NOT EXISTS idx_hashtags_usage ON hashtags(usage_count DESC);
+	`
+
+	// Note-hashtag relationship table
+	sqlCreateNoteHashtagsTable = `CREATE TABLE IF NOT EXISTS note_hashtags (
+		note_id TEXT NOT NULL,
+		hashtag_id INTEGER NOT NULL,
+		PRIMARY KEY (note_id, hashtag_id),
+		FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE,
+		FOREIGN KEY (hashtag_id) REFERENCES hashtags(id) ON DELETE CASCADE
+	)`
+
+	sqlCreateNoteHashtagsIndices = `
+		CREATE INDEX IF NOT EXISTS idx_note_hashtags_note_id ON note_hashtags(note_id);
+		CREATE INDEX IF NOT EXISTS idx_note_hashtags_hashtag_id ON note_hashtags(hashtag_id);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -137,6 +164,12 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateDeliveryQueueTable, "delivery_queue"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateHashtagsTable, "hashtags"); err != nil {
+			return err
+		}
+		if err := db.createTableIfNotExists(tx, sqlCreateNoteHashtagsTable, "note_hashtags"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -153,6 +186,12 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateDeliveryQueueIndices); err != nil {
 			log.Printf("Warning: Failed to create delivery_queue indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateHashtagsIndices); err != nil {
+			log.Printf("Warning: Failed to create hashtags indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateNoteHashtagsIndices); err != nil {
+			log.Printf("Warning: Failed to create note_hashtags indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)

@@ -1654,3 +1654,114 @@ func (db *DB) MigrateDuplicateFollows() error {
 	log.Println("Successfully added UNIQUE constraint to follows table")
 	return nil
 }
+
+// Hashtag queries
+const (
+	sqlInsertHashtag          = `INSERT INTO hashtags(name, usage_count, last_used_at) VALUES (?, 1, CURRENT_TIMESTAMP) ON CONFLICT(name) DO UPDATE SET usage_count = usage_count + 1, last_used_at = CURRENT_TIMESTAMP RETURNING id`
+	sqlSelectHashtagByName    = `SELECT id, name, usage_count, last_used_at FROM hashtags WHERE name = ?`
+	sqlInsertNoteHashtag      = `INSERT OR IGNORE INTO note_hashtags(note_id, hashtag_id) VALUES (?, ?)`
+	sqlSelectHashtagsByNoteId = `SELECT h.name FROM hashtags h INNER JOIN note_hashtags nh ON h.id = nh.hashtag_id WHERE nh.note_id = ?`
+	sqlSelectNotesByHashtag   = `SELECT n.id, a.username, n.message, n.created_at, n.edited_at
+								FROM notes n
+								INNER JOIN accounts a ON a.id = n.user_id
+								INNER JOIN note_hashtags nh ON nh.note_id = n.id
+								INNER JOIN hashtags h ON h.id = nh.hashtag_id
+								WHERE h.name = ?
+								ORDER BY n.created_at DESC
+								LIMIT ? OFFSET ?`
+	sqlCountNotesByHashtag = `SELECT COUNT(*) FROM note_hashtags nh INNER JOIN hashtags h ON h.id = nh.hashtag_id WHERE h.name = ?`
+)
+
+// CreateOrUpdateHashtag creates a new hashtag or increments usage count if it exists
+// Returns the hashtag ID
+func (db *DB) CreateOrUpdateHashtag(name string) (int64, error) {
+	var hashtagId int64
+	err := db.wrapTransaction(func(tx *sql.Tx) error {
+		err := tx.QueryRow(sqlInsertHashtag, strings.ToLower(name)).Scan(&hashtagId)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return hashtagId, err
+}
+
+// LinkNoteHashtags creates links between a note and multiple hashtags
+func (db *DB) LinkNoteHashtags(noteId uuid.UUID, hashtagIds []int64) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		for _, hashtagId := range hashtagIds {
+			_, err := tx.Exec(sqlInsertNoteHashtag, noteId.String(), hashtagId)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ReadHashtagsByNoteId returns all hashtag names for a given note
+func (db *DB) ReadHashtagsByNoteId(noteId uuid.UUID) (error, []string) {
+	rows, err := db.db.Query(sqlSelectHashtagsByNoteId, noteId.String())
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var hashtags []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err, hashtags
+		}
+		hashtags = append(hashtags, name)
+	}
+	if err = rows.Err(); err != nil {
+		return err, hashtags
+	}
+	return nil, hashtags
+}
+
+// ReadNotesByHashtag returns notes that contain a specific hashtag with pagination
+func (db *DB) ReadNotesByHashtag(tag string, limit, offset int) (error, *[]domain.Note) {
+	rows, err := db.db.Query(sqlSelectNotesByHashtag, strings.ToLower(tag), limit, offset)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var notes []domain.Note
+	for rows.Next() {
+		var note domain.Note
+		var createdAtStr string
+		var editedAtStr sql.NullString
+		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr); err != nil {
+			return err, &notes
+		}
+
+		if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+			note.CreatedAt = parsedTime
+		}
+
+		if editedAtStr.Valid {
+			if parsedTime, err := parseTimestamp(editedAtStr.String); err == nil {
+				note.EditedAt = &parsedTime
+			}
+		}
+
+		notes = append(notes, note)
+	}
+	if err = rows.Err(); err != nil {
+		return err, &notes
+	}
+	return nil, &notes
+}
+
+// CountNotesByHashtag returns the total count of notes with a specific hashtag
+func (db *DB) CountNotesByHashtag(tag string) (int, error) {
+	var count int
+	err := db.db.QueryRow(sqlCountNotesByHashtag, strings.ToLower(tag)).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
