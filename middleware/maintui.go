@@ -32,7 +32,7 @@ func MainTui() wish.Middleware {
 		lipgloss.SetColorProfile(termenv.ANSI256)
 
 		m := ui.NewModel(*acc, pty.Window.Width, pty.Window.Height)
-		return tea.NewProgram(m, tea.WithInput(s), tea.WithOutput(s), tea.WithAltScreen())
+		return tea.NewProgram(m, tea.WithFPS(60), tea.WithInput(s), tea.WithOutput(s), tea.WithAltScreen())
 	}
 	return bm.MiddlewareWithProgramHandler(teaHandler, termenv.ANSI256)
 }

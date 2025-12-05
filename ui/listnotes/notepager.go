@@ -148,11 +148,12 @@ func (m Model) View() string {
 	if len(m.Notes) == 0 {
 		s.WriteString(emptyStyle.Render("No notes yet.\nCreate your first note!"))
 	} else {
-		// Calculate right panel width (same as supertui calculation)
-		leftPanelWidth := m.width / 3
-		rightPanelWidth := m.width - leftPanelWidth - 6 // Account for borders and margins
+		// Calculate right panel width using layout helpers
+		leftPanelWidth := common.CalculateLeftPanelWidth(m.width)
+		rightPanelWidth := common.CalculateRightPanelWidth(m.width, leftPanelWidth)
+		contentWidth := common.CalculateContentWidth(rightPanelWidth, 2) // 2 padding on each side
 
-		itemsPerPage := 10
+		itemsPerPage := common.DefaultItemsPerPage
 		start := m.Offset
 		end := min(start+itemsPerPage, len(m.Notes))
 
@@ -173,7 +174,7 @@ func (m Model) View() string {
 				// Create a style that fills the full width
 				selectedBg := lipgloss.NewStyle().
 					Background(lipgloss.Color(common.COLOR_LIGHTBLUE)).
-					Width(rightPanelWidth - 4)
+					Width(contentWidth)
 
 				// Render each line with the background and inverted text colors
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr))
@@ -186,7 +187,7 @@ func (m Model) View() string {
 			} else {
 				// Apply same width to unselected items for consistent wrapping
 				unselectedStyle := lipgloss.NewStyle().
-					Width(rightPanelWidth - 4)
+					Width(contentWidth)
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render("@" + note.CreatedBy))

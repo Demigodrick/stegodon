@@ -39,7 +39,7 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 	ti.Placeholder = "enter your message"
 	ti.CharLimit = 1000 // Set to DB limit, we'll validate visible chars separately
 	ti.ShowLineNumbers = false
-	ti.SetWidth(30)
+	ti.SetWidth(common.TextInputDefaultWidth)
 	ti.Cursor.SetMode(cursor.CursorBlink)
 	ti.Focus()
 

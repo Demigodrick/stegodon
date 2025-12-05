@@ -77,7 +77,7 @@ func (m Model) View() string {
 	if len(m.Followers) == 0 {
 		s.WriteString(emptyStyle.Render("No followers yet. Share your account to get followers!"))
 	} else {
-		itemsPerPage := 10
+		itemsPerPage := common.DefaultItemsPerPage
 		start := m.Offset
 		end := min(start+itemsPerPage, len(m.Followers))
 

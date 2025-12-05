@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/deemkeen/stegodon/db"
+	"github.com/deemkeen/stegodon/ui/common"
 	"github.com/deemkeen/stegodon/util"
 )
 
@@ -134,9 +135,9 @@ func (m Model) View() string {
 func (m Model) ViewWithWidth(termWidth, termHeight int) string {
 	// Account for border (2 chars) and margins already defined in Style (6 chars total)
 	// Total to subtract: 2 (border) + 6 (margins) = 8
-	contentWidth := max(termWidth-8,
+	contentWidth := max(termWidth-common.CreateUserDialogBorderAndMargin,
 		// Minimum width
-		40)
+		common.CreateUserMinWidth)
 
 	bordered := Style.Width(contentWidth).Render(m.View())
 	return lipgloss.Place(termWidth, termHeight, lipgloss.Center, lipgloss.Center, bordered)

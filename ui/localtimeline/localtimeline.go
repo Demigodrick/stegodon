@@ -127,7 +127,7 @@ func (m Model) View() string {
 	if len(m.Posts) == 0 {
 		s.WriteString(emptyStyle.Render("No local posts yet.\nCreate some notes or invite others to join!"))
 	} else {
-		itemsPerPage := 10
+		itemsPerPage := common.DefaultItemsPerPage
 		start := m.Offset
 		end := start + itemsPerPage
 		if end > len(m.Posts) {

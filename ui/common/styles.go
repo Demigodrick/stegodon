@@ -20,10 +20,14 @@ var (
 	CaptionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(COLOR_MAGENTA)).Padding(2)
 )
 
+// DefaultWindowWidth returns the usable width after accounting for outer margins
+// The offset of 10 accounts for: outer margins (2*2=4) + potential scrollbar (2) + safety buffer (4)
 func DefaultWindowWidth(width int) int {
 	return width - 10
 }
 
+// DefaultWindowHeight returns the usable height after accounting for outer margins
+// The offset of 10 accounts for: outer margins (2*2=4) + potential terminal chrome (6)
 func DefaultWindowHeight(heigth int) int {
 	return heigth - 10
 }

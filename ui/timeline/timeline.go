@@ -169,11 +169,12 @@ func (m Model) View() string {
 	if len(m.Posts) == 0 {
 		s.WriteString(emptyStyle.Render("No federated posts yet.\nFollow some accounts to see their posts here!"))
 	} else {
-		// Calculate right panel width for selection background
-		leftPanelWidth := m.Width / 3
-		rightPanelWidth := m.Width - leftPanelWidth - 6
+		// Calculate right panel width using layout helpers
+		leftPanelWidth := common.CalculateLeftPanelWidth(m.Width)
+		rightPanelWidth := common.CalculateRightPanelWidth(m.Width, leftPanelWidth)
+		contentWidth := common.CalculateContentWidth(rightPanelWidth, 2) // 2 padding on each side
 
-		itemsPerPage := 5
+		itemsPerPage := 5 // Federated posts are longer, show fewer
 		start := m.Offset
 		end := start + itemsPerPage
 		if end > len(m.Posts) {
@@ -189,7 +190,7 @@ func (m Model) View() string {
 			// Apply selection highlighting - full width box with inverted colors
 			if i == m.Selected {
 				// Use consistent width for all lines
-				contentMaxWidth := min(150, rightPanelWidth-4)
+				contentMaxWidth := min(150, contentWidth)
 
 				// Truncate and pad time to fit within max width
 				truncatedTime := util.TruncateVisibleLength(timeStr, contentMaxWidth)
@@ -277,7 +278,7 @@ func (m Model) View() string {
 			} else {
 				// Apply same width to unselected items for consistent wrapping
 				unselectedStyle := lipgloss.NewStyle().
-					Width(rightPanelWidth - 4)
+					Width(contentWidth)
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render(post.Actor))

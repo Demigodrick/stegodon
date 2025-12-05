@@ -467,9 +467,9 @@ func (m MainModel) View() string {
 	model := m.currentFocusedModel()
 
 	// Calculate responsive dimensions
-	availableHeight := m.height - 5 // Account for header and footer
-	leftPanelWidth := m.width / 3
-	rightPanelWidth := m.width - leftPanelWidth - 6 // Account for borders and margins
+	availableHeight := common.CalculateAvailableHeight(m.height)
+	leftPanelWidth := common.CalculateLeftPanelWidth(m.width)
+	rightPanelWidth := common.CalculateRightPanelWidth(m.width, leftPanelWidth)
 
 	createStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
@@ -637,8 +637,10 @@ func (m MainModel) View() string {
 			Align(lipgloss.Center)
 
 		// Calculate remaining vertical space and add it before footer
-		currentContentHeight := availableHeight + 2            // panels + header
-		remainingHeight := m.height - currentContentHeight - 1 // -1 for footer itself
+		// The panel takes availableHeight + margin (2), and we need space for footer (1)
+		// Original: currentContentHeight = availableHeight + 2, remainingHeight = m.height - currentContentHeight - 1
+		currentContentHeight := availableHeight + common.PanelMarginVertical
+		remainingHeight := m.height - currentContentHeight - common.FooterHeight
 
 		if remainingHeight > 0 {
 			s += strings.Repeat("\n", remainingHeight)
