@@ -78,9 +78,11 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - Replies include the `inReplyTo` field pointing to the parent note's URI
 - When replying to a remote user, the parent author's inbox is added to the `cc` list
 - Replies are stored with their `in_reply_to_uri` in the database for thread reconstruction
+- Reply counts are denormalized and recursively updated (includes all nested sub-replies)
+- Duplicate detection prevents counting federated copies of local posts twice
 - TUI: Press `r` on a post to reply, press `Enter` to view thread
 - Web: Single post pages show parent context and replies section
-- Thread depth: 1 level of nesting (direct replies indented, deeper replies shown flat)
+- Full thread depth supported with nested reply navigation
 
 ## Notable behaviors
 
@@ -97,7 +99,6 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - `Like` sending
 - Direct messages
 - Media attachments
-- Content warnings (`sensitive` flag)
 - Mentions parsing
 - ActivityPub C2S (Client-to-Server)
 - Object integrity proofs (FEP-8b32)

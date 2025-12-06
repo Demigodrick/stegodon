@@ -14,6 +14,8 @@ Built with Go and [Charm Tools](https://github.com/charmbracelet).
 
 - **SSH-First TUI** - Connect via SSH, authenticate with your public key, create notes in a beautiful terminal interface
 - **ActivityPub Federation** - Follow/unfollow users, federate posts to Mastodon/Pleroma with HTTP signatures
+- **Threading & Replies** - Reply to posts, view threaded conversations with recursive reply counts
+- **Hashtags** - Use `#tags` in your posts, highlighted in TUI and stored for discovery
 - **RSS Feeds** - Per-user and aggregated feeds with full content
 - **Web Interface** - Browse posts with terminal-themed design and SEO optimization
 - **Multi-User** - Admin panel, user management, single-user mode, closed registration
@@ -53,11 +55,14 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
 - **Tab** - Cycle through views
 - **Shift+Tab** - Cycle through views in reverse order
 - **↑/↓** or **j/k** - Navigate lists
-- **o** - Toggle URL display for selected post (federated timeline)
+- **Enter** - Open thread view for posts with replies
+- **Esc** - Return from thread view
+- **r** - Reply to selected post
+- **o** - Toggle URL display for selected post (home timeline)
   - Press once: Show clickable URL
   - Press again or navigate: Show post content
   - Cmd+click (Mac) or Ctrl+click (Linux) URL to open in local browser
-- **u** - Edit note (in list)
+- **u** - Edit note (in my posts)
 - **d** - Delete note with confirmation
 - **Ctrl+S** - Save/post note
 - **Ctrl+C** or **q** - Quit

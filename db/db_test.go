@@ -39,6 +39,9 @@ func setupTestDB(t *testing.T) *DB {
 	db.db.Exec(`ALTER TABLE notes ADD COLUMN federated INTEGER DEFAULT 1`)
 	db.db.Exec(`ALTER TABLE notes ADD COLUMN sensitive INTEGER DEFAULT 0`)
 	db.db.Exec(`ALTER TABLE notes ADD COLUMN content_warning TEXT`)
+	db.db.Exec(`ALTER TABLE notes ADD COLUMN reply_count INTEGER DEFAULT 0`)
+	db.db.Exec(`ALTER TABLE notes ADD COLUMN like_count INTEGER DEFAULT 0`)
+	db.db.Exec(`ALTER TABLE notes ADD COLUMN boost_count INTEGER DEFAULT 0`)
 
 	// Add ActivityPub profile fields to accounts table
 	db.db.Exec(`ALTER TABLE accounts ADD COLUMN display_name varchar(255)`)
@@ -85,7 +88,10 @@ func setupTestDB(t *testing.T) *DB {
 		raw_json text,
 		processed int default 0,
 		created_at timestamp default current_timestamp,
-		local int default 0
+		local int default 0,
+		reply_count INTEGER DEFAULT 0,
+		like_count INTEGER DEFAULT 0,
+		boost_count INTEGER DEFAULT 0
 	)`)
 
 	db.db.Exec(`CREATE TABLE IF NOT EXISTS likes(
@@ -2265,5 +2271,566 @@ func TestCountNotesByHashtag(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Expected 0 notes with #nonexistent, got %d", count)
+	}
+}
+
+// ============================================================================
+// Reply Count Tests
+// ============================================================================
+
+func TestExtractInReplyToFromJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		rawJSON  string
+		expected string
+	}{
+		{
+			name:     "valid inReplyTo string",
+			rawJSON:  `{"object":{"inReplyTo":"https://example.com/notes/123"}}`,
+			expected: "https://example.com/notes/123",
+		},
+		{
+			name:     "inReplyTo with spaces in JSON",
+			rawJSON:  `{"object": {"inReplyTo": "https://example.com/notes/456"}}`,
+			expected: "https://example.com/notes/456",
+		},
+		{
+			name:     "inReplyTo is null",
+			rawJSON:  `{"object":{"inReplyTo":null}}`,
+			expected: "",
+		},
+		{
+			name:     "missing inReplyTo field",
+			rawJSON:  `{"object":{"content":"Hello world"}}`,
+			expected: "",
+		},
+		{
+			name:     "missing object field",
+			rawJSON:  `{"type":"Create"}`,
+			expected: "",
+		},
+		{
+			name:     "empty JSON",
+			rawJSON:  "",
+			expected: "",
+		},
+		{
+			name:     "invalid JSON",
+			rawJSON:  `{invalid}`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractInReplyToFromJSON(tt.rawJSON)
+			if result != tt.expected {
+				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestIncrementReplyCountRecursive_Notes(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create a thread: root -> reply1 -> reply2 (3 levels deep)
+	rootId := uuid.New()
+	reply1Id := uuid.New()
+	reply2Id := uuid.New()
+
+	rootURI := "https://example.com/notes/" + rootId.String()
+	reply1URI := "https://example.com/notes/" + reply1Id.String()
+
+	// Create root note
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, reply_count)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		rootId, userId.String(), "Root post", time.Now(), rootURI, 0)
+	if err != nil {
+		t.Fatalf("Failed to create root note: %v", err)
+	}
+
+	// Create reply1 (replies to root)
+	_, err = db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, in_reply_to_uri, reply_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		reply1Id, userId.String(), "Reply 1", time.Now(), reply1URI, rootURI, 0)
+	if err != nil {
+		t.Fatalf("Failed to create reply1: %v", err)
+	}
+
+	// Create reply2 (replies to reply1)
+	_, err = db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, in_reply_to_uri, reply_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		reply2Id, userId.String(), "Reply 2", time.Now(), "", reply1URI, 0)
+	if err != nil {
+		t.Fatalf("Failed to create reply2: %v", err)
+	}
+
+	// Increment reply count for reply1URI (simulates receiving reply2)
+	err = db.IncrementReplyCountByURI(reply1URI)
+	if err != nil {
+		t.Fatalf("IncrementReplyCountByURI failed: %v", err)
+	}
+
+	// Verify reply1 has reply_count = 1
+	var reply1Count int
+	err = db.db.QueryRow(`SELECT reply_count FROM notes WHERE id = ?`, reply1Id.String()).Scan(&reply1Count)
+	if err != nil {
+		t.Fatalf("Failed to query reply1: %v", err)
+	}
+	if reply1Count != 1 {
+		t.Errorf("Expected reply1 reply_count = 1, got %d", reply1Count)
+	}
+
+	// Verify root also has reply_count = 1 (recursive increment)
+	var rootCount int
+	err = db.db.QueryRow(`SELECT reply_count FROM notes WHERE id = ?`, rootId.String()).Scan(&rootCount)
+	if err != nil {
+		t.Fatalf("Failed to query root: %v", err)
+	}
+	if rootCount != 1 {
+		t.Errorf("Expected root reply_count = 1 (recursive), got %d", rootCount)
+	}
+}
+
+func TestIncrementReplyCountRecursive_Activities(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create a chain of activities: remoteRoot -> remoteReply1 -> remoteReply2
+	rootURI := "https://remote.example.com/notes/root"
+	reply1URI := "https://remote.example.com/notes/reply1"
+
+	// Create root activity (no inReplyTo)
+	rootActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/1",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    rootURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + rootURI + `","type":"Note","content":"Root post"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	err := db.CreateActivity(rootActivity)
+	if err != nil {
+		t.Fatalf("Failed to create root activity: %v", err)
+	}
+
+	// Create reply1 activity (replies to root)
+	reply1Activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/2",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    reply1URI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + reply1URI + `","type":"Note","content":"Reply 1","inReplyTo":"` + rootURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	err = db.CreateActivity(reply1Activity)
+	if err != nil {
+		t.Fatalf("Failed to create reply1 activity: %v", err)
+	}
+
+	// Increment reply count for reply1URI (simulates receiving a new reply)
+	err = db.IncrementReplyCountByURI(reply1URI)
+	if err != nil {
+		t.Fatalf("IncrementReplyCountByURI failed: %v", err)
+	}
+
+	// Verify reply1 has reply_count = 1
+	var reply1Count int
+	err = db.db.QueryRow(`SELECT reply_count FROM activities WHERE object_uri = ?`, reply1URI).Scan(&reply1Count)
+	if err != nil {
+		t.Fatalf("Failed to query reply1: %v", err)
+	}
+	if reply1Count != 1 {
+		t.Errorf("Expected reply1 reply_count = 1, got %d", reply1Count)
+	}
+
+	// Verify root also has reply_count = 1 (recursive increment via inReplyTo in raw_json)
+	var rootCount int
+	err = db.db.QueryRow(`SELECT reply_count FROM activities WHERE object_uri = ?`, rootURI).Scan(&rootCount)
+	if err != nil {
+		t.Fatalf("Failed to query root: %v", err)
+	}
+	if rootCount != 1 {
+		t.Errorf("Expected root reply_count = 1 (recursive), got %d", rootCount)
+	}
+}
+
+func TestIncrementReplyCountRecursive_MixedChain(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create a chain: local note -> remote activity reply
+	localNoteId := uuid.New()
+	localNoteURI := "https://example.com/notes/" + localNoteId.String()
+
+	// Create local note (root)
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, reply_count)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		localNoteId, userId.String(), "Local root post", time.Now(), localNoteURI, 0)
+	if err != nil {
+		t.Fatalf("Failed to create local note: %v", err)
+	}
+
+	// Create remote activity that replies to local note
+	remoteReplyURI := "https://remote.example.com/notes/remote-reply"
+	remoteActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/1",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    remoteReplyURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + remoteReplyURI + `","type":"Note","content":"Remote reply","inReplyTo":"` + localNoteURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	err = db.CreateActivity(remoteActivity)
+	if err != nil {
+		t.Fatalf("Failed to create remote activity: %v", err)
+	}
+
+	// Increment reply count for local note (simulates receiving the remote reply)
+	err = db.IncrementReplyCountByURI(localNoteURI)
+	if err != nil {
+		t.Fatalf("IncrementReplyCountByURI failed: %v", err)
+	}
+
+	// Verify local note has reply_count = 1
+	var localCount int
+	err = db.db.QueryRow(`SELECT reply_count FROM notes WHERE id = ?`, localNoteId.String()).Scan(&localCount)
+	if err != nil {
+		t.Fatalf("Failed to query local note: %v", err)
+	}
+	if localCount != 1 {
+		t.Errorf("Expected local note reply_count = 1, got %d", localCount)
+	}
+}
+
+func TestIncrementReplyCount_ByNoteIdInURI(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create a note WITHOUT object_uri (to test ID-in-URI matching)
+	noteId := uuid.New()
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, reply_count)
+		VALUES (?, ?, ?, ?, ?)`,
+		noteId, userId.String(), "Test note", time.Now(), 0)
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// Increment using a URI that contains the note ID
+	noteURI := "https://example.com/notes/" + noteId.String()
+	err = db.IncrementReplyCountByURI(noteURI)
+	if err != nil {
+		t.Fatalf("IncrementReplyCountByURI failed: %v", err)
+	}
+
+	// Verify reply_count was incremented
+	var count int
+	err = db.db.QueryRow(`SELECT reply_count FROM notes WHERE id = ?`, noteId.String()).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query note: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected reply_count = 1, got %d", count)
+	}
+}
+
+func TestIncrementReplyCount_CycleDetection(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	// Create a note that references itself (artificial cycle)
+	noteId := uuid.New()
+	noteURI := "https://example.com/notes/" + noteId.String()
+
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, in_reply_to_uri, reply_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		noteId, userId.String(), "Self-referencing note", time.Now(), noteURI, noteURI, 0)
+	if err != nil {
+		t.Fatalf("Failed to create note: %v", err)
+	}
+
+	// This should not cause infinite recursion due to visited map
+	err = db.IncrementReplyCountByURI(noteURI)
+	if err != nil {
+		t.Fatalf("IncrementReplyCountByURI should handle cycles: %v", err)
+	}
+
+	// Verify it was only incremented once
+	var count int
+	err = db.db.QueryRow(`SELECT reply_count FROM notes WHERE id = ?`, noteId.String()).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query note: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected reply_count = 1 (not double-counted), got %d", count)
+	}
+}
+
+func TestCountActivitiesByInReplyTo_Basic(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	parentURI := "https://example.com/notes/parent"
+
+	// Create 3 activities that reply to the parent
+	for i := 0; i < 3; i++ {
+		activity := &domain.Activity{
+			Id:           uuid.New(),
+			ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+			ActivityType: "Create",
+			ActorURI:     "https://remote.example.com/users/alice",
+			ObjectURI:    "https://remote.example.com/notes/" + uuid.New().String(),
+			RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+			Processed:    true,
+			CreatedAt:    time.Now(),
+		}
+		if err := db.CreateActivity(activity); err != nil {
+			t.Fatalf("Failed to create activity %d: %v", i, err)
+		}
+	}
+
+	// Count replies
+	count, err := db.CountActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("CountActivitiesByInReplyTo failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 replies, got %d", count)
+	}
+}
+
+func TestCountActivitiesByInReplyTo_ExcludesDuplicates(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user for local note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	parentURI := "https://example.com/notes/parent"
+	localNoteId := uuid.New()
+	localNoteURI := "https://example.com/notes/" + localNoteId.String()
+
+	// Create a local note that replies to parent
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, object_uri, in_reply_to_uri)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		localNoteId, userId.String(), "Local reply", time.Now(), localNoteURI, parentURI)
+	if err != nil {
+		t.Fatalf("Failed to create local note: %v", err)
+	}
+
+	// Create a remote activity that is a DUPLICATE of the local note
+	// (same object_uri - this happens when a local post federates back)
+	duplicateActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    localNoteURI, // Same as local note!
+		RawJSON:      `{"type":"Create","object":{"id":"` + localNoteURI + `","inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(duplicateActivity); err != nil {
+		t.Fatalf("Failed to create duplicate activity: %v", err)
+	}
+
+	// Create a genuine remote activity (not a duplicate)
+	genuineActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://other-remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://other-remote.example.com/users/bob",
+		ObjectURI:    "https://other-remote.example.com/notes/" + uuid.New().String(),
+		RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(genuineActivity); err != nil {
+		t.Fatalf("Failed to create genuine activity: %v", err)
+	}
+
+	// Count should be 1 (only the genuine activity, not the duplicate)
+	count, err := db.CountActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("CountActivitiesByInReplyTo failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 reply (excluding duplicate), got %d", count)
+	}
+}
+
+func TestCountActivitiesByInReplyTo_ExcludesDuplicatesByNoteIdPattern(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create user for local note
+	userId := uuid.New()
+	createTestAccount(t, db, userId, "testuser", "pubkey", "webpub", "webpriv")
+
+	parentURI := "https://example.com/notes/parent"
+	localNoteId := uuid.New()
+
+	// Create a local note WITHOUT object_uri (to test the /notes/{uuid} pattern matching)
+	_, err := db.db.Exec(`INSERT INTO notes (id, user_id, message, created_at, in_reply_to_uri)
+		VALUES (?, ?, ?, ?, ?)`,
+		localNoteId, userId.String(), "Local reply", time.Now(), parentURI)
+	if err != nil {
+		t.Fatalf("Failed to create local note: %v", err)
+	}
+
+	// Create a remote activity that references the local note by ID pattern
+	duplicateActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    "https://example.com/notes/" + localNoteId.String(), // Contains the note ID
+		RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(duplicateActivity); err != nil {
+		t.Fatalf("Failed to create duplicate activity: %v", err)
+	}
+
+	// Create a genuine remote activity (not a duplicate)
+	genuineActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://other-remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://other-remote.example.com/users/bob",
+		ObjectURI:    "https://other-remote.example.com/notes/" + uuid.New().String(),
+		RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(genuineActivity); err != nil {
+		t.Fatalf("Failed to create genuine activity: %v", err)
+	}
+
+	// Count should be 1 (only the genuine activity, not the duplicate)
+	count, err := db.CountActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("CountActivitiesByInReplyTo failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 reply (excluding duplicate by ID pattern), got %d", count)
+	}
+}
+
+func TestCountActivitiesByInReplyTo_SpaceVariants(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	parentURI := "https://example.com/notes/parent"
+
+	// Create activity with "inReplyTo" (no space)
+	activity1 := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    "https://remote.example.com/notes/1",
+		RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(activity1); err != nil {
+		t.Fatalf("Failed to create activity1: %v", err)
+	}
+
+	// Create activity with "inReplyTo": (with space)
+	activity2 := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    "https://remote.example.com/notes/2",
+		RawJSON:      `{"type":"Create","object":{"inReplyTo": "` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(activity2); err != nil {
+		t.Fatalf("Failed to create activity2: %v", err)
+	}
+
+	// Both should be counted
+	count, err := db.CountActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("CountActivitiesByInReplyTo failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 replies (both space variants), got %d", count)
+	}
+}
+
+func TestCountActivitiesByInReplyTo_OnlyCountsCreateType(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	parentURI := "https://example.com/notes/parent"
+
+	// Create a "Create" activity
+	createActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    "https://remote.example.com/notes/1",
+		RawJSON:      `{"type":"Create","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(createActivity); err != nil {
+		t.Fatalf("Failed to create Create activity: %v", err)
+	}
+
+	// Create a "Like" activity (should not be counted)
+	likeActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/like",
+		ActivityType: "Like",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    "https://remote.example.com/notes/2",
+		RawJSON:      `{"type":"Like","object":{"inReplyTo":"` + parentURI + `"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(likeActivity); err != nil {
+		t.Fatalf("Failed to create Like activity: %v", err)
+	}
+
+	// Only the Create should be counted
+	count, err := db.CountActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("CountActivitiesByInReplyTo failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 reply (only Create type), got %d", count)
 	}
 }

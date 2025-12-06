@@ -33,6 +33,9 @@ erDiagram
         INTEGER federated
         INTEGER sensitive
         TEXT content_warning
+        INTEGER reply_count
+        INTEGER like_count
+        INTEGER boost_count
     }
 
     follows {
@@ -69,6 +72,9 @@ erDiagram
         INTEGER processed
         TIMESTAMP created_at
         INTEGER local
+        INTEGER reply_count
+        INTEGER like_count
+        INTEGER boost_count
     }
 
     likes {
@@ -89,11 +95,25 @@ erDiagram
         TEXT account_id FK
     }
 
+    hashtags {
+        INTEGER id PK
+        TEXT name UK
+        INTEGER usage_count
+        TIMESTAMP last_used_at
+    }
+
+    note_hashtags {
+        TEXT note_id PK,FK
+        INTEGER hashtag_id PK,FK
+    }
+
     accounts ||--o{ notes : "creates"
     accounts ||--o{ follows : "follower"
     accounts ||--o{ likes : "likes"
     accounts ||--o{ delivery_queue : "owns"
     notes ||--o{ likes : "receives"
+    notes ||--o{ note_hashtags : "has"
+    hashtags ||--o{ note_hashtags : "used_in"
     remote_accounts ||--o{ follows : "federated_follow"
 ```
 
@@ -103,22 +123,28 @@ erDiagram
 Local user accounts. Each user authenticates via SSH public key and has an RSA keypair for ActivityPub signing.
 
 ### notes
-User-created posts. Supports visibility settings, content warnings, and federation status.
+User-created posts. Supports visibility settings, content warnings, threading via `in_reply_to_uri`, and federation status. Includes denormalized engagement counters (`reply_count`, `like_count`, `boost_count`) for efficient display.
 
 ### follows
-Follow relationships between accounts. Can represent local-to-local, local-to-remote, or remote-to-local follows.
+Follow relationships between accounts. Can represent local-to-local, local-to-remote, or remote-to-local follows. The `is_local` flag indicates whether the target is a local user.
 
 ### remote_accounts
-Cached ActivityPub actors from other servers. Includes public keys for signature verification and inbox URIs for delivery.
+Cached ActivityPub actors from other servers. Includes public keys for signature verification and inbox URIs for delivery. Cached data has a 24-hour TTL before refresh.
 
 ### activities
-Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for debugging and replay.
+Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for debugging and replay. Includes denormalized engagement counters for remote posts displayed in timelines.
 
 ### likes
 Like/favorite relationships between accounts and notes.
 
 ### delivery_queue
-Background queue for federating activities to remote servers. Supports retry with exponential backoff.
+Background queue for federating activities to remote servers. Supports retry with exponential backoff (1 minute to 24 hours).
+
+### hashtags
+Hashtag registry tracking usage counts for discovery and trending features.
+
+### note_hashtags
+Junction table linking notes to their hashtags (many-to-many relationship).
 
 ## Indexes
 
@@ -140,3 +166,23 @@ Background queue for federating activities to remote servers. Supports retry wit
 | likes | idx_likes_note_id | note_id |
 | likes | idx_likes_account_id | account_id |
 | delivery_queue | idx_delivery_queue_next_retry | next_retry_at |
+| hashtags | idx_hashtags_name | name |
+| hashtags | idx_hashtags_usage | usage_count DESC |
+| note_hashtags | idx_note_hashtags_note_id | note_id |
+| note_hashtags | idx_note_hashtags_hashtag_id | hashtag_id |
+
+## Denormalized Counters
+
+For performance optimization, engagement counts are denormalized on both `notes` and `activities` tables:
+
+| Column | Description |
+|--------|-------------|
+| `reply_count` | Total number of replies (including nested sub-replies, recursively counted) |
+| `like_count` | Number of likes/favorites (reserved for future use) |
+| `boost_count` | Number of boosts/retweets (reserved for future use) |
+
+These counters are:
+- **Incrementally updated** when new replies are received (walks up the ancestor chain)
+- **Decremented** when replies are deleted
+- **Deduplicated** to avoid counting federated copies of local posts twice
+- **Backfilled** during database migration for existing data

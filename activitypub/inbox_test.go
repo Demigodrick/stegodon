@@ -1731,6 +1731,212 @@ func TestHandleCreateActivityWithDeps_NotFollowing(t *testing.T) {
 	}
 }
 
+// TestHandleCreateActivityWithDeps_ReplyIncrementsCounts tests that replies increment reply count
+func TestHandleCreateActivityWithDeps_ReplyIncrementsCounts(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship (we follow bob)
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	parentURI := "https://example.com/notes/parent-post"
+
+	// Create activity that is a reply
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/789",
+			"type": "Note",
+			"content": "This is a reply!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob",
+			"inReplyTo": "` + parentURI + `"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
+	}
+
+	// Verify IncrementReplyCountByURI was called with the parent URI
+	if len(mockDB.IncrementReplyCountCalls) != 1 {
+		t.Errorf("Expected 1 call to IncrementReplyCountByURI, got %d", len(mockDB.IncrementReplyCountCalls))
+	}
+	if len(mockDB.IncrementReplyCountCalls) > 0 && mockDB.IncrementReplyCountCalls[0] != parentURI {
+		t.Errorf("Expected IncrementReplyCountByURI called with '%s', got '%s'", parentURI, mockDB.IncrementReplyCountCalls[0])
+	}
+}
+
+// TestHandleCreateActivityWithDeps_DuplicateSkipsReplyCount tests that duplicate local posts don't increment reply count
+func TestHandleCreateActivityWithDeps_DuplicateSkipsReplyCount(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	// Add a local note that will be "duplicated" by the incoming activity
+	localNoteURI := "https://local.example.com/notes/local-reply"
+	localNote := &domain.Note{
+		Id:           uuid.New(),
+		CreatedBy:   localAccount.Id.String(),
+		Message:      "My local reply",
+		ObjectURI:    localNoteURI,
+		InReplyToURI: "https://example.com/notes/parent-post",
+		CreatedAt:    time.Now(),
+	}
+	mockDB.AddNote(localNote)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	parentURI := "https://example.com/notes/parent-post"
+
+	// Create activity that is a duplicate of the local note
+	// (this simulates a local post that federated out and came back)
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "` + localNoteURI + `",
+			"type": "Note",
+			"content": "My local reply",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob",
+			"inReplyTo": "` + parentURI + `"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
+	}
+
+	// Verify IncrementReplyCountByURI was NOT called (duplicate detection should skip it)
+	if len(mockDB.IncrementReplyCountCalls) != 0 {
+		t.Errorf("Expected 0 calls to IncrementReplyCountByURI for duplicate, got %d: %v",
+			len(mockDB.IncrementReplyCountCalls), mockDB.IncrementReplyCountCalls)
+	}
+}
+
+// TestHandleCreateActivityWithDeps_NoReplyNoIncrement tests that non-reply posts don't increment reply count
+func TestHandleCreateActivityWithDeps_NoReplyNoIncrement(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Create activity that is NOT a reply (no inReplyTo)
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/789",
+			"type": "Note",
+			"content": "This is a standalone post!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
+	}
+
+	// Verify IncrementReplyCountByURI was NOT called (not a reply)
+	if len(mockDB.IncrementReplyCountCalls) != 0 {
+		t.Errorf("Expected 0 calls to IncrementReplyCountByURI for non-reply, got %d", len(mockDB.IncrementReplyCountCalls))
+	}
+}
+
 // TestHandleDeleteActivityWithDeps_PostDeletion tests successful post deletion
 func TestHandleDeleteActivityWithDeps_PostDeletion(t *testing.T) {
 	mockDB := NewMockDatabase()

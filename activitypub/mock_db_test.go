@@ -30,6 +30,9 @@ type MockDatabase struct {
 
 	// Error injection for testing error handling
 	ForceError error
+
+	// Call tracking for testing
+	IncrementReplyCountCalls []string // URIs passed to IncrementReplyCountByURI
 }
 
 // NewMockDatabase creates a new mock database with initialized maps
@@ -438,7 +441,9 @@ func (m *MockDatabase) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 
 // IncrementReplyCountByURI increments the reply count for a note or activity
 func (m *MockDatabase) IncrementReplyCountByURI(parentURI string) error {
-	// No-op for mock - just return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.IncrementReplyCountCalls = append(m.IncrementReplyCountCalls, parentURI)
 	return nil
 }
 

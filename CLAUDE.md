@@ -41,15 +41,20 @@ go clean && go test ./... && go build
 
 This ensures:
 1. `go clean` - Removes build artifacts and cached files
-2. `go test ./...` - Runs all 155+ unit tests to verify nothing broke
+2. `go test ./...` - Runs all 200+ unit tests to verify nothing broke
 3. `go build` - Compiles the application only if tests pass
 
 The test suite covers critical functionality:
 - **domain**: 100% coverage (data structures)
-- **util**: 91.2% coverage (crypto, config, helpers)
-- **db**: 31.7% coverage (database operations)
-- **web**: 18.3% coverage (RSS, WebFinger, UI handlers)
-- **activitypub**: 9.5% coverage (inbox/outbox, actors)
+- **ui/createuser**: 86.6% coverage (username selection)
+- **ui/hometimeline**: 81.6% coverage (home timeline view)
+- **ui/myposts**: 71.3% coverage (user's notes list)
+- **activitypub**: 67.3% coverage (inbox/outbox, actors, signatures)
+- **util**: 57.2% coverage (crypto, config, helpers)
+- **ui/threadview**: 56.6% coverage (thread/conversation view)
+- **db**: 36.4% coverage (database operations, reply counting)
+- **ui/writenote**: 37.3% coverage (note creation)
+- **web**: 17.4% coverage (RSS, WebFinger, UI handlers)
 
 ## Configuration
 
@@ -158,24 +163,30 @@ Configuration is managed via environment variables:
 
 3. **TUI Architecture** (`ui/supertui.go`):
    - Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern
-   - **5-view navigation system**:
+   - **Multi-view navigation system**:
      - `createuser.Model`: First-time username selection
-     - `writenote.Model`: Note creation interface
-     - `listnotes.Model`: Local notes viewing with pagination
+     - `writenote.Model`: Note creation interface (with reply mode)
+     - `myposts.Model`: User's own notes with edit/delete
+     - `hometimeline.Model`: Combined local + federated timeline
+     - `threadview.Model`: Thread/conversation view with nested replies
      - `followuser.Model`: Follow remote ActivityPub users
      - `followers.Model`: View followers list
-     - `timeline.Model`: Federated timeline from followed accounts
-  - **Navigation**: Tab cycles forward, Shift+Tab cycles backward
+     - `following.Model`: View following list
+     - `localusers.Model`: Browse local users
+   - **Navigation**: Tab cycles forward, Shift+Tab cycles backward
+   - **Thread navigation**: Enter on post with replies opens thread view, Esc returns
    - State machine driven by `common.SessionState` enum
 
 4. **Database Layer** (`db/db.go`):
    - SQLite database (`database.db`) with WAL mode enabled
    - **Singleton pattern** with connection pooling (max 25 connections)
-   - **Core tables**: `accounts`, `notes`
+   - **Core tables**: `accounts`, `notes`, `hashtags`, `note_hashtags`
    - **ActivityPub tables**: `follows`, `remote_accounts`, `activities`, `likes`, `delivery_queue`
+   - **Denormalized counters**: `reply_count`, `like_count`, `boost_count` on notes and activities
    - Extended accounts with: `display_name`, `summary`, `avatar_url`, RSA keypairs
-   - Extended notes with: `visibility`, `in_reply_to_uri`, `object_uri`, `federated`
+   - Extended notes with: `visibility`, `in_reply_to_uri`, `object_uri`, `federated`, `sensitive`, `content_warning`
    - Transactions use retry logic to handle SQLite busy states
+   - Recursive reply count updates walk the ancestor chain for accurate totals
 
 5. **Web Layer** (`web/router.go`):
    - Gin framework handles HTTP routing
@@ -245,34 +256,38 @@ Configuration is managed via environment variables:
 ### Directory Structure
 
 - `db/` - Database layer with SQLite operations
-  - `migrations.go` - ActivityPub table creation and schema extensions
-- `domain/` - Domain models (Account, Note, RemoteAccount, Follow, Activity, Like, DeliveryQueueItem)
+  - `db.go` - Core database operations
+  - `migrations.go` - ActivityPub table creation, schema extensions, reply count backfill
+- `domain/` - Domain models (Account, Note, RemoteAccount, Follow, Activity, Like, DeliveryQueueItem, HomePost)
 - `activitypub/` - ActivityPub federation protocol
   - `actors.go` - Remote actor fetching and caching
   - `httpsig.go` - HTTP signature signing and verification
-  - `inbox.go` - Incoming activity processing
+  - `inbox.go` - Incoming activity processing (with duplicate detection)
   - `outbox.go` - Outgoing activity sending
   - `delivery.go` - Background delivery queue worker
 - `middleware/` - SSH middleware (auth, TUI handler)
 - `ui/` - TUI components:
-  - `common/` - Shared styles, commands, session states
+  - `common/` - Shared styles, commands, session states, layout helpers
   - `createuser/` - Username selection screen
+  - `writenote/` - Note creation textarea (with reply mode)
+  - `myposts/` - User's own notes with edit/delete
+  - `hometimeline/` - Combined local + federated timeline
+  - `threadview/` - Thread/conversation view with nested replies
   - `followuser/` - Follow remote users interface
   - `followers/` - Followers list display
-  - `timeline/` - Federated timeline view
-  - `localtimeline/` - Local timeline view
-  - `threadview/` - Thread/conversation view
+  - `following/` - Following list display
+  - `localusers/` - Browse local users
   - `header/` - Top navigation bar
-  - `listnotes/` - Note list with pagination
-  - `writenote/` - Note creation textarea (with reply mode)
+  - `admin/` - Admin panel
+  - `deleteaccount/` - Account deletion
   - `supertui.go` - Main TUI orchestrator with multi-view navigation
-- `util/` - Utilities (config, crypto, helpers)
-- `web/` - HTTP server (RSS, ActivityPub, routing)
+- `util/` - Utilities (config, crypto, helpers, hashtag highlighting)
+- `web/` - HTTP server (RSS, ActivityPub, routing, web UI)
 
 ## Development Notes
 
-- Go version: 1.25 (updated from 1.19)
-- **Test suite**: 155+ passing unit tests covering all critical functionality
+- Go version: 1.25+
+- **Test suite**: 200+ passing unit tests covering critical functionality
 - **Single Binary Distribution**: All static assets (config, templates, version) are embedded in the binary
 - SSH host key is auto-generated on first run by the Wish SSH library
 - User data stored in `~/.config/stegodon/` (config, database, SSH key)
@@ -299,6 +314,16 @@ The project has been fully updated with ActivityPub federation support:
 - **Database Optimization**: WAL mode with connection pooling for concurrent access
 - **Navigation Enhancement**: Tab + Shift+Tab
 - **Memory Leak Fix** (December 2025): Fixed ticker chain accumulation in timeline views
+- **Threading & Reply Counts** (December 2025):
+  - Recursive reply count calculation (total nested replies, not just direct)
+  - Denormalized counters on notes and activities tables
+  - Duplicate detection for federated posts (local posts coming back via federation)
+  - Thread view with parent and nested replies
+  - Hashtag support with `#tag` highlighting and storage
+- **Test Suite Expansion** (December 2025):
+  - Added comprehensive tests for threadview, hometimeline, myposts
+  - Reply counting and duplicate detection tests
+  - Coverage increased from ~155 to 200+ tests
 
 ## Architecture Patterns
 
@@ -364,8 +389,7 @@ Timeline views and any other views that auto-refresh must use the active state p
 This pattern prevents ticker chains from accumulating when users navigate between views.
 
 **Current Implementations:**
-- `ui/timeline/timeline.go` (federated timeline)
-- `ui/localtimeline/localtimeline.go` (local timeline)
+- `ui/hometimeline/hometimeline.go` (combined home timeline)
 
 **Lifecycle Message Types** (defined in `ui/common/commands.go`):
 - `ActivateViewMsg` - Sent when a view becomes active/visible
@@ -385,21 +409,28 @@ This pattern prevents ticker chains from accumulating when users navigate betwee
 - ✅ Federated timeline display
 - ✅ Followers list view
 - ✅ Replies and threading (inReplyTo support, thread view, reply compose mode)
+- ✅ Recursive reply counts (total nested sub-replies)
+- ✅ Duplicate detection (local posts federated back are not double-counted)
+- ✅ Content warnings (sensitive flag and content_warning field)
+- ✅ Hashtag parsing and storage
 
 **Protocol Support:**
 - Follow/Accept/Undo activities (full support)
 - Create activities (send and receive, with inReplyTo)
+- Update activities (send and receive for notes and actors)
+- Delete activities (send and receive for notes and actors)
 - Like activities (receive only, display pending)
 - WebFinger discovery
+- NodeInfo 2.0
 - Actor profiles (JSON-LD)
 
 **Not Yet Implemented:**
 - Likes/favorites sending
 - Boosts/announces
 - Media attachments
-- Content warnings
+- Mentions parsing
 - Search
 - Notifications
 - Block/mute functionality
-
-      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.
+- Account migrations
+- Object integrity proofs (FEP-8b32)
