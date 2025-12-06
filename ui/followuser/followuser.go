@@ -109,6 +109,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, clearStatusAfter(2 * time.Second)
 			}
 
+			// Check if this is a local user - prevent following via federation
+			conf, err := util.ReadConf()
+			if err == nil && strings.EqualFold(domain, conf.Conf.SslDomain) {
+				m.Error = "This user is local. Follow them directly on this server."
+				return m, clearStatusAfter(3 * time.Second)
+			}
+
 			// Attempt to follow
 			m.Status = fmt.Sprintf("Following %s@%s...", username, domain)
 			m.Error = ""

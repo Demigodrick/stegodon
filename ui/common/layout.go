@@ -59,6 +59,10 @@ const (
 
 	// TextInputDefaultWidth is a reasonable default width for text input fields
 	TextInputDefaultWidth = 30
+
+	// MaxContentTruncateWidth is the maximum width for truncating post content
+	// This prevents very long lines on wide terminals
+	MaxContentTruncateWidth = 150
 )
 
 // VerticalLayoutOffset returns the total vertical space taken by header, footer, and margins

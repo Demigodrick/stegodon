@@ -627,12 +627,12 @@ func TestCountVisibleCharsEdgeCases(t *testing.T) {
 		{
 			name:  "link with unicode text",
 			input: "[日本語](https://example.com)",
-			want:  9, // Japanese chars count as UTF-8 bytes
+			want:  3, // Japanese chars count as 3 runes (visible characters)
 		},
 		{
 			name:  "link with emoji",
 			input: "[🔥🎉](https://example.com)",
-			want:  8, // Emojis count as UTF-8 bytes
+			want:  2, // Emojis count as 2 runes (visible characters)
 		},
 		{
 			name:  "very long URL",
@@ -911,5 +911,63 @@ func TestHashtagsToActivityPubHTML_CaseInsensitive(t *testing.T) {
 	expected := `Hello <a href="https://example.com/tags/golang" class="hashtag" rel="tag">#<span>golang</span></a>!`
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestCountVisibleCharsWithANSI(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{
+			name:  "text with ANSI color code",
+			input: "\033[38;5;75m#joke\033[39m hello",
+			want:  11, // "#joke hello" = 11 visible chars
+		},
+		{
+			name:  "text with multiple ANSI codes",
+			input: "\033[38;5;75m#tag1\033[39m and \033[38;5;75m#tag2\033[39m",
+			want:  15, // "#tag1 and #tag2" = 15 visible chars
+		},
+		{
+			name:  "OSC 8 hyperlink",
+			input: "\033[38;2;0;255;127;4m\033]8;;https://example.com\033\\Link\033]8;;\033\\\033[39;24m",
+			want:  4, // "Link" = 4 visible chars
+		},
+		{
+			name:  "mixed ANSI hashtag and OSC 8 link",
+			input: "\033[38;2;0;255;127;4m\033]8;;https://example.com\033\\Link\033]8;;\033\\\033[39;24m \033[38;5;75m#tag\033[39m",
+			want:  9, // "Link #tag" = 9 visible chars
+		},
+		{
+			name:  "plain text no ANSI",
+			input: "plain text",
+			want:  10,
+		},
+		{
+			name:  "ANSI reset code only",
+			input: "\033[0m",
+			want:  0,
+		},
+		{
+			name:  "text after ANSI reset",
+			input: "\033[0mhello",
+			want:  5, // "hello" = 5 visible chars
+		},
+		{
+			name:  "text with middle dot (multi-byte unicode)",
+			input: "5m ago · 3 replies",
+			want:  18, // Middle dot is 1 rune, not 2 bytes
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CountVisibleChars(tt.input)
+			if got != tt.want {
+				t.Errorf("CountVisibleChars(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
 	}
 }

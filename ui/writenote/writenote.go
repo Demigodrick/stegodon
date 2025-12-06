@@ -306,10 +306,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, updateNoteModelCmd(noteId, value)
 			} else if m.isReplying {
 				// Create reply note with inReplyTo
+				replyURI := m.replyToURI
+
+				// If this is a local: URI, resolve it to a proper ActivityPub URI
+				if strings.HasPrefix(replyURI, "local:") {
+					noteIdStr := strings.TrimPrefix(replyURI, "local:")
+					if conf, err := util.ReadConf(); err == nil && conf.Conf.SslDomain != "" && conf.Conf.SslDomain != "example.com" {
+						// Construct proper ActivityPub URI
+						replyURI = fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, noteIdStr)
+					} else {
+						// No valid domain configured, keep local: prefix
+						// This will only work for local thread views
+						replyURI = "local:" + noteIdStr
+					}
+				}
+
 				note := domain.SaveNote{
 					UserId:       m.userId,
 					Message:      value,
-					InReplyToURI: m.replyToURI,
+					InReplyToURI: replyURI,
 				}
 				m.Textarea.SetValue("")
 				m.Error = ""

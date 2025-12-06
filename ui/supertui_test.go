@@ -127,12 +127,12 @@ func TestTimelineActivationReturnsCommand(t *testing.T) {
 	}
 
 	model := NewModel(account, 100, 30)
-	model.state = common.FederatedTimelineView
+	model.state = common.HomeTimelineView
 
 	// Send ActivateViewMsg to timeline
 	_, cmd := model.Update(common.ActivateViewMsg{})
 
-	// Timeline activation should return a command (either from timelineModel or nil)
+	// Timeline activation should return a command (either from homeTimelineModel or nil)
 	// The important thing is it doesn't panic
 	_ = cmd
 }
@@ -203,14 +203,9 @@ func TestTimelineModelsOnlyReceiveMessagesWhenActive(t *testing.T) {
 		description string
 	}{
 		{
-			name:        "FederatedTimelineActive",
-			activeView:  common.FederatedTimelineView,
-			description: "timelineModel should receive messages when FederatedTimelineView is active",
-		},
-		{
-			name:        "LocalTimelineActive",
-			activeView:  common.LocalTimelineView,
-			description: "localTimelineModel should receive messages when LocalTimelineView is active",
+			name:        "HomeTimelineActive",
+			activeView:  common.HomeTimelineView,
+			description: "homeTimelineModel should receive messages when HomeTimelineView is active",
 		},
 		{
 			name:        "AdminPanelActive",
@@ -253,12 +248,11 @@ func TestMessageRoutingPreventsPanicsAcrossAllViews(t *testing.T) {
 	allViews := []common.SessionState{
 		common.CreateUserView,
 		common.CreateNoteView,
-		common.ListNotesView,
+		common.HomeTimelineView,
+		common.MyPostsView,
 		common.FollowUserView,
 		common.FollowersView,
 		common.FollowingView,
-		common.FederatedTimelineView,
-		common.LocalTimelineView,
 		common.LocalUsersView,
 		common.AdminPanelView,
 		common.DeleteAccountView,

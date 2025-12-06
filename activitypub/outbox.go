@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/deemkeen/stegodon/domain"
@@ -131,7 +132,7 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 	var parentAuthorURI string
 	if note.InReplyToURI != "" {
 		// Try to extract parent author from the inReplyToURI or fetch it
-		parentAuthorURI = extractAuthorFromURI(note.InReplyToURI, database)
+		parentAuthorURI = extractAuthorFromURI(note.InReplyToURI, database, conf)
 		if parentAuthorURI != "" && parentAuthorURI != actorURI {
 			ccList = append(ccList, parentAuthorURI)
 		}
@@ -217,10 +218,27 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 
 	// If this is a reply, also deliver to the parent author's inbox
 	if parentAuthorURI != "" && parentAuthorURI != actorURI {
+		// First try as remote account
 		err, parentAccount := database.ReadRemoteAccountByActorURI(parentAuthorURI)
 		if err == nil && parentAccount != nil {
 			inboxes[parentAccount.InboxURI] = true
-			log.Printf("Outbox: Will also deliver reply to parent author %s@%s", parentAccount.Username, parentAccount.Domain)
+			log.Printf("Outbox: Will also deliver reply to remote parent author %s@%s", parentAccount.Username, parentAccount.Domain)
+		} else {
+			// Try as local account - extract username from URI like https://domain/users/username
+			if strings.Contains(parentAuthorURI, conf.Conf.SslDomain) {
+				parts := strings.Split(parentAuthorURI, "/users/")
+				if len(parts) == 2 {
+					parentUsername := parts[1]
+					// Verify this local user exists
+					err, localParent := database.ReadAccByUsername(parentUsername)
+					if err == nil && localParent != nil {
+						// Construct local inbox URI
+						localInboxURI := fmt.Sprintf("https://%s/users/%s/inbox", conf.Conf.SslDomain, parentUsername)
+						inboxes[localInboxURI] = true
+						log.Printf("Outbox: Will also deliver reply to local parent author %s", parentUsername)
+					}
+				}
+			}
 		}
 	}
 
@@ -282,7 +300,7 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 	// If this is a reply, add the parent author to cc for delivery
 	var parentAuthorURI string
 	if note.InReplyToURI != "" {
-		parentAuthorURI = extractAuthorFromURI(note.InReplyToURI, database)
+		parentAuthorURI = extractAuthorFromURI(note.InReplyToURI, database, conf)
 		if parentAuthorURI != "" && parentAuthorURI != actorURI {
 			ccList = append(ccList, parentAuthorURI)
 		}
@@ -367,9 +385,25 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 
 	// If this is a reply, also deliver to the parent author's inbox
 	if parentAuthorURI != "" && parentAuthorURI != actorURI {
+		// First try as remote account
 		err, parentAccount := database.ReadRemoteAccountByActorURI(parentAuthorURI)
 		if err == nil && parentAccount != nil {
 			inboxes[parentAccount.InboxURI] = true
+		} else {
+			// Try as local account - extract username from URI like https://domain/users/username
+			if strings.Contains(parentAuthorURI, conf.Conf.SslDomain) {
+				parts := strings.Split(parentAuthorURI, "/users/")
+				if len(parts) == 2 {
+					parentUsername := parts[1]
+					// Verify this local user exists
+					err, localParent := database.ReadAccByUsername(parentUsername)
+					if err == nil && localParent != nil {
+						// Construct local inbox URI
+						localInboxURI := fmt.Sprintf("https://%s/users/%s/inbox", conf.Conf.SslDomain, parentUsername)
+						inboxes[localInboxURI] = true
+					}
+				}
+			}
 		}
 	}
 
@@ -576,7 +610,7 @@ func mustMarshal(v any) string {
 
 // extractAuthorFromURI attempts to extract the author URI from a note/activity URI
 // This is used to add the parent author to cc when creating a reply
-func extractAuthorFromURI(objectURI string, database Database) string {
+func extractAuthorFromURI(objectURI string, database Database, conf *util.AppConfig) string {
 	// First, check if we have a stored activity with this object
 	err, activity := database.ReadActivityByObjectURI(objectURI)
 	if err == nil && activity != nil {
@@ -586,12 +620,9 @@ func extractAuthorFromURI(objectURI string, database Database) string {
 	// Try to check if it's a local note
 	err, localNote := database.ReadNoteByURI(objectURI)
 	if err == nil && localNote != nil {
-		// It's a local note, we can get the author
-		err, account := database.ReadAccByUsername(localNote.CreatedBy)
-		if err == nil && account != nil {
-			// Return empty - we don't need to cc ourselves for local replies
-			return ""
-		}
+		// It's a local note - return the local author's actor URI
+		// This ensures replies to local users are delivered to their inbox
+		return fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localNote.CreatedBy)
 	}
 
 	// Can't determine author - caller should handle gracefully

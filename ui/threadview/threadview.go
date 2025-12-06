@@ -1,8 +1,11 @@
 package threadview
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,11 +31,6 @@ var (
 
 	parentContentStyle = lipgloss.NewStyle().
 				Align(lipgloss.Left)
-
-	parentBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color(common.COLOR_LIGHTBLUE)).
-				Padding(0, 1)
 
 	// Reply styles (indented)
 	replyTimeStyle = lipgloss.NewStyle().
@@ -68,19 +66,20 @@ var (
 			Foreground(lipgloss.Color(common.COLOR_DARK_GREY)).
 			Italic(true)
 
-	replyIndent = "  " // Indent for replies
+	replyIndent = "    " // Indent for replies
 )
 
 // ThreadPost represents a post in the thread (either parent or reply)
 type ThreadPost struct {
-	ID        uuid.UUID
-	Author    string
-	Content   string
-	Time      time.Time
-	ObjectURI string
-	IsLocal   bool // Whether this is a local post
-	IsParent  bool // Whether this is the parent post
-	IsDeleted bool // Whether this post was deleted (placeholder)
+	ID         uuid.UUID
+	Author     string
+	Content    string
+	Time       time.Time
+	ObjectURI  string
+	IsLocal    bool // Whether this is a local post
+	IsParent   bool // Whether this is the parent post
+	IsDeleted  bool // Whether this post was deleted (placeholder)
+	ReplyCount int  // Number of replies to this post
 }
 
 // Model represents the thread view state
@@ -90,6 +89,7 @@ type Model struct {
 	ParentPost   *ThreadPost  // The parent post
 	Replies      []ThreadPost // Replies to the parent
 	Selected     int          // Currently selected reply index (-1 = parent selected)
+	Offset       int          // Scroll offset for pagination
 	Width        int
 	Height       int
 	isActive     bool
@@ -105,6 +105,7 @@ func InitialModel(accountId uuid.UUID, width, height int) Model {
 		ParentPost:   nil,
 		Replies:      []ThreadPost{},
 		Selected:     -1, // Start with parent selected
+		Offset:       -1, // Start at parent
 		Width:        width,
 		Height:       height,
 		isActive:     false,
@@ -119,6 +120,7 @@ func (m *Model) SetThread(parentURI string) {
 	m.ParentPost = nil
 	m.Replies = []ThreadPost{}
 	m.Selected = -1
+	m.Offset = -1
 	m.loading = true
 	m.errorMessage = ""
 }
@@ -139,6 +141,13 @@ func loadThread(parentURI string) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
 
+		// Get config for building URIs
+		conf, confErr := util.ReadConf()
+		var domain string
+		if confErr == nil {
+			domain = conf.Conf.SslDomain
+		}
+
 		var parent *ThreadPost
 		var replies []ThreadPost
 
@@ -146,14 +155,16 @@ func loadThread(parentURI string) tea.Cmd {
 		// First check if it's a local note by URI
 		err, localNote := database.ReadNoteByURI(parentURI)
 		if err == nil && localNote != nil {
+			replyCount, _ := database.CountRepliesByNoteId(localNote.Id)
 			parent = &ThreadPost{
-				ID:        localNote.Id,
-				Author:    localNote.CreatedBy,
-				Content:   localNote.Message,
-				Time:      localNote.CreatedAt,
-				ObjectURI: localNote.ObjectURI,
-				IsLocal:   true,
-				IsParent:  true,
+				ID:         localNote.Id,
+				Author:     localNote.CreatedBy,
+				Content:    localNote.Message,
+				Time:       localNote.CreatedAt,
+				ObjectURI:  localNote.ObjectURI,
+				IsLocal:    true,
+				IsParent:   true,
+				ReplyCount: replyCount,
 			}
 		} else {
 			// Check if it's a stored activity (federated post)
@@ -161,14 +172,17 @@ func loadThread(parentURI string) tea.Cmd {
 			if err == nil && activity != nil {
 				// Parse activity to get content
 				content, author := parseActivityContent(activity)
+				// Count local replies to this remote post
+				replyCount, _ := database.CountRepliesByURI(parentURI)
 				parent = &ThreadPost{
-					ID:        activity.Id,
-					Author:    author,
-					Content:   content,
-					Time:      activity.CreatedAt,
-					ObjectURI: activity.ObjectURI,
-					IsLocal:   false,
-					IsParent:  true,
+					ID:         activity.Id,
+					Author:     author,
+					Content:    content,
+					Time:       activity.CreatedAt,
+					ObjectURI:  activity.ObjectURI,
+					IsLocal:    false,
+					IsParent:   true,
+					ReplyCount: replyCount,
 				}
 			}
 		}
@@ -177,26 +191,78 @@ func loadThread(parentURI string) tea.Cmd {
 		err, localReplies := database.ReadRepliesByURI(parentURI)
 		if err == nil && localReplies != nil {
 			for _, note := range *localReplies {
+				// Count local replies for each reply
+				replyCount, _ := database.CountRepliesByNoteId(note.Id)
+
+				// Also count remote replies to this local reply
+				if domain != "" {
+					replyURI := fmt.Sprintf("https://%s/notes/%s", domain, note.Id.String())
+					remoteReplyCount, _ := database.CountActivitiesByInReplyTo(replyURI)
+					replyCount += remoteReplyCount
+				}
+
 				replies = append(replies, ThreadPost{
-					ID:        note.Id,
-					Author:    note.CreatedBy,
-					Content:   note.Message,
-					Time:      note.CreatedAt,
-					ObjectURI: note.ObjectURI,
-					IsLocal:   true,
-					IsParent:  false,
+					ID:         note.Id,
+					Author:     note.CreatedBy,
+					Content:    note.Message,
+					Time:       note.CreatedAt,
+					ObjectURI:  note.ObjectURI,
+					IsLocal:    true,
+					IsParent:   false,
+					ReplyCount: replyCount,
 				})
 			}
+		}
+
+		// Also load remote replies from activities table
+		err, remoteReplies := database.ReadActivitiesByInReplyTo(parentURI)
+		if err == nil && remoteReplies != nil {
+			// Build local actor prefix to filter out local users
+			localActorPrefix := ""
+			if domain != "" {
+				localActorPrefix = fmt.Sprintf("https://%s/users/", domain)
+			}
+
+			for _, activity := range *remoteReplies {
+				// Skip if this is from a local user (already shown as local reply)
+				if localActorPrefix != "" && strings.HasPrefix(activity.ActorURI, localActorPrefix) {
+					continue
+				}
+				replyContent, replyAuthor := parseActivityContent(&activity)
+				// Count replies to this remote reply (could be local notes replying to it)
+				replyCount, _ := database.CountRepliesByURI(activity.ObjectURI)
+				replies = append(replies, ThreadPost{
+					ID:         activity.Id,
+					Author:     replyAuthor,
+					Content:    replyContent,
+					Time:       activity.CreatedAt,
+					ObjectURI:  activity.ObjectURI,
+					IsLocal:    false,
+					IsParent:   false,
+					ReplyCount: replyCount,
+				})
+			}
+		}
+
+		// Sort replies by time
+		sort.Slice(replies, func(i, j int) bool {
+			return replies[i].Time.Before(replies[j].Time)
+		})
+
+		// Update parent reply count to include all replies found
+		if parent != nil {
+			parent.ReplyCount = len(replies)
 		}
 
 		// If parent not found but we have replies, create a deleted placeholder
 		if parent == nil {
 			if len(replies) > 0 {
 				parent = &ThreadPost{
-					Author:    "[deleted]",
-					Content:   "This post has been deleted",
-					IsParent:  true,
-					IsDeleted: true,
+					Author:     "[deleted]",
+					Content:    "This post has been deleted",
+					IsParent:   true,
+					IsDeleted:  true,
+					ReplyCount: len(replies),
 				}
 			} else {
 				return threadLoadedMsg{
@@ -220,33 +286,96 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 	return func() tea.Msg {
 		database := db.GetDB()
 
-		// Create parent from the provided data
-		parent := &ThreadPost{
-			ID:        noteID,
-			Author:    author,
-			Content:   content,
-			Time:      createdAt,
-			ObjectURI: noteURI,
-			IsLocal:   true,
-			IsParent:  true,
+		// Get config for building URIs
+		conf, confErr := util.ReadConf()
+		var domain string
+		if confErr == nil {
+			domain = conf.Conf.SslDomain
 		}
 
-		// Load replies using the noteURI (which matches in_reply_to_uri)
+		// Count replies for parent (local + remote)
+		parentReplyCount, _ := database.CountRepliesByNoteId(noteID)
+
+		// Create parent from the provided data
+		parent := &ThreadPost{
+			ID:         noteID,
+			Author:     author,
+			Content:    content,
+			Time:       createdAt,
+			ObjectURI:  noteURI,
+			IsLocal:    true,
+			IsParent:   true,
+			ReplyCount: parentReplyCount,
+		}
+
+		// Load local replies using the note ID - this searches for any in_reply_to_uri
+		// that contains the note ID (handles various URI formats)
 		var replies []ThreadPost
-		err, localReplies := database.ReadRepliesByURI(noteURI)
+		err, localReplies := database.ReadRepliesByNoteId(noteID)
 		if err == nil && localReplies != nil {
 			for _, note := range *localReplies {
+				// Count local replies for each reply
+				replyCount, _ := database.CountRepliesByNoteId(note.Id)
+
+				// Also count remote replies to this local reply
+				if domain != "" {
+					replyURI := fmt.Sprintf("https://%s/notes/%s", domain, note.Id.String())
+					remoteReplyCount, _ := database.CountActivitiesByInReplyTo(replyURI)
+					replyCount += remoteReplyCount
+				}
+
 				replies = append(replies, ThreadPost{
-					ID:        note.Id,
-					Author:    note.CreatedBy,
-					Content:   note.Message,
-					Time:      note.CreatedAt,
-					ObjectURI: note.ObjectURI,
-					IsLocal:   true,
-					IsParent:  false,
+					ID:         note.Id,
+					Author:     note.CreatedBy,
+					Content:    note.Message,
+					Time:       note.CreatedAt,
+					ObjectURI:  note.ObjectURI,
+					IsLocal:    true,
+					IsParent:   false,
+					ReplyCount: replyCount,
 				})
 			}
 		}
+
+		// Also load remote replies from activities table
+		// Build the possible URIs that remote servers might use as inReplyTo
+		if domain != "" {
+			// The canonical URI for this note
+			canonicalURI := fmt.Sprintf("https://%s/notes/%s", domain, noteID.String())
+			localActorPrefix := fmt.Sprintf("https://%s/users/", domain)
+
+			// Search for remote activities that reply to this note
+			err, remoteReplies := database.ReadActivitiesByInReplyTo(canonicalURI)
+			if err == nil && remoteReplies != nil {
+				for _, activity := range *remoteReplies {
+					// Skip if this is from a local user (already shown as local reply)
+					if strings.HasPrefix(activity.ActorURI, localActorPrefix) {
+						continue
+					}
+					replyContent, replyAuthor := parseActivityContent(&activity)
+					// Count replies to this remote reply (could be local notes replying to it)
+					replyCount, _ := database.CountRepliesByURI(activity.ObjectURI)
+					replies = append(replies, ThreadPost{
+						ID:         activity.Id,
+						Author:     replyAuthor,
+						Content:    replyContent,
+						Time:       activity.CreatedAt,
+						ObjectURI:  activity.ObjectURI,
+						IsLocal:    false,
+						IsParent:   false,
+						ReplyCount: replyCount,
+					})
+				}
+			}
+		}
+
+		// Sort replies by time
+		sort.Slice(replies, func(i, j int) bool {
+			return replies[i].Time.Before(replies[j].Time)
+		})
+
+		// Update parent reply count to include remote replies
+		parent.ReplyCount = len(replies)
 
 		return threadLoadedMsg{
 			parent:  parent,
@@ -258,7 +387,6 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 
 // parseActivityContent extracts content and author from an activity's raw JSON
 func parseActivityContent(activity *domain.Activity) (string, string) {
-	// Simple extraction - in real code you'd parse the JSON properly
 	content := ""
 	author := activity.ActorURI
 
@@ -269,26 +397,42 @@ func parseActivityContent(activity *domain.Activity) (string, string) {
 		author = "@" + remoteAcc.Username + "@" + remoteAcc.Domain
 	}
 
-	// Parse the raw JSON to extract content
-	// This is a simplified version - the actual parsing happens in timeline
+	// Parse the raw JSON to extract content using proper JSON unmarshaling
 	if activity.RawJSON != "" {
-		// Look for "content" field
-		if idx := strings.Index(activity.RawJSON, `"content":"`); idx >= 0 {
-			start := idx + len(`"content":"`)
-			end := strings.Index(activity.RawJSON[start:], `"`)
-			if end > 0 {
-				content = activity.RawJSON[start : start+end]
-				// Unescape basic HTML entities
-				content = strings.ReplaceAll(content, "\\n", "\n")
-				content = strings.ReplaceAll(content, "\\\"", "\"")
-				content = strings.ReplaceAll(content, "&lt;", "<")
-				content = strings.ReplaceAll(content, "&gt;", ">")
-				content = strings.ReplaceAll(content, "&amp;", "&")
-			}
+		var activityWrapper struct {
+			Type   string `json:"type"`
+			Object struct {
+				ID      string `json:"id"`
+				Content string `json:"content"`
+			} `json:"object"`
+		}
+
+		if err := json.Unmarshal([]byte(activity.RawJSON), &activityWrapper); err == nil {
+			content = stripHTMLTags(activityWrapper.Object.Content)
 		}
 	}
 
 	return content, author
+}
+
+// stripHTMLTags removes HTML tags from a string and converts common HTML entities
+func stripHTMLTags(html string) string {
+	// Remove all HTML tags using a simple regex
+	htmlTagRegex := regexp.MustCompile(`<[^>]*>`)
+	text := htmlTagRegex.ReplaceAllString(html, "")
+
+	// Convert common HTML entities
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#39;", "'")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+
+	// Clean up extra whitespace
+	text = strings.TrimSpace(text)
+
+	return text
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -322,6 +466,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.ParentPost = msg.parent
 			m.Replies = msg.replies
 			m.Selected = -1 // Select parent
+			m.Offset = -1
 		}
 		return m, nil
 
@@ -330,10 +475,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "up", "k":
 			if m.Selected > -1 {
 				m.Selected--
+				m.Offset = m.Selected
 			}
 		case "down", "j":
 			if m.Selected < len(m.Replies)-1 {
 				m.Selected++
+				m.Offset = m.Selected
 			}
 		case "r":
 			// Reply to selected post
@@ -343,11 +490,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if idx := strings.Index(preview, "\n"); idx > 0 {
 					preview = preview[:idx]
 				}
-				return m, func() tea.Msg {
-					return common.ReplyToNoteMsg{
-						NoteURI: m.ParentPost.ObjectURI,
-						Author:  m.ParentPost.Author,
-						Preview: preview,
+
+				// Determine the reply URI
+				replyURI := m.ParentPost.ObjectURI
+				// For local parents without ObjectURI, use local: prefix with note ID
+				if replyURI == "" && m.ParentPost.IsLocal && m.ParentPost.ID != uuid.Nil {
+					replyURI = "local:" + m.ParentPost.ID.String()
+				}
+
+				if replyURI != "" {
+					return m, func() tea.Msg {
+						return common.ReplyToNoteMsg{
+							NoteURI: replyURI,
+							Author:  m.ParentPost.Author,
+							Preview: preview,
+						}
 					}
 				}
 			} else if m.Selected >= 0 && m.Selected < len(m.Replies) {
@@ -357,18 +514,57 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if idx := strings.Index(preview, "\n"); idx > 0 {
 					preview = preview[:idx]
 				}
-				return m, func() tea.Msg {
-					return common.ReplyToNoteMsg{
-						NoteURI: reply.ObjectURI,
-						Author:  reply.Author,
-						Preview: preview,
+
+				// Determine the reply URI
+				replyURI := reply.ObjectURI
+				// For local replies without ObjectURI, use local: prefix with note ID
+				if replyURI == "" && reply.IsLocal && reply.ID != uuid.Nil {
+					replyURI = "local:" + reply.ID.String()
+				}
+
+				if replyURI != "" {
+					return m, func() tea.Msg {
+						return common.ReplyToNoteMsg{
+							NoteURI: replyURI,
+							Author:  reply.Author,
+							Preview: preview,
+						}
+					}
+				}
+			}
+		case "enter":
+			// Open selected reply as a new thread (only if it has replies)
+			if m.Selected >= 0 && m.Selected < len(m.Replies) {
+				reply := m.Replies[m.Selected]
+
+				// Skip if no replies
+				if reply.ReplyCount == 0 {
+					return m, nil
+				}
+
+				// Determine the note URI
+				noteURI := reply.ObjectURI
+				if noteURI == "" && reply.IsLocal && reply.ID != uuid.Nil {
+					noteURI = "local:" + reply.ID.String()
+				}
+
+				if noteURI != "" || (reply.IsLocal && reply.ID != uuid.Nil) {
+					return m, func() tea.Msg {
+						return common.ViewThreadMsg{
+							NoteURI:   noteURI,
+							NoteID:    reply.ID,
+							Author:    reply.Author,
+							Content:   reply.Content,
+							CreatedAt: reply.Time,
+							IsLocal:   reply.IsLocal,
+						}
 					}
 				}
 			}
 		case "esc", "q":
 			// Go back (handled by supertui)
 			return m, func() tea.Msg {
-				return common.FederatedTimelineView
+				return common.HomeTimelineView
 			}
 		}
 	}
@@ -391,125 +587,121 @@ func (m Model) View() string {
 	if m.errorMessage != "" {
 		s.WriteString(emptyStyle.Render("Error: " + m.errorMessage))
 		s.WriteString("\n\n")
-		s.WriteString(common.HelpStyle.Render("Press ESC to go back"))
+		s.WriteString(common.HelpStyle.Render("esc: back"))
 		return s.String()
 	}
 
 	if m.ParentPost == nil {
 		s.WriteString(emptyStyle.Render("No thread to display"))
 		s.WriteString("\n\n")
-		s.WriteString(common.HelpStyle.Render("Press ESC to go back"))
+		s.WriteString(common.HelpStyle.Render("esc: back"))
 		return s.String()
 	}
 
-	// Render parent post (always visible, highlighted if selected)
-	parentView := m.renderPost(m.ParentPost, m.Selected == -1, false)
-	if m.Selected == -1 {
-		s.WriteString(parentBorderStyle.Render(parentView))
-	} else {
-		s.WriteString(parentBorderStyle.
-			BorderForeground(lipgloss.Color(common.COLOR_DARK_GREY)).
-			Render(parentView))
+	// Calculate content width using layout helpers (same as home timeline)
+	leftPanelWidth := common.CalculateLeftPanelWidth(m.Width)
+	rightPanelWidth := common.CalculateRightPanelWidth(m.Width, leftPanelWidth)
+	contentWidth := common.CalculateContentWidth(rightPanelWidth, 2)
+
+	itemsPerPage := 5
+	// Offset is -1 for parent, 0+ for replies
+	start := m.Offset
+	end := start + itemsPerPage
+
+	// Total items: parent (-1) + replies (0 to len-1)
+	totalItems := len(m.Replies) // -1 to len(Replies)-1
+	if end > totalItems {
+		end = totalItems
 	}
-	s.WriteString("\n\n")
 
-	// Render replies
-	if len(m.Replies) == 0 {
-		s.WriteString(replyIndent)
-		s.WriteString(emptyStyle.Render("No replies yet"))
-	} else {
-		for i, reply := range m.Replies {
-			isSelected := i == m.Selected
-			replyView := m.renderPost(&reply, isSelected, true)
+	// Render items from start to end
+	for i := start; i < end; i++ {
+		var post *ThreadPost
+		var isParent bool
 
-			// Add indent for replies
-			lines := strings.Split(replyView, "\n")
-			for j, line := range lines {
-				s.WriteString(replyIndent)
-				s.WriteString(line)
-				if j < len(lines)-1 {
-					s.WriteString("\n")
-				}
-			}
-			s.WriteString("\n\n")
+		if i == -1 {
+			post = m.ParentPost
+			isParent = true
+		} else if i >= 0 && i < len(m.Replies) {
+			post = &m.Replies[i]
+			isParent = false
+		} else {
+			continue
 		}
-	}
 
-	// Help text
-	s.WriteString("\n")
-	s.WriteString(common.HelpStyle.Render("r: reply | j/k: navigate | esc: back"))
+		isSelected := i == m.Selected
+
+		// Determine indent and width: no indent for parent, indent for replies
+		// Replies are narrower by the indent width so total line length matches
+		indent := ""
+		itemWidth := contentWidth
+		if !isParent {
+			indent = replyIndent
+			itemWidth = contentWidth - len(replyIndent)
+		}
+
+		// Format timestamp with reply count indicator
+		timeStr := formatTime(post.Time)
+		if post.ReplyCount > 0 {
+			timeStr = fmt.Sprintf("%s · %d replies", timeStr, post.ReplyCount)
+		}
+
+		// Format author with indicator for local vs remote
+		author := post.Author
+		if !post.IsLocal && !strings.HasPrefix(author, "@") {
+			author = "@" + author
+		}
+
+		// Format content - Convert Markdown links first, then highlight hashtags (same order as myposts)
+		processedContent := post.Content
+		if post.IsLocal {
+			processedContent = util.MarkdownLinksToTerminal(processedContent)
+		}
+		highlightedContent := util.HighlightHashtagsTerminal(processedContent)
+
+		if isSelected {
+			// Create a style that fills the full width (same approach as myposts/hometimeline)
+			selectedBg := lipgloss.NewStyle().
+				Background(lipgloss.Color(common.COLOR_LIGHTBLUE)).
+				Width(itemWidth)
+
+			timeFormatted := selectedBg.Render(selectedReplyTimeStyle.Render(timeStr))
+			authorFormatted := selectedBg.Render(selectedReplyAuthorStyle.Render(author))
+			contentFormatted := selectedBg.Render(selectedReplyContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+
+			s.WriteString(indent + timeFormatted + "\n")
+			s.WriteString(indent + authorFormatted + "\n")
+			s.WriteString(indent + contentFormatted)
+		} else {
+			unselectedStyle := lipgloss.NewStyle().Width(itemWidth)
+
+			// Use different author color for local vs remote
+			var authorFormatted string
+			if post.IsLocal {
+				authorFormatted = unselectedStyle.Render(parentAuthorStyle.Render(author))
+			} else {
+				authorFormatted = unselectedStyle.Render(replyAuthorStyle.Render(author))
+			}
+
+			timeFormatted := unselectedStyle.Render(parentTimeStyle.Render(timeStr))
+			contentFormatted := unselectedStyle.Render(parentContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+
+			s.WriteString(indent + timeFormatted + "\n")
+			s.WriteString(indent + authorFormatted + "\n")
+			s.WriteString(indent + contentFormatted)
+		}
+
+		s.WriteString("\n\n")
+	}
 
 	return s.String()
 }
 
-// renderPost renders a single post
-func (m Model) renderPost(post *ThreadPost, isSelected, isReply bool) string {
-	// Handle deleted posts with special styling
-	if post.IsDeleted {
-		var sb strings.Builder
-		deletedStyle := emptyStyle
-		sb.WriteString(deletedStyle.Render(post.Author))
-		sb.WriteString("\n")
-		sb.WriteString(deletedStyle.Render(post.Content))
-		return sb.String()
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	var timeStyle, authorStyle, contentStyle lipgloss.Style
-
-	if isSelected {
-		if isReply {
-			timeStyle = selectedReplyTimeStyle
-			authorStyle = selectedReplyAuthorStyle
-			contentStyle = selectedReplyContentStyle
-		} else {
-			timeStyle = selectedReplyTimeStyle
-			authorStyle = selectedReplyAuthorStyle
-			contentStyle = selectedReplyContentStyle
-		}
-	} else {
-		if isReply {
-			timeStyle = replyTimeStyle
-			authorStyle = replyAuthorStyle
-			contentStyle = replyContentStyle
-		} else {
-			timeStyle = parentTimeStyle
-			authorStyle = parentAuthorStyle
-			contentStyle = parentContentStyle
-		}
-	}
-
-	// Format content
-	content := post.Content
-	if post.IsLocal {
-		// Process markdown links for local posts
-		content = util.MarkdownLinksToTerminal(content)
-	}
-	content = util.HighlightHashtagsTerminal(content)
-	content = util.TruncateVisibleLength(content, 150)
-
-	// Build post view
-	var sb strings.Builder
-
-	timeStr := timeStyle.Render(formatTime(post.Time))
-	authorStr := authorStyle.Render(post.Author)
-	contentStr := contentStyle.Render(content)
-
-	if isSelected {
-		// Apply background to selected post
-		sb.WriteString(selectedBgStyle.Render(timeStr))
-		sb.WriteString("\n")
-		sb.WriteString(selectedBgStyle.Render(authorStr))
-		sb.WriteString("\n")
-		sb.WriteString(selectedBgStyle.Render(contentStr))
-	} else {
-		sb.WriteString(timeStr)
-		sb.WriteString("\n")
-		sb.WriteString(authorStr)
-		sb.WriteString("\n")
-		sb.WriteString(contentStr)
-	}
-
-	return sb.String()
+	return b
 }
 
 func formatTime(t time.Time) string {

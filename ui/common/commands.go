@@ -10,18 +10,17 @@ type SessionState uint
 
 const (
 	CreateNoteView SessionState = iota
-	ListNotesView
+	HomeTimelineView            // Unified home timeline (local + remote)
+	MyPostsView                 // View only your own posts
 	CreateUserView
 	UpdateNoteList
-	FollowUserView        // Follow remote users
-	FollowersView         // View who follows you
-	FollowingView         // View who you're following
-	FederatedTimelineView // View federated posts
-	LocalTimelineView     // View local posts from all local users
-	LocalUsersView        // Browse and follow local users
-	AdminPanelView        // Admin panel for user management (admin only)
-	DeleteAccountView     // Delete account with confirmation
-	ThreadView            // View thread with parent and replies
+	FollowUserView    // Follow remote users
+	FollowersView     // View who follows you
+	FollowingView     // View who you're following
+	LocalUsersView    // Browse and follow local users
+	AdminPanelView    // Admin panel for user management (admin only)
+	DeleteAccountView // Delete account with confirmation
+	ThreadView        // View thread with parent and replies
 )
 
 // EditNoteMsg is sent when user wants to edit an existing note

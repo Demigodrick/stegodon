@@ -14,6 +14,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/ssh"
 	gossh "golang.org/x/crypto/ssh"
@@ -258,38 +259,24 @@ func IsURL(text string) bool {
 	return urlRegex.MatchString(text)
 }
 
-// CountVisibleChars counts only the visible characters in text with markdown links.
-// For markdown links [text](url), only the 'text' portion is counted.
-// All other characters are counted normally.
+// CountVisibleChars counts only the visible characters (runes) in text, ignoring:
+// - Markdown links [text](url) - only the 'text' portion is counted
+// - ANSI escape sequences (SGR codes like \033[38;5;75m)
+// - OSC 8 hyperlinks (\033]8;;url\033\\text\033]8;;\033\\)
+// This function counts Unicode runes, not bytes, so multi-byte characters like
+// "·" (middle dot) are counted as 1 visible character.
 func CountVisibleChars(text string) int {
-	// Regex pattern for Markdown links: [text](url)
+	// First, strip all ANSI escape sequences (SGR and OSC 8)
+	stripped := ansiEscapeRegex.ReplaceAllString(text, "")
+
+	// Then handle any remaining markdown links (in case text wasn't converted yet)
 	re := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 
-	visibleCount := 0
-	lastIndex := 0
+	// Find all markdown links and replace them with just the link text
+	// This way we can simply count runes on the final string
+	result := re.ReplaceAllString(stripped, "$1")
 
-	// Find all markdown links
-	matches := re.FindAllStringSubmatchIndex(text, -1)
-
-	for _, match := range matches {
-		// match[0] = start of full match, match[1] = end of full match
-		// match[2] = start of text capture, match[3] = end of text capture
-
-		// Count characters before this link
-		visibleCount += match[0] - lastIndex
-
-		// Count only the link text (not the URL or brackets)
-		linkTextLen := match[3] - match[2]
-		visibleCount += linkTextLen
-
-		// Move past this match
-		lastIndex = match[1]
-	}
-
-	// Count remaining characters after last link
-	visibleCount += len(text) - lastIndex
-
-	return visibleCount
+	return utf8.RuneCountInString(result)
 }
 
 // ValidateNoteLength checks if the full note text (including markdown syntax)

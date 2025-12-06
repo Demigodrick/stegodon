@@ -436,6 +436,12 @@ func (m *MockDatabase) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 	return nil, note
 }
 
+// IncrementReplyCountByURI increments the reply count for a note or activity
+func (m *MockDatabase) IncrementReplyCountByURI(parentURI string) error {
+	// No-op for mock - just return nil
+	return nil
+}
+
 // AddNote adds a note to the mock database
 func (m *MockDatabase) AddNote(note *domain.Note) {
 	m.mu.Lock()

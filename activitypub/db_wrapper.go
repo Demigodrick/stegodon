@@ -110,6 +110,12 @@ func (w *DBWrapper) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 	return w.db.ReadNoteByURI(objectURI)
 }
 
+// Engagement count operations
+
+func (w *DBWrapper) IncrementReplyCountByURI(parentURI string) error {
+	return w.db.IncrementReplyCountByURI(parentURI)
+}
+
 // Delivery queue operations
 
 func (w *DBWrapper) EnqueueDelivery(item *domain.DeliveryQueueItem) error {

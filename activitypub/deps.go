@@ -41,6 +41,9 @@ type Database interface {
 	// Note operations (for replies)
 	ReadNoteByURI(objectURI string) (error, *domain.Note)
 
+	// Engagement count operations
+	IncrementReplyCountByURI(parentURI string) error
+
 	// Delivery queue operations
 	EnqueueDelivery(item *domain.DeliveryQueueItem) error
 	ReadPendingDeliveries(limit int) (error, *[]domain.DeliveryQueueItem)

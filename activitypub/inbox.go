@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/deemkeen/stegodon/domain"
@@ -135,6 +136,12 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 	}
 
 	if err := database.CreateActivity(activityRecord); err != nil {
+		// Check if this is a duplicate (already processed)
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			log.Printf("Inbox: Activity %s already processed, returning success", activity.ID)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		log.Printf("Inbox: Failed to store activity: %v", err)
 		// Don't fail the request, we'll process it anyway
 	}
@@ -358,7 +365,6 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 		log.Printf("Inbox: Post is a reply to %s", create.Object.InReplyTo)
 	}
 
-	// Validate that we follow this actor (prevent spam)
 	database := deps.Database
 
 	// Get the local account
@@ -384,12 +390,37 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 
 	// Check if we follow this actor
 	err, follow := database.ReadFollowByAccountIds(localAccount.Id, remoteActor.Id)
-	if err != nil || follow == nil {
-		log.Printf("Inbox: Rejecting Create from %s - not following (err: %v, follow: %v)", create.Actor, err, follow)
-		return fmt.Errorf("not following this actor")
+	isFollowing := err == nil && follow != nil
+
+	if isFollowing {
+		log.Printf("Inbox: Accepted post from followed user %s@%s (follow accepted: %v)", remoteActor.Username, remoteActor.Domain, follow.Accepted)
+	} else {
+		// Not following - only accept if this is a reply to one of our posts
+		isReplyToOurPost := false
+		if create.Object.InReplyTo != "" {
+			// Check if the parent post belongs to the local user
+			err, parentNote := database.ReadNoteByURI(create.Object.InReplyTo)
+			if err == nil && parentNote != nil && parentNote.CreatedBy == username {
+				isReplyToOurPost = true
+				log.Printf("Inbox: This is a reply to our post, accepting without follow check")
+			}
+		}
+
+		if !isReplyToOurPost {
+			log.Printf("Inbox: Rejecting Create from %s - not following and not a reply to our post", create.Actor)
+			return fmt.Errorf("not following this actor")
+		}
 	}
 
-	log.Printf("Inbox: Accepted post from followed user %s@%s (follow accepted: %v)", remoteActor.Username, remoteActor.Domain, follow.Accepted)
+	// Increment reply count on the parent post if this is a reply
+	if create.Object.InReplyTo != "" {
+		if err := database.IncrementReplyCountByURI(create.Object.InReplyTo); err != nil {
+			log.Printf("Inbox: Failed to increment reply count for %s: %v", create.Object.InReplyTo, err)
+			// Don't fail the activity processing for this
+		} else {
+			log.Printf("Inbox: Incremented reply count for %s", create.Object.InReplyTo)
+		}
+	}
 
 	// Note: Activity is already stored in HandleInbox before this function is called
 	// No need to store it again here

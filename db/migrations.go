@@ -210,6 +210,11 @@ func (db *DB) RunMigrations() error {
 			log.Printf("Warning: Failed to add username unique constraint: %v", err)
 		}
 
+		// Backfill reply counts for existing notes and activities
+		if err := db.backfillReplyCounts(tx); err != nil {
+			log.Printf("Warning: Failed to backfill reply counts: %v", err)
+		}
+
 		return nil
 	})
 }
@@ -240,6 +245,16 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 	tx.Exec("ALTER TABLE notes ADD COLUMN sensitive INTEGER DEFAULT 0")
 	tx.Exec("ALTER TABLE notes ADD COLUMN content_warning TEXT")
 	tx.Exec("ALTER TABLE notes ADD COLUMN edited_at TIMESTAMP")
+
+	// Engagement count columns for notes (denormalized for performance)
+	tx.Exec("ALTER TABLE notes ADD COLUMN reply_count INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE notes ADD COLUMN like_count INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE notes ADD COLUMN boost_count INTEGER DEFAULT 0")
+
+	// Engagement count columns for activities (remote posts)
+	tx.Exec("ALTER TABLE activities ADD COLUMN reply_count INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE activities ADD COLUMN like_count INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE activities ADD COLUMN boost_count INTEGER DEFAULT 0")
 
 	// Add is_local column to follows table to support local follows
 	tx.Exec("ALTER TABLE follows ADD COLUMN is_local INTEGER DEFAULT 0")
@@ -394,5 +409,63 @@ func (db *DB) addUsernameUniqueConstraint(tx *sql.Tx) error {
 	}
 
 	log.Println("Added UNIQUE constraint to accounts.username column")
+	return nil
+}
+
+// backfillReplyCounts recalculates reply_count for all notes and activities
+// This runs once during migration to populate the denormalized counts
+func (db *DB) backfillReplyCounts(tx *sql.Tx) error {
+	// Check if we've already backfilled (if any reply_count > 0, skip)
+	var hasData int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM notes WHERE reply_count > 0`).Scan(&hasData)
+	if err == nil && hasData > 0 {
+		log.Println("Reply counts already backfilled, skipping")
+		return nil
+	}
+
+	log.Println("Backfilling reply counts for notes and activities...")
+
+	// Count local replies to local notes (by in_reply_to_uri matching object_uri)
+	_, err = tx.Exec(`
+		UPDATE notes SET reply_count = (
+			SELECT COUNT(*) FROM notes AS replies
+			WHERE replies.in_reply_to_uri = notes.object_uri
+			AND notes.object_uri IS NOT NULL AND notes.object_uri != ''
+		) + (
+			SELECT COUNT(*) FROM notes AS replies
+			WHERE replies.in_reply_to_uri LIKE '%/notes/' || notes.id || '%'
+		) + (
+			SELECT COUNT(*) FROM activities
+			WHERE activities.activity_type = 'Create'
+			AND activities.raw_json LIKE '%"inReplyTo":"%' || notes.object_uri || '%'
+			AND notes.object_uri IS NOT NULL AND notes.object_uri != ''
+		) + (
+			SELECT COUNT(*) FROM activities
+			WHERE activities.activity_type = 'Create'
+			AND activities.raw_json LIKE '%/notes/' || notes.id || '%'
+		)
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to backfill note reply counts: %v", err)
+	}
+
+	// Count replies to remote activities (by inReplyTo in raw_json)
+	_, err = tx.Exec(`
+		UPDATE activities SET reply_count = (
+			SELECT COUNT(*) FROM notes
+			WHERE notes.in_reply_to_uri = activities.object_uri
+		) + (
+			SELECT COUNT(*) FROM activities AS replies
+			WHERE replies.activity_type = 'Create'
+			AND replies.raw_json LIKE '%"inReplyTo":"' || activities.object_uri || '"%'
+			AND replies.id != activities.id
+		)
+		WHERE activities.activity_type = 'Create'
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to backfill activity reply counts: %v", err)
+	}
+
+	log.Println("Completed backfilling reply counts")
 	return nil
 }

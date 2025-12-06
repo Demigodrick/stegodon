@@ -1,4 +1,4 @@
-package listnotes
+package myposts
 
 import (
 	"fmt"
@@ -142,7 +142,7 @@ func max(a, b int) int {
 func (m Model) View() string {
 	var s strings.Builder
 
-	s.WriteString(common.CaptionStyle.Render(fmt.Sprintf("notes list (%d notes)", len(m.Notes))))
+	s.WriteString(common.CaptionStyle.Render(fmt.Sprintf("my posts (%d notes)", len(m.Notes))))
 	s.WriteString("\n\n")
 
 	if len(m.Notes) == 0 {
@@ -180,7 +180,7 @@ func (m Model) View() string {
 				// Render each line with the background and inverted text colors
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, 150)))
+				contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")
@@ -192,7 +192,7 @@ func (m Model) View() string {
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, 150)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")

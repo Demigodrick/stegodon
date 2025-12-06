@@ -3,7 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -555,7 +557,14 @@ func (db *DB) insertNoteWithReply(tx *sql.Tx, userId uuid.UUID, message string, 
 	// Insert note with inReplyToURI
 	_, err := tx.Exec(`INSERT INTO notes(id, user_id, message, created_at, in_reply_to_uri) VALUES (?, ?, ?, ?, ?)`,
 		noteId, userId, message, time.Now().Format("2006-01-02 15:04:05"), inReplyToURI)
-	return noteId, err
+	if err != nil {
+		return noteId, err
+	}
+
+	// Increment reply count on the parent (handles both notes and activities)
+	db.incrementReplyCount(tx, inReplyToURI)
+
+	return noteId, nil
 }
 
 func (db *DB) updateNote(tx *sql.Tx, noteId uuid.UUID, message string) error {
@@ -564,8 +573,25 @@ func (db *DB) updateNote(tx *sql.Tx, noteId uuid.UUID, message string) error {
 }
 
 func (db *DB) deleteNote(tx *sql.Tx, noteId uuid.UUID) error {
-	_, err := tx.Exec(sqlDeleteNote, noteId)
-	return err
+	// First, get the note's in_reply_to_uri so we can decrement the parent's count
+	var inReplyToURI sql.NullString
+	err := tx.QueryRow(`SELECT in_reply_to_uri FROM notes WHERE id = ?`, noteId.String()).Scan(&inReplyToURI)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Delete the note
+	_, err = tx.Exec(sqlDeleteNote, noteId)
+	if err != nil {
+		return err
+	}
+
+	// Decrement reply count on the parent if this was a reply
+	if inReplyToURI.Valid && inReplyToURI.String != "" {
+		db.decrementReplyCount(tx, inReplyToURI.String)
+	}
+
+	return nil
 }
 
 func (db *DB) updateLoginUser(tx *sql.Tx, username string, displayName string, summary string, pkHash string) error {
@@ -967,6 +993,197 @@ func (db *DB) ReadFederatedActivities(accountId uuid.UUID, limit int) (error, *[
 		return err, &activities
 	}
 	return nil, &activities
+}
+
+// Home Timeline queries - combines local notes and remote activities
+const (
+	// Local notes for home timeline: own posts + posts from followed local users (excluding replies)
+	// Includes reply_count for denormalized reply counting
+	sqlSelectHomeLocalNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.object_uri, COALESCE(notes.reply_count, 0) FROM notes
+		INNER JOIN accounts ON accounts.id = notes.user_id
+		WHERE (notes.in_reply_to_uri IS NULL OR notes.in_reply_to_uri = '')
+		AND (notes.user_id = ? OR notes.user_id IN (
+			SELECT target_account_id FROM follows
+			WHERE account_id = ? AND accepted = 1 AND is_local = 1
+		))
+		ORDER BY notes.created_at DESC LIMIT ?`
+
+	// Remote activities for home timeline: posts from followed remote users
+	// Excludes replies (activities where inReplyTo has a URL value, not null)
+	// Top-level posts have "inReplyTo":null, replies have "inReplyTo":"https://..."
+	// Includes reply_count for denormalized reply counting
+	sqlSelectHomeRemoteActivities = `SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, ra.username, ra.domain, COALESCE(a.reply_count, 0)
+		FROM activities a
+		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
+		INNER JOIN follows f ON f.target_account_id = ra.id
+		WHERE a.activity_type = 'Create' AND a.local = 0 AND f.account_id = ? AND f.accepted = 1 AND f.is_local = 0
+		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
+		ORDER BY a.created_at DESC LIMIT ?`
+)
+
+// ReadHomeTimelinePosts returns a unified home timeline combining local and remote posts
+func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]domain.HomePost) {
+	var posts []domain.HomePost
+
+	// Fetch local notes (already excludes replies via sqlSelectHomeLocalNotes WHERE clause)
+	localRows, err := db.db.Query(sqlSelectHomeLocalNotes, accountId.String(), accountId.String(), limit)
+	if err != nil {
+		return err, nil
+	}
+	defer localRows.Close()
+
+	for localRows.Next() {
+		var idStr string
+		var username string
+		var message string
+		var createdAtStr string
+		var objectURI sql.NullString
+		var replyCount int
+
+		if err := localRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount); err != nil {
+			return err, &posts
+		}
+
+		noteId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		uri := ""
+		if objectURI.Valid {
+			uri = objectURI.String
+		}
+
+		posts = append(posts, domain.HomePost{
+			ID:         noteId,
+			Author:     username,
+			Content:    message,
+			Time:       parsedTime,
+			ObjectURI:  uri,
+			IsLocal:    true,
+			NoteID:     noteId,
+			ReplyCount: replyCount,
+		})
+	}
+	if err = localRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Fetch remote activities (query excludes all replies - only top-level posts)
+	remoteRows, err := db.db.Query(sqlSelectHomeRemoteActivities, accountId.String(), limit)
+	if err != nil {
+		return err, &posts
+	}
+	defer remoteRows.Close()
+
+	for remoteRows.Next() {
+		var idStr string
+		var actorURI string
+		var objectURI string
+		var rawJSON string
+		var createdAtStr string
+		var username string
+		var remDomain string
+		var replyCount int
+
+		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount); err != nil {
+			return err, &posts
+		}
+
+		activityId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		// Extract content from raw JSON
+		content := extractContentFromJSON(rawJSON)
+
+		posts = append(posts, domain.HomePost{
+			ID:         activityId,
+			Author:     "@" + username + "@" + remDomain,
+			Content:    content,
+			Time:       parsedTime,
+			ObjectURI:  objectURI,
+			IsLocal:    false,
+			NoteID:     uuid.Nil,
+			ReplyCount: replyCount,
+		})
+	}
+	if err = remoteRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Sort combined posts by time (newest first)
+	sortPostsByTime(posts)
+
+	// Limit to requested amount
+	if len(posts) > limit {
+		posts = posts[:limit]
+	}
+
+	return nil, &posts
+}
+
+// extractContentFromJSON extracts content from ActivityPub Create activity JSON
+func extractContentFromJSON(rawJSON string) string {
+	// Properly unmarshal JSON to extract content
+	var activityWrapper struct {
+		Type   string `json:"type"`
+		Object struct {
+			ID      string `json:"id"`
+			Content string `json:"content"`
+		} `json:"object"`
+	}
+
+	if err := json.Unmarshal([]byte(rawJSON), &activityWrapper); err != nil {
+		// Fallback to simple string parsing if JSON unmarshal fails
+		if idx := strings.Index(rawJSON, `"content":"`); idx >= 0 {
+			start := idx + len(`"content":"`)
+			end := strings.Index(rawJSON[start:], `"`)
+			if end > 0 {
+				content := rawJSON[start : start+end]
+				return stripHTMLTags(content)
+			}
+		}
+		return ""
+	}
+
+	// Skip if content is empty
+	if activityWrapper.Object.Content == "" {
+		return ""
+	}
+
+	// Strip HTML tags from content
+	return stripHTMLTags(activityWrapper.Object.Content)
+}
+
+// stripHTMLTags removes HTML tags from a string and converts common HTML entities
+func stripHTMLTags(html string) string {
+	// Remove all HTML tags using a simple regex
+	htmlTagRegex := regexp.MustCompile(`<[^>]*>`)
+	text := htmlTagRegex.ReplaceAllString(html, "")
+
+	// Convert common HTML entities
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#39;", "'")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "\\n", "\n")
+	text = strings.ReplaceAll(text, "\\\"", "\"")
+
+	// Clean up extra whitespace
+	text = strings.TrimSpace(text)
+
+	return text
+}
+
+// sortPostsByTime sorts posts by time (newest first)
+func sortPostsByTime(posts []domain.HomePost) {
+	for i := 0; i < len(posts)-1; i++ {
+		for j := i + 1; j < len(posts); j++ {
+			if posts[j].Time.After(posts[i].Time) {
+				posts[i], posts[j] = posts[j], posts[i]
+			}
+		}
+	}
 }
 
 // Delivery Queue queries
@@ -1878,8 +2095,235 @@ func (db *DB) CountRepliesByURI(objectURI string) (int, error) {
 	return count, nil
 }
 
+// incrementReplyCount increments the reply_count on the parent note or activity
+// It handles both local notes (by object_uri or note ID pattern) and remote activities
+func (db *DB) incrementReplyCount(tx *sql.Tx, parentURI string) {
+	// Try to increment on notes table (by object_uri)
+	result, _ := tx.Exec(`UPDATE notes SET reply_count = reply_count + 1 WHERE object_uri = ?`, parentURI)
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		return
+	}
+
+	// Try to increment on notes table (by note ID in URI pattern like /notes/{uuid})
+	if strings.Contains(parentURI, "/notes/") {
+		parts := strings.Split(parentURI, "/notes/")
+		if len(parts) == 2 {
+			noteIdStr := parts[1]
+			// Remove any trailing path
+			if idx := strings.Index(noteIdStr, "/"); idx > 0 {
+				noteIdStr = noteIdStr[:idx]
+			}
+			result, _ = tx.Exec(`UPDATE notes SET reply_count = reply_count + 1 WHERE id = ?`, noteIdStr)
+			if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+				return
+			}
+		}
+	}
+
+	// Try to increment on activities table (for remote posts)
+	tx.Exec(`UPDATE activities SET reply_count = reply_count + 1 WHERE object_uri = ?`, parentURI)
+}
+
+// decrementReplyCount decrements the reply_count on the parent note or activity
+func (db *DB) decrementReplyCount(tx *sql.Tx, parentURI string) {
+	// Try to decrement on notes table (by object_uri)
+	result, _ := tx.Exec(`UPDATE notes SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, parentURI)
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		return
+	}
+
+	// Try to decrement on notes table (by note ID in URI pattern)
+	if strings.Contains(parentURI, "/notes/") {
+		parts := strings.Split(parentURI, "/notes/")
+		if len(parts) == 2 {
+			noteIdStr := parts[1]
+			if idx := strings.Index(noteIdStr, "/"); idx > 0 {
+				noteIdStr = noteIdStr[:idx]
+			}
+			result, _ = tx.Exec(`UPDATE notes SET reply_count = MAX(0, reply_count - 1) WHERE id = ?`, noteIdStr)
+			if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+				return
+			}
+		}
+	}
+
+	// Try to decrement on activities table
+	tx.Exec(`UPDATE activities SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, parentURI)
+}
+
+// IncrementReplyCountByURI increments the reply_count on a note or activity by URI
+// This is used when receiving remote replies via ActivityPub inbox
+func (db *DB) IncrementReplyCountByURI(parentURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		db.incrementReplyCount(tx, parentURI)
+		return nil
+	})
+}
+
+// CountTotalRepliesByNoteId counts all replies (recursively) to a local note
+// This includes direct replies and all nested replies in the thread
+func (db *DB) CountTotalRepliesByNoteId(noteId uuid.UUID) (int, error) {
+	// First get the note's object_uri
+	err, note := db.ReadNoteId(noteId)
+	if err != nil || note == nil {
+		return 0, err
+	}
+
+	if note.ObjectURI != "" {
+		return db.CountTotalRepliesByURI(note.ObjectURI)
+	}
+
+	// For notes without object_uri, use the note ID pattern
+	localPattern := "%" + noteId.String() + "%"
+	return db.countTotalRepliesRecursive(localPattern, "")
+}
+
+// CountTotalRepliesByURI counts all replies (recursively) to a note by URI
+// This includes direct replies, remote replies, and all nested replies
+func (db *DB) CountTotalRepliesByURI(objectURI string) (int, error) {
+	return db.countTotalRepliesRecursive("", objectURI)
+}
+
+// countTotalRepliesRecursive recursively counts all replies in a thread
+// It handles both local notes (by in_reply_to_uri) and remote activities (by inReplyTo in raw_json)
+func (db *DB) countTotalRepliesRecursive(localPattern string, objectURI string) (int, error) {
+	totalCount := 0
+
+	// Get direct local replies
+	var localReplies []struct {
+		ID        uuid.UUID
+		ObjectURI string
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if objectURI != "" {
+		// Search by exact object_uri match
+		rows, err = db.db.Query(`
+			SELECT n.id, COALESCE(n.object_uri, '') as object_uri
+			FROM notes n
+			WHERE n.in_reply_to_uri = ?`,
+			objectURI)
+	} else if localPattern != "" {
+		// Search by note ID pattern in in_reply_to_uri
+		rows, err = db.db.Query(`
+			SELECT n.id, COALESCE(n.object_uri, '') as object_uri
+			FROM notes n
+			WHERE n.in_reply_to_uri LIKE ?`,
+			localPattern)
+	} else {
+		return 0, nil
+	}
+
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var idStr string
+		var uri string
+		if err := rows.Scan(&idStr, &uri); err != nil {
+			continue
+		}
+		id, _ := uuid.Parse(idStr)
+		localReplies = append(localReplies, struct {
+			ID        uuid.UUID
+			ObjectURI string
+		}{ID: id, ObjectURI: uri})
+	}
+
+	// Count direct local replies
+	totalCount += len(localReplies)
+
+	// Count direct remote replies (only if we have an objectURI)
+	if objectURI != "" {
+		remoteCount, _ := db.CountActivitiesByInReplyTo(objectURI)
+		totalCount += remoteCount
+
+		// Get remote reply URIs for recursive counting
+		err, remoteActivities := db.ReadActivitiesByInReplyTo(objectURI)
+		if err == nil && remoteActivities != nil {
+			for _, activity := range *remoteActivities {
+				if activity.ObjectURI != "" {
+					// Recursively count replies to remote replies
+					subCount, _ := db.countTotalRepliesRecursive("", activity.ObjectURI)
+					totalCount += subCount
+				}
+			}
+		}
+	}
+
+	// Recursively count replies to local replies
+	for _, reply := range localReplies {
+		if reply.ObjectURI != "" {
+			subCount, _ := db.countTotalRepliesRecursive("", reply.ObjectURI)
+			totalCount += subCount
+		} else {
+			// For notes without object_uri, we need to check both:
+			// 1. Local notes that reply using the note ID pattern
+			// 2. Remote activities that reply using the full constructed URI
+
+			// Check local replies by note ID pattern
+			subPattern := "%" + reply.ID.String() + "%"
+			subCount, _ := db.countTotalRepliesRecursive(subPattern, "")
+			totalCount += subCount
+
+			// Also check remote activities that might use the full URI pattern
+			// Remote servers use URIs like: https://domain/notes/{uuid}
+			// We search for /notes/{uuid} pattern in raw_json directly
+			noteURIPattern := "/notes/" + reply.ID.String()
+			remoteReplyCount, _ := db.countRemoteRepliesByURIPattern(noteURIPattern)
+			totalCount += remoteReplyCount
+		}
+	}
+
+	return totalCount, nil
+}
+
+// countRemoteRepliesByURIPattern counts remote activities where inReplyTo contains the given URI pattern
+// and recursively counts replies to those activities
+func (db *DB) countRemoteRepliesByURIPattern(uriPattern string) (int, error) {
+	// Find activities where inReplyTo contains this pattern
+	rows, err := db.db.Query(`
+		SELECT object_uri FROM activities
+		WHERE activity_type = 'Create'
+		AND raw_json LIKE ?`,
+		`%"inReplyTo":"%`+uriPattern+`%`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var count int
+	var remoteObjectURIs []string
+
+	for rows.Next() {
+		var objectURI string
+		if err := rows.Scan(&objectURI); err != nil {
+			continue
+		}
+		count++
+		if objectURI != "" {
+			remoteObjectURIs = append(remoteObjectURIs, objectURI)
+		}
+	}
+
+	// Recursively count replies to these remote activities
+	for _, uri := range remoteObjectURIs {
+		subCount, _ := db.countTotalRepliesRecursive("", uri)
+		count += subCount
+	}
+
+	return count, nil
+}
+
 // ReadNoteByURI finds a local note by its ActivityPub object_uri
+// It first tries an exact match on the object_uri column, then falls back
+// to extracting the UUID from the URI pattern /notes/{uuid}
 func (db *DB) ReadNoteByURI(objectURI string) (error, *domain.Note) {
+	// First try exact match on object_uri column
 	row := db.db.QueryRow(`
 		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri
 		FROM notes n
@@ -1891,23 +2335,37 @@ func (db *DB) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 	var createdAtStr string
 	var editedAtStr, inReplyToURI, noteObjectURI sql.NullString
 	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &noteObjectURI)
-	if err == sql.ErrNoRows {
-		return err, nil
-	}
-	if err != nil {
-		return err, nil
+	if err == nil {
+		note.CreatedAt, _ = parseTimestamp(createdAtStr)
+		if editedAtStr.Valid {
+			if parsedTime, err := parseTimestamp(editedAtStr.String); err == nil {
+				note.EditedAt = &parsedTime
+			}
+		}
+		note.InReplyToURI = inReplyToURI.String
+		note.ObjectURI = noteObjectURI.String
+		return nil, &note
 	}
 
-	note.CreatedAt, _ = parseTimestamp(createdAtStr)
-	if editedAtStr.Valid {
-		if parsedTime, err := parseTimestamp(editedAtStr.String); err == nil {
-			note.EditedAt = &parsedTime
+	// If not found by object_uri, try extracting UUID from URI pattern /notes/{uuid}
+	// This handles cases where object_uri wasn't stored in the database
+	if err == sql.ErrNoRows {
+		// Extract UUID from URI like "https://domain/notes/414b193d-0b53-4657-b1bf-eb3a6091d672"
+		parts := strings.Split(objectURI, "/notes/")
+		if len(parts) == 2 {
+			noteIdStr := parts[1]
+			// Remove any trailing path segments
+			if idx := strings.Index(noteIdStr, "/"); idx > 0 {
+				noteIdStr = noteIdStr[:idx]
+			}
+			if noteId, parseErr := uuid.Parse(noteIdStr); parseErr == nil {
+				// Found a valid UUID, look up by ID
+				return db.ReadNoteIdWithReplyInfo(noteId)
+			}
 		}
 	}
-	note.InReplyToURI = inReplyToURI.String
-	note.ObjectURI = noteObjectURI.String
 
-	return nil, &note
+	return err, nil
 }
 
 // ReadNoteIdWithReplyInfo returns a note with full reply information
@@ -1970,4 +2428,53 @@ func (db *DB) scanNotesWithReplyInfo(rows *sql.Rows) (error, *[]domain.Note) {
 		return err, &notes
 	}
 	return nil, &notes
+}
+
+// ReadActivitiesByInReplyTo finds all Create activities that are replies to the given URI
+// This searches the raw_json field for "inReplyTo":"<uri>" patterns
+// It supports both exact URI matches and partial matches (for notes without stored object_uri)
+func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Activity) {
+	// Search for activities where the inReplyTo field matches the parentURI
+	// We search in raw_json since inReplyTo is nested in the object
+	rows, err := db.db.Query(`
+		SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at
+		FROM activities
+		WHERE activity_type = 'Create'
+		AND (raw_json LIKE ? OR raw_json LIKE ?)
+		ORDER BY created_at ASC`,
+		`%"inReplyTo":"`+parentURI+`"%`,
+		`%"inReplyTo": "`+parentURI+`"%`) // Handle optional space after colon
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var activities []domain.Activity
+	for rows.Next() {
+		var a domain.Activity
+		var idStr string
+		err := rows.Scan(&idStr, &a.ActivityURI, &a.ActivityType, &a.ActorURI, &a.ObjectURI, &a.RawJSON, &a.Processed, &a.Local, &a.CreatedAt)
+		if err != nil {
+			continue
+		}
+		a.Id, _ = uuid.Parse(idStr)
+		activities = append(activities, a)
+	}
+	return nil, &activities
+}
+
+// CountActivitiesByInReplyTo counts Create activities that are replies to the given URI
+func (db *DB) CountActivitiesByInReplyTo(parentURI string) (int, error) {
+	var count int
+	err := db.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM activities
+		WHERE activity_type = 'Create'
+		AND (raw_json LIKE ? OR raw_json LIKE ?)`,
+		`%"inReplyTo":"`+parentURI+`"%`,
+		`%"inReplyTo": "`+parentURI+`"%`).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
