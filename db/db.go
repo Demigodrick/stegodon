@@ -2095,18 +2095,33 @@ func (db *DB) CountRepliesByURI(objectURI string) (int, error) {
 	return count, nil
 }
 
-// incrementReplyCount increments the reply_count on the parent note or activity
-// It handles both local notes (by object_uri or note ID pattern) and remote activities
+// incrementReplyCount increments the reply_count on the parent note or activity AND all ancestors
+// This ensures that root-level posts show the total count of all nested replies
 func (db *DB) incrementReplyCount(tx *sql.Tx, parentURI string) {
+	db.incrementReplyCountRecursive(tx, parentURI, make(map[string]bool))
+}
+
+// incrementReplyCountRecursive walks up the ancestor chain and increments each reply_count
+func (db *DB) incrementReplyCountRecursive(tx *sql.Tx, uri string, visited map[string]bool) {
+	if uri == "" || visited[uri] {
+		return
+	}
+	visited[uri] = true
+
+	var nextParentURI string
+
 	// Try to increment on notes table (by object_uri)
-	result, _ := tx.Exec(`UPDATE notes SET reply_count = reply_count + 1 WHERE object_uri = ?`, parentURI)
+	result, _ := tx.Exec(`UPDATE notes SET reply_count = reply_count + 1 WHERE object_uri = ?`, uri)
 	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		// Found and updated a note, now get its parent to continue up the chain
+		tx.QueryRow(`SELECT COALESCE(in_reply_to_uri, '') FROM notes WHERE object_uri = ?`, uri).Scan(&nextParentURI)
+		db.incrementReplyCountRecursive(tx, nextParentURI, visited)
 		return
 	}
 
 	// Try to increment on notes table (by note ID in URI pattern like /notes/{uuid})
-	if strings.Contains(parentURI, "/notes/") {
-		parts := strings.Split(parentURI, "/notes/")
+	if strings.Contains(uri, "/notes/") {
+		parts := strings.Split(uri, "/notes/")
 		if len(parts) == 2 {
 			noteIdStr := parts[1]
 			// Remove any trailing path
@@ -2115,26 +2130,71 @@ func (db *DB) incrementReplyCount(tx *sql.Tx, parentURI string) {
 			}
 			result, _ = tx.Exec(`UPDATE notes SET reply_count = reply_count + 1 WHERE id = ?`, noteIdStr)
 			if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+				// Found and updated a note, get its parent
+				tx.QueryRow(`SELECT COALESCE(in_reply_to_uri, '') FROM notes WHERE id = ?`, noteIdStr).Scan(&nextParentURI)
+				db.incrementReplyCountRecursive(tx, nextParentURI, visited)
 				return
 			}
 		}
 	}
 
 	// Try to increment on activities table (for remote posts)
-	tx.Exec(`UPDATE activities SET reply_count = reply_count + 1 WHERE object_uri = ?`, parentURI)
+	result, _ = tx.Exec(`UPDATE activities SET reply_count = reply_count + 1 WHERE object_uri = ?`, uri)
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		// Found and updated an activity, extract inReplyTo from raw_json
+		var rawJSON string
+		tx.QueryRow(`SELECT raw_json FROM activities WHERE object_uri = ?`, uri).Scan(&rawJSON)
+		nextParentURI = extractInReplyToFromJSON(rawJSON)
+		db.incrementReplyCountRecursive(tx, nextParentURI, visited)
+	}
 }
 
-// decrementReplyCount decrements the reply_count on the parent note or activity
+// extractInReplyToFromJSON extracts the inReplyTo value from activity raw_json
+func extractInReplyToFromJSON(rawJSON string) string {
+	if rawJSON == "" {
+		return ""
+	}
+	// Parse the JSON to extract inReplyTo from the object
+	var activity struct {
+		Object struct {
+			InReplyTo interface{} `json:"inReplyTo"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal([]byte(rawJSON), &activity); err != nil {
+		return ""
+	}
+	// inReplyTo can be a string or null
+	if inReplyTo, ok := activity.Object.InReplyTo.(string); ok {
+		return inReplyTo
+	}
+	return ""
+}
+
+// decrementReplyCount decrements the reply_count on the parent note or activity AND all ancestors
 func (db *DB) decrementReplyCount(tx *sql.Tx, parentURI string) {
+	db.decrementReplyCountRecursive(tx, parentURI, make(map[string]bool))
+}
+
+// decrementReplyCountRecursive walks up the ancestor chain and decrements each reply_count
+func (db *DB) decrementReplyCountRecursive(tx *sql.Tx, uri string, visited map[string]bool) {
+	if uri == "" || visited[uri] {
+		return
+	}
+	visited[uri] = true
+
+	var nextParentURI string
+
 	// Try to decrement on notes table (by object_uri)
-	result, _ := tx.Exec(`UPDATE notes SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, parentURI)
+	result, _ := tx.Exec(`UPDATE notes SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, uri)
 	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		tx.QueryRow(`SELECT COALESCE(in_reply_to_uri, '') FROM notes WHERE object_uri = ?`, uri).Scan(&nextParentURI)
+		db.decrementReplyCountRecursive(tx, nextParentURI, visited)
 		return
 	}
 
 	// Try to decrement on notes table (by note ID in URI pattern)
-	if strings.Contains(parentURI, "/notes/") {
-		parts := strings.Split(parentURI, "/notes/")
+	if strings.Contains(uri, "/notes/") {
+		parts := strings.Split(uri, "/notes/")
 		if len(parts) == 2 {
 			noteIdStr := parts[1]
 			if idx := strings.Index(noteIdStr, "/"); idx > 0 {
@@ -2142,13 +2202,21 @@ func (db *DB) decrementReplyCount(tx *sql.Tx, parentURI string) {
 			}
 			result, _ = tx.Exec(`UPDATE notes SET reply_count = MAX(0, reply_count - 1) WHERE id = ?`, noteIdStr)
 			if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+				tx.QueryRow(`SELECT COALESCE(in_reply_to_uri, '') FROM notes WHERE id = ?`, noteIdStr).Scan(&nextParentURI)
+				db.decrementReplyCountRecursive(tx, nextParentURI, visited)
 				return
 			}
 		}
 	}
 
 	// Try to decrement on activities table
-	tx.Exec(`UPDATE activities SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, parentURI)
+	result, _ = tx.Exec(`UPDATE activities SET reply_count = MAX(0, reply_count - 1) WHERE object_uri = ?`, uri)
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+		var rawJSON string
+		tx.QueryRow(`SELECT raw_json FROM activities WHERE object_uri = ?`, uri).Scan(&rawJSON)
+		nextParentURI = extractInReplyToFromJSON(rawJSON)
+		db.decrementReplyCountRecursive(tx, nextParentURI, visited)
+	}
 }
 
 // IncrementReplyCountByURI increments the reply_count on a note or activity by URI
@@ -2466,11 +2534,18 @@ func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Acti
 // CountActivitiesByInReplyTo counts Create activities that are replies to the given URI
 func (db *DB) CountActivitiesByInReplyTo(parentURI string) (int, error) {
 	var count int
+	// Count activities that reply to parentURI, excluding duplicates of local notes
+	// A duplicate is an activity whose object_uri matches a local note (by object_uri or /notes/{uuid} pattern)
 	err := db.db.QueryRow(`
 		SELECT COUNT(*)
-		FROM activities
-		WHERE activity_type = 'Create'
-		AND (raw_json LIKE ? OR raw_json LIKE ?)`,
+		FROM activities a
+		WHERE a.activity_type = 'Create'
+		AND (a.raw_json LIKE ? OR a.raw_json LIKE ?)
+		AND NOT EXISTS (
+			SELECT 1 FROM notes n
+			WHERE (n.object_uri = a.object_uri AND n.object_uri IS NOT NULL AND n.object_uri != '')
+			   OR (a.object_uri LIKE '%/notes/' || n.id || '%')
+		)`,
 		`%"inReplyTo":"`+parentURI+`"%`,
 		`%"inReplyTo": "`+parentURI+`"%`).Scan(&count)
 	if err != nil {

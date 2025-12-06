@@ -228,6 +228,14 @@ func loadThread(parentURI string) tea.Cmd {
 				if localActorPrefix != "" && strings.HasPrefix(activity.ActorURI, localActorPrefix) {
 					continue
 				}
+				// Skip if this activity is a duplicate of a local note (federated copy of local post)
+				if activity.ObjectURI != "" {
+					dupErr, existingNote := database.ReadNoteByURI(activity.ObjectURI)
+					if dupErr == nil && existingNote != nil {
+						// This is a duplicate, skip it
+						continue
+					}
+				}
 				replyContent, replyAuthor := parseActivityContent(&activity)
 				// Count replies to this remote reply (could be local notes replying to it)
 				replyCount, _ := database.CountRepliesByURI(activity.ObjectURI)
@@ -351,6 +359,14 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 					// Skip if this is from a local user (already shown as local reply)
 					if strings.HasPrefix(activity.ActorURI, localActorPrefix) {
 						continue
+					}
+					// Skip if this activity is a duplicate of a local note (federated copy of local post)
+					if activity.ObjectURI != "" {
+						dupErr, existingNote := database.ReadNoteByURI(activity.ObjectURI)
+						if dupErr == nil && existingNote != nil {
+							// This is a duplicate, skip it
+							continue
+						}
 					}
 					replyContent, replyAuthor := parseActivityContent(&activity)
 					// Count replies to this remote reply (could be local notes replying to it)
@@ -576,7 +592,11 @@ func (m Model) View() string {
 
 	// Header
 	replyCount := len(m.Replies)
-	s.WriteString(common.CaptionStyle.Render(fmt.Sprintf("thread (%d replies)", replyCount)))
+	if replyCount == 1 {
+		s.WriteString(common.CaptionStyle.Render("thread (1 reply)"))
+	} else {
+		s.WriteString(common.CaptionStyle.Render(fmt.Sprintf("thread (%d replies)", replyCount)))
+	}
 	s.WriteString("\n\n")
 
 	if m.loading {
@@ -642,7 +662,9 @@ func (m Model) View() string {
 
 		// Format timestamp with reply count indicator
 		timeStr := formatTime(post.Time)
-		if post.ReplyCount > 0 {
+		if post.ReplyCount == 1 {
+			timeStr = fmt.Sprintf("%s · 1 reply", timeStr)
+		} else if post.ReplyCount > 1 {
 			timeStr = fmt.Sprintf("%s · %d replies", timeStr, post.ReplyCount)
 		}
 

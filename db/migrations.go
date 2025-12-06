@@ -414,6 +414,7 @@ func (db *DB) addUsernameUniqueConstraint(tx *sql.Tx) error {
 
 // backfillReplyCounts recalculates reply_count for all notes and activities
 // This runs once during migration to populate the denormalized counts
+// It uses recursive counting to get the total of all nested replies
 func (db *DB) backfillReplyCounts(tx *sql.Tx) error {
 	// Check if we've already backfilled (if any reply_count > 0, skip)
 	var hasData int
@@ -423,47 +424,56 @@ func (db *DB) backfillReplyCounts(tx *sql.Tx) error {
 		return nil
 	}
 
-	log.Println("Backfilling reply counts for notes and activities...")
+	log.Println("Backfilling reply counts for notes and activities (recursive)...")
 
-	// Count local replies to local notes (by in_reply_to_uri matching object_uri)
-	_, err = tx.Exec(`
-		UPDATE notes SET reply_count = (
-			SELECT COUNT(*) FROM notes AS replies
-			WHERE replies.in_reply_to_uri = notes.object_uri
-			AND notes.object_uri IS NOT NULL AND notes.object_uri != ''
-		) + (
-			SELECT COUNT(*) FROM notes AS replies
-			WHERE replies.in_reply_to_uri LIKE '%/notes/' || notes.id || '%'
-		) + (
-			SELECT COUNT(*) FROM activities
-			WHERE activities.activity_type = 'Create'
-			AND activities.raw_json LIKE '%"inReplyTo":"%' || notes.object_uri || '%'
-			AND notes.object_uri IS NOT NULL AND notes.object_uri != ''
-		) + (
-			SELECT COUNT(*) FROM activities
-			WHERE activities.activity_type = 'Create'
-			AND activities.raw_json LIKE '%/notes/' || notes.id || '%'
-		)
-	`)
+	// Reset all counts to 0
+	tx.Exec(`UPDATE notes SET reply_count = 0`)
+	tx.Exec(`UPDATE activities SET reply_count = 0`)
+
+	// Get all notes with in_reply_to_uri (these are replies)
+	rows, err := tx.Query(`SELECT in_reply_to_uri FROM notes WHERE in_reply_to_uri IS NOT NULL AND in_reply_to_uri != ''`)
 	if err != nil {
-		log.Printf("Warning: Failed to backfill note reply counts: %v", err)
+		log.Printf("Warning: Failed to query note replies: %v", err)
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var inReplyTo string
+			if err := rows.Scan(&inReplyTo); err == nil && inReplyTo != "" {
+				// Increment all ancestors
+				db.incrementReplyCountRecursive(tx, inReplyTo, make(map[string]bool))
+			}
+		}
 	}
 
-	// Count replies to remote activities (by inReplyTo in raw_json)
-	_, err = tx.Exec(`
-		UPDATE activities SET reply_count = (
-			SELECT COUNT(*) FROM notes
-			WHERE notes.in_reply_to_uri = activities.object_uri
-		) + (
-			SELECT COUNT(*) FROM activities AS replies
-			WHERE replies.activity_type = 'Create'
-			AND replies.raw_json LIKE '%"inReplyTo":"' || activities.object_uri || '"%'
-			AND replies.id != activities.id
+	// Get all Create activities with inReplyTo (remote replies)
+	// Skip activities that are duplicates of local notes:
+	// 1. Same object_uri exists in notes table, OR
+	// 2. Activity object_uri contains a local note ID pattern (/notes/{uuid})
+	rows2, err := tx.Query(`
+		SELECT a.object_uri, a.raw_json
+		FROM activities a
+		WHERE a.activity_type = 'Create'
+		AND a.raw_json LIKE '%"inReplyTo":"http%'
+		AND NOT EXISTS (
+			SELECT 1 FROM notes n
+			WHERE (n.object_uri = a.object_uri AND n.object_uri IS NOT NULL AND n.object_uri != '')
+			   OR (a.object_uri LIKE '%/notes/' || n.id || '%')
 		)
-		WHERE activities.activity_type = 'Create'
 	`)
 	if err != nil {
-		log.Printf("Warning: Failed to backfill activity reply counts: %v", err)
+		log.Printf("Warning: Failed to query activity replies: %v", err)
+	} else {
+		defer rows2.Close()
+		for rows2.Next() {
+			var objectURI, rawJSON string
+			if err := rows2.Scan(&objectURI, &rawJSON); err == nil {
+				inReplyTo := extractInReplyToFromJSON(rawJSON)
+				if inReplyTo != "" {
+					// Increment all ancestors
+					db.incrementReplyCountRecursive(tx, inReplyTo, make(map[string]bool))
+				}
+			}
+		}
 	}
 
 	log.Println("Completed backfilling reply counts")

@@ -257,7 +257,9 @@ func (m Model) View() string {
 
 			// Format timestamp with reply count indicator
 			timeStr := formatTime(post.Time)
-			if post.ReplyCount > 0 {
+			if post.ReplyCount == 1 {
+				timeStr = fmt.Sprintf("%s · 1 reply", timeStr)
+			} else if post.ReplyCount > 1 {
 				timeStr = fmt.Sprintf("%s · %d replies", timeStr, post.ReplyCount)
 			}
 

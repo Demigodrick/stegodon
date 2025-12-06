@@ -413,12 +413,22 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 	}
 
 	// Increment reply count on the parent post if this is a reply
+	// But skip if this activity is a duplicate of a local note (our own post coming back via federation)
 	if create.Object.InReplyTo != "" {
-		if err := database.IncrementReplyCountByURI(create.Object.InReplyTo); err != nil {
-			log.Printf("Inbox: Failed to increment reply count for %s: %v", create.Object.InReplyTo, err)
-			// Don't fail the activity processing for this
+		// Check if this activity's object_uri matches an existing local note
+		// This happens when our own post is federated out and comes back
+		err, existingNote := database.ReadNoteByURI(create.Object.ID)
+		isDuplicate := err == nil && existingNote != nil
+
+		if isDuplicate {
+			log.Printf("Inbox: Skipping reply count increment - activity %s is a duplicate of local note", create.Object.ID)
 		} else {
-			log.Printf("Inbox: Incremented reply count for %s", create.Object.InReplyTo)
+			if err := database.IncrementReplyCountByURI(create.Object.InReplyTo); err != nil {
+				log.Printf("Inbox: Failed to increment reply count for %s: %v", create.Object.InReplyTo, err)
+				// Don't fail the activity processing for this
+			} else {
+				log.Printf("Inbox: Incremented reply count for %s", create.Object.InReplyTo)
+			}
 		}
 	}
 
