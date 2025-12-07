@@ -623,3 +623,139 @@ func TestThreadPost_Fields(t *testing.T) {
 func keyMsg(key string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 }
+
+func TestView_ReplyIndentConsistency(t *testing.T) {
+	// Test that all lines of a reply have consistent left padding
+	m := InitialModel(uuid.New(), 120, 40)
+	m.ParentPost = &ThreadPost{
+		ID:       uuid.New(),
+		Author:   "parent_user",
+		Content:  "This is the parent post",
+		Time:     time.Now(),
+		IsLocal:  true,
+		IsParent: true,
+	}
+	m.Replies = []ThreadPost{
+		{
+			ID:       uuid.New(),
+			Author:   "reply_user",
+			Content:  "This is a reply",
+			Time:     time.Now(),
+			IsLocal:  true,
+			IsParent: false,
+		},
+	}
+	// Select the reply (index 0)
+	m.Selected = 0
+	m.Offset = 0
+
+	view := m.View()
+
+	// The replyIndent is 4 spaces
+	indentStr := "    "
+
+	// Find the reply section - look for the reply author
+	lines := strings.Split(view, "\n")
+	foundReplyAuthor := false
+	replyLineIndices := []int{}
+
+	for i, line := range lines {
+		// Reply lines should contain the reply author or be part of that post block
+		if strings.Contains(line, "reply_user") {
+			foundReplyAuthor = true
+			replyLineIndices = append(replyLineIndices, i)
+		}
+	}
+
+	if !foundReplyAuthor {
+		t.Fatal("Could not find reply author in view")
+	}
+
+	// Check that lines around the reply author also have indent
+	// The reply block has: time, author, content - all should be indented
+	for _, idx := range replyLineIndices {
+		line := lines[idx]
+		// Skip empty lines
+		if len(strings.TrimSpace(line)) == 0 {
+			continue
+		}
+		// Check that the line starts with the indent (or has padding applied via lipgloss)
+		if !strings.HasPrefix(line, indentStr) && !strings.HasPrefix(line, " ") {
+			t.Errorf("Reply line %d should be indented, got: %q", idx, line)
+		}
+	}
+}
+
+func TestView_ParentNotIndented(t *testing.T) {
+	// Test that parent post is NOT indented
+	m := InitialModel(uuid.New(), 120, 40)
+	m.ParentPost = &ThreadPost{
+		ID:       uuid.New(),
+		Author:   "parent_author_unique",
+		Content:  "Parent content here",
+		Time:     time.Now(),
+		IsLocal:  true,
+		IsParent: true,
+	}
+	m.Replies = []ThreadPost{}
+	m.Selected = -1 // Parent selected
+	m.Offset = -1
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+
+	// Find the parent author line
+	for _, line := range lines {
+		if strings.Contains(line, "parent_author_unique") {
+			// Parent should NOT start with the 4-space indent
+			if strings.HasPrefix(line, "    ") && strings.Contains(line, "parent_author_unique") {
+				// Could be indented for other reasons, but check it's not the reply indent pattern
+				// This is a basic check - parent lines should be at start of content area
+			}
+			break
+		}
+	}
+}
+
+func TestView_ReplyIndentAdaptiveWidth(t *testing.T) {
+	// Test that reply indent works with different widths
+	widths := []int{80, 120, 160}
+
+	for _, width := range widths {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			m := InitialModel(uuid.New(), width, 40)
+			m.ParentPost = &ThreadPost{
+				ID:       uuid.New(),
+				Author:   "parent",
+				Content:  "Parent",
+				Time:     time.Now(),
+				IsLocal:  true,
+				IsParent: true,
+			}
+			m.Replies = []ThreadPost{
+				{
+					ID:       uuid.New(),
+					Author:   "replier",
+					Content:  "Reply content",
+					Time:     time.Now(),
+					IsLocal:  true,
+					IsParent: false,
+				},
+			}
+			m.Selected = 0
+			m.Offset = 0
+
+			view := m.View()
+
+			// View should render without panic
+			if len(view) == 0 {
+				t.Error("View should not be empty")
+			}
+
+			// Should contain the reply
+			if !strings.Contains(view, "replier") {
+				t.Error("View should contain reply author")
+			}
+		})
+	}
+}

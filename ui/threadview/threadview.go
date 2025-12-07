@@ -651,13 +651,12 @@ func (m Model) View() string {
 
 		isSelected := i == m.Selected
 
-		// Determine indent and width: no indent for parent, indent for replies
-		// Replies are narrower by the indent width so total line length matches
-		indent := ""
+		// Determine indent for replies: use PaddingLeft so all wrapped lines are indented
+		indentWidth := 0
 		itemWidth := contentWidth
 		if !isParent {
-			indent = replyIndent
-			itemWidth = contentWidth - len(replyIndent)
+			indentWidth = len(replyIndent)
+			itemWidth = contentWidth - indentWidth
 		}
 
 		// Format timestamp with reply count indicator
@@ -696,9 +695,14 @@ func (m Model) View() string {
 			authorFormatted := selectedBg.Render(selectedReplyAuthorStyle.Render(author))
 			contentFormatted := selectedBg.Render(selectedReplyContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
 
-			s.WriteString(indent + timeFormatted + "\n")
-			s.WriteString(indent + authorFormatted + "\n")
-			s.WriteString(indent + contentFormatted)
+			// Build the post block
+			postBlock := timeFormatted + "\n" + authorFormatted + "\n" + contentFormatted
+
+			// Apply left padding for replies (affects all lines including wrapped)
+			if indentWidth > 0 {
+				postBlock = lipgloss.NewStyle().PaddingLeft(indentWidth).Render(postBlock)
+			}
+			s.WriteString(postBlock)
 		} else {
 			unselectedStyle := lipgloss.NewStyle().Width(itemWidth)
 
@@ -713,9 +717,14 @@ func (m Model) View() string {
 			timeFormatted := unselectedStyle.Render(parentTimeStyle.Render(timeStr))
 			contentFormatted := unselectedStyle.Render(parentContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
 
-			s.WriteString(indent + timeFormatted + "\n")
-			s.WriteString(indent + authorFormatted + "\n")
-			s.WriteString(indent + contentFormatted)
+			// Build the post block
+			postBlock := timeFormatted + "\n" + authorFormatted + "\n" + contentFormatted
+
+			// Apply left padding for replies (affects all lines including wrapped)
+			if indentWidth > 0 {
+				postBlock = lipgloss.NewStyle().PaddingLeft(indentWidth).Render(postBlock)
+			}
+			s.WriteString(postBlock)
 		}
 
 		s.WriteString("\n\n")
