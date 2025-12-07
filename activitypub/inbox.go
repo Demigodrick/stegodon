@@ -351,6 +351,11 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 			Published    string `json:"published"`
 			AttributedTo string `json:"attributedTo"`
 			InReplyTo    string `json:"inReplyTo"`
+			Tag          []struct {
+				Type string `json:"type"`
+				Href string `json:"href"`
+				Name string `json:"name"`
+			} `json:"tag"`
 		} `json:"object"`
 	}
 
@@ -428,6 +433,23 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 				// Don't fail the activity processing for this
 			} else {
 				log.Printf("Inbox: Incremented reply count for %s", create.Object.InReplyTo)
+			}
+		}
+	}
+
+	// Process tags (hashtags and mentions) from the incoming activity
+	// This is useful for logging, future notification support, and storing mentions
+	if len(create.Object.Tag) > 0 {
+		for _, tag := range create.Object.Tag {
+			switch tag.Type {
+			case "Mention":
+				// Log mentions for debugging and future notification support
+				log.Printf("Inbox: Post mentions %s (%s)", tag.Name, tag.Href)
+				// TODO: When note_mentions table is added, store the mention here
+				// This will enable notification features for when users are mentioned
+			case "Hashtag":
+				// Hashtags are already included in the stored activity raw JSON
+				log.Printf("Inbox: Post contains hashtag %s", tag.Name)
 			}
 		}
 	}

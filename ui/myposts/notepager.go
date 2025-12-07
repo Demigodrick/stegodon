@@ -166,9 +166,14 @@ func (m Model) View() string {
 				timeStr += " (edited)"
 			}
 
-			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags
+			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags and mentions
 			messageWithLinks := util.MarkdownLinksToTerminal(note.Message)
 			messageWithLinksAndHashtags := util.HighlightHashtagsTerminal(messageWithLinks)
+			localDomain := ""
+			if conf, err := util.ReadConf(); err == nil {
+				localDomain = conf.Conf.SslDomain
+			}
+			messageWithLinksAndHashtags = util.HighlightMentionsTerminal(messageWithLinksAndHashtags, localDomain)
 
 			// Apply selection highlighting - full width box with proper spacing
 			if i == m.Selected {

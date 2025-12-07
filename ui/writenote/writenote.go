@@ -20,6 +20,25 @@ import (
 )
 
 const MaxLetters = 150
+const maxAutocompleteSuggestions = 5
+
+// MentionCandidate represents a user that can be mentioned
+type MentionCandidate struct {
+	Username string
+	Domain   string
+	IsLocal  bool
+}
+
+func (m MentionCandidate) FullMention() string {
+	return fmt.Sprintf("@%s@%s", m.Username, m.Domain)
+}
+
+func (m MentionCandidate) DisplayMention() string {
+	if m.IsLocal {
+		return fmt.Sprintf("@%s", m.Username)
+	}
+	return fmt.Sprintf("@%s@%s", m.Username, m.Domain)
+}
 
 type Model struct {
 	Textarea          textarea.Model
@@ -36,6 +55,13 @@ type Model struct {
 	replyToURI     string // URI of the post being replied to
 	replyToAuthor  string // Author of the post being replied to
 	replyToPreview string // Preview of the post being replied to
+	// Autocomplete fields
+	showAutocomplete       bool               // True when autocomplete popup is visible
+	autocompleteCandidates []MentionCandidate // All available candidates
+	filteredCandidates     []MentionCandidate // Filtered based on current input
+	autocompleteIndex      int                // Currently selected suggestion
+	mentionStartPos        int                // Position where @ was typed
+	localDomain            string             // Local domain for identifying local users
 }
 
 func InitialNote(contentWidth int, userId uuid.UUID) Model {
@@ -48,21 +74,68 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 	ti.Cursor.SetMode(cursor.CursorBlink)
 	ti.Focus()
 
-	return Model{
-		Textarea:          ti,
-		Err:               nil,
-		Error:             "",
-		userId:            userId,
-		lettersLeft:       MaxLetters,
-		width:             width,
-		isEditing:         false,
-		editingNoteId:     uuid.Nil,
-		originalCreatedAt: time.Time{},
-		isReplying:        false,
-		replyToURI:        "",
-		replyToAuthor:     "",
-		replyToPreview:    "",
+	// Get local domain for autocomplete
+	localDomain := "example.com"
+	if conf, err := util.ReadConf(); err == nil {
+		localDomain = conf.Conf.SslDomain
 	}
+
+	// Load autocomplete candidates
+	candidates := loadAutocompleteCandidates(localDomain)
+
+	return Model{
+		Textarea:               ti,
+		Err:                    nil,
+		Error:                  "",
+		userId:                 userId,
+		lettersLeft:            MaxLetters,
+		width:                  width,
+		isEditing:              false,
+		editingNoteId:          uuid.Nil,
+		originalCreatedAt:      time.Time{},
+		isReplying:             false,
+		replyToURI:             "",
+		replyToAuthor:          "",
+		replyToPreview:         "",
+		showAutocomplete:       false,
+		autocompleteCandidates: candidates,
+		filteredCandidates:     nil,
+		autocompleteIndex:      0,
+		mentionStartPos:        -1,
+		localDomain:            localDomain,
+	}
+}
+
+// loadAutocompleteCandidates loads all local and remote accounts for autocomplete
+func loadAutocompleteCandidates(localDomain string) []MentionCandidate {
+	var candidates []MentionCandidate
+	database := db.GetDB()
+
+	// Load local accounts
+	err, localAccounts := database.ReadAllAccounts()
+	if err == nil && localAccounts != nil {
+		for _, acc := range *localAccounts {
+			candidates = append(candidates, MentionCandidate{
+				Username: acc.Username,
+				Domain:   localDomain,
+				IsLocal:  true,
+			})
+		}
+	}
+
+	// Load remote accounts
+	err, remoteAccounts := database.ReadAllRemoteAccounts()
+	if err == nil && remoteAccounts != nil {
+		for _, acc := range remoteAccounts {
+			candidates = append(candidates, MentionCandidate{
+				Username: acc.Username,
+				Domain:   acc.Domain,
+				IsLocal:  false,
+			})
+		}
+	}
+
+	return candidates
 }
 
 func createNoteModelCmd(note *domain.SaveNote) tea.Cmd {
@@ -240,6 +313,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.replyToURI = ""
 		m.replyToAuthor = ""
 		m.replyToPreview = ""
+		// Clear autocomplete
+		m.showAutocomplete = false
 		return m, nil
 
 	case common.ReplyToNoteMsg:
@@ -255,12 +330,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Clear textarea and focus
 		m.Textarea.SetValue("")
 		m.Textarea.Focus()
+		// Clear autocomplete
+		m.showAutocomplete = false
 		return m, nil
 
 	case tea.KeyMsg:
 		// Clear error when user starts typing
 		if msg.Type == tea.KeyRunes || msg.Type == tea.KeyBackspace {
 			m.Error = ""
+		}
+
+		// Handle autocomplete navigation when popup is visible
+		if m.showAutocomplete {
+			switch msg.Type {
+			case tea.KeyUp:
+				if m.autocompleteIndex > 0 {
+					m.autocompleteIndex--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.autocompleteIndex < len(m.filteredCandidates)-1 {
+					m.autocompleteIndex++
+				}
+				return m, nil
+			case tea.KeyTab, tea.KeyEnter:
+				// Insert selected suggestion
+				if len(m.filteredCandidates) > 0 {
+					m.insertAutocompleteSuggestion()
+				}
+				m.showAutocomplete = false
+				return m, nil
+			case tea.KeyEsc:
+				// Close autocomplete
+				m.showAutocomplete = false
+				return m, nil
+			}
 		}
 
 		switch msg.Type {
@@ -374,6 +478,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case util.ErrMsg:
 		m.Err = msg
 		return m, nil
+
+	case tea.WindowSizeMsg:
+		// Ignore window resize - keep textarea at fixed width
+		return m, nil
 	}
 
 	m.Textarea, cmd = m.Textarea.Update(msg)
@@ -398,6 +506,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Textarea.CursorEnd()
 	}
 
+	// Handle autocomplete trigger and filtering
+	m.updateAutocomplete()
+
 	m.lettersLeft = m.CharCount()
 	cmds = append(cmds, cmd)
 
@@ -410,6 +521,116 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	default:
 		return m, tea.Batch(cmds...)
 	}
+}
+
+// updateAutocomplete checks if we should show/hide/update autocomplete suggestions
+func (m *Model) updateAutocomplete() {
+	value := m.Textarea.Value()
+
+	// We assume cursor is at end of text for simplicity
+	// This works because users typically type at the end
+	cursorPos := len([]rune(value))
+
+	// Find if we're currently typing a mention
+	mentionStart, query := m.findCurrentMention(value, cursorPos)
+
+	if mentionStart >= 0 {
+		// We're typing a mention
+		m.mentionStartPos = mentionStart
+		m.filterCandidates(query)
+		m.showAutocomplete = len(m.filteredCandidates) > 0
+		m.autocompleteIndex = 0
+	} else {
+		// Not typing a mention
+		m.showAutocomplete = false
+		m.mentionStartPos = -1
+	}
+}
+
+// findCurrentMention finds if cursor is within a mention being typed
+// Returns the start position of @ and the query text after it
+func (m *Model) findCurrentMention(text string, cursorPos int) (int, string) {
+	if cursorPos == 0 || len(text) == 0 {
+		return -1, ""
+	}
+
+	// Convert to runes for proper Unicode handling
+	runes := []rune(text)
+	if cursorPos > len(runes) {
+		cursorPos = len(runes)
+	}
+
+	// Search backwards from cursor for @
+	for i := cursorPos - 1; i >= 0; i-- {
+		r := runes[i]
+
+		// Stop at whitespace or start of text
+		if r == ' ' || r == '\n' || r == '\t' {
+			return -1, ""
+		}
+
+		// Found @
+		if r == '@' {
+			// Check if this is at start or after whitespace
+			if i == 0 || runes[i-1] == ' ' || runes[i-1] == '\n' || runes[i-1] == '\t' {
+				query := string(runes[i+1 : cursorPos])
+				return i, query
+			}
+			return -1, ""
+		}
+	}
+
+	return -1, ""
+}
+
+// filterCandidates filters autocomplete candidates based on query
+func (m *Model) filterCandidates(query string) {
+	query = strings.ToLower(query)
+	m.filteredCandidates = nil
+
+	for _, candidate := range m.autocompleteCandidates {
+		// Match against username or full mention
+		username := strings.ToLower(candidate.Username)
+		fullMention := strings.ToLower(candidate.FullMention())
+
+		if strings.HasPrefix(username, query) || strings.Contains(fullMention, query) {
+			m.filteredCandidates = append(m.filteredCandidates, candidate)
+			if len(m.filteredCandidates) >= maxAutocompleteSuggestions {
+				break
+			}
+		}
+	}
+}
+
+// insertAutocompleteSuggestion inserts the selected mention into the textarea
+func (m *Model) insertAutocompleteSuggestion() {
+	if m.autocompleteIndex >= len(m.filteredCandidates) {
+		return
+	}
+
+	selected := m.filteredCandidates[m.autocompleteIndex]
+	value := m.Textarea.Value()
+
+	// Convert to runes for proper Unicode handling
+	runes := []rune(value)
+	cursorPos := len(runes) // Assume cursor at end
+
+	// Build new text: everything before @, the mention, then continue typing
+	before := string(runes[:m.mentionStartPos])
+	mention := selected.FullMention() + " "
+	after := ""
+	if cursorPos < len(runes) {
+		after = string(runes[cursorPos:])
+	}
+
+	newValue := before + mention + after
+	m.Textarea.SetValue(newValue)
+
+	// Move cursor to end
+	m.Textarea.CursorEnd()
+
+	// Update character count after insertion
+	m.lettersLeft = m.CharCount()
 }
 
 func (m Model) CharCount() int {
@@ -426,6 +647,12 @@ func getMarkdownLinkCount(text string) int {
 
 func (m Model) View() string {
 	styledTextarea := lipgloss.NewStyle().PaddingLeft(5).PaddingRight(5).Render(m.Textarea.View())
+
+	// Show autocomplete popup if active
+	autocompletePopup := ""
+	if m.showAutocomplete && len(m.filteredCandidates) > 0 {
+		autocompletePopup = "\n" + m.renderAutocompletePopup()
+	}
 
 	// Show markdown link indicator if any are detected
 	linkIndicator := ""
@@ -445,6 +672,9 @@ func (m Model) View() string {
 		helpText = "save changes: ctrl+s\ncancel: esc"
 	} else if m.isReplying {
 		helpText = "post reply: ctrl+s\ncancel: esc"
+	}
+	if m.showAutocomplete {
+		helpText += "\n↑/↓: navigate, enter: select, esc: close"
 	}
 
 	// Build the help section with proper formatting
@@ -471,7 +701,7 @@ func (m Model) View() string {
 		if len(preview) > 60 {
 			preview = preview[:57] + "..."
 		}
-		replyContext = replyStyle.Render("\"" + preview + "\"") + "\n\n"
+		replyContext = replyStyle.Render("\""+preview+"\"") + "\n\n"
 	}
 
 	// Add error message if present
@@ -484,5 +714,50 @@ func (m Model) View() string {
 		errorSection = "\n" + errorStyle.Render(m.Error)
 	}
 
-	return fmt.Sprintf("%s\n\n%s%s%s%s\n\n%s", caption, replyContext, styledTextarea, linkIndicator, errorSection, charsLeft)
+	return fmt.Sprintf("%s\n\n%s%s%s%s%s\n\n%s", caption, replyContext, styledTextarea, autocompletePopup, linkIndicator, errorSection, charsLeft)
+}
+
+// renderAutocompletePopup renders the autocomplete suggestion list
+func (m Model) renderAutocompletePopup() string {
+	if len(m.filteredCandidates) == 0 {
+		return ""
+	}
+
+	// Styles for the popup
+	popupStyle := lipgloss.NewStyle().
+		PaddingLeft(5).
+		PaddingRight(2)
+
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("117")).
+		Bold(true)
+
+	localBadgeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("242")).
+		Italic(true)
+
+	var lines []string
+	for i, candidate := range m.filteredCandidates {
+		mention := candidate.DisplayMention()
+
+		// Add local/remote indicator
+		badge := ""
+		if candidate.IsLocal {
+			badge = localBadgeStyle.Render(" (local)")
+		}
+
+		line := mention + badge
+		if i == m.autocompleteIndex {
+			line = selectedStyle.Render(mention) + badge
+		} else {
+			line = normalStyle.Render(mention) + badge
+		}
+		lines = append(lines, line)
+	}
+
+	return popupStyle.Render(strings.Join(lines, "\n"))
 }

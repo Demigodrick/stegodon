@@ -305,6 +305,11 @@ func (m Model) View() string {
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
 					}
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
+					localDomain := ""
+					if conf, err := util.ReadConf(); err == nil {
+						localDomain = conf.Conf.SslDomain
+					}
+					highlightedContent = util.HighlightMentionsTerminal(highlightedContent, localDomain)
 
 					contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
 					s.WriteString(timeFormatted + "\n")
@@ -321,6 +326,11 @@ func (m Model) View() string {
 					processedContent = util.MarkdownLinksToTerminal(processedContent)
 				}
 				highlightedContent := util.HighlightHashtagsTerminal(processedContent)
+				localDomain := ""
+				if conf, err := util.ReadConf(); err == nil {
+					localDomain = conf.Conf.SslDomain
+				}
+				highlightedContent = util.HighlightMentionsTerminal(highlightedContent, localDomain)
 
 				// Use different author color for local vs remote
 				var authorFormatted string

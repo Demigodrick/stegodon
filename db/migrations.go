@@ -122,6 +122,22 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_note_hashtags_hashtag_id ON note_hashtags(hashtag_id);
 	`
 
+	// Note-mention relationship table (stores @user@domain mentions in notes)
+	sqlCreateNoteMentionsTable = `CREATE TABLE IF NOT EXISTS note_mentions (
+		id TEXT PRIMARY KEY,
+		note_id TEXT NOT NULL,
+		mentioned_actor_uri TEXT NOT NULL,
+		mentioned_username TEXT NOT NULL,
+		mentioned_domain TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+	)`
+
+	sqlCreateNoteMentionsIndices = `
+		CREATE INDEX IF NOT EXISTS idx_note_mentions_note_id ON note_mentions(note_id);
+		CREATE INDEX IF NOT EXISTS idx_note_mentions_actor_uri ON note_mentions(mentioned_actor_uri);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -170,6 +186,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateNoteHashtagsTable, "note_hashtags"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateNoteMentionsTable, "note_mentions"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -192,6 +211,9 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateNoteHashtagsIndices); err != nil {
 			log.Printf("Warning: Failed to create note_hashtags indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateNoteMentionsIndices); err != nil {
+			log.Printf("Warning: Failed to create note_mentions indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)

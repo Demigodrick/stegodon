@@ -971,3 +971,351 @@ func TestCountVisibleCharsWithANSI(t *testing.T) {
 		})
 	}
 }
+
+// Tests for ParseMentions
+
+func TestParseMentions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []Mention
+	}{
+		{
+			name:  "single mention",
+			input: "Hello @alice@mastodon.social",
+			expected: []Mention{
+				{Username: "alice", Domain: "mastodon.social"},
+			},
+		},
+		{
+			name:  "multiple mentions",
+			input: "Hello @alice@mastodon.social and @bob@pixelfed.social",
+			expected: []Mention{
+				{Username: "alice", Domain: "mastodon.social"},
+				{Username: "bob", Domain: "pixelfed.social"},
+			},
+		},
+		{
+			name:  "deduplication",
+			input: "@alice@mastodon.social @Alice@MASTODON.SOCIAL @alice@mastodon.social",
+			expected: []Mention{
+				{Username: "alice", Domain: "mastodon.social"},
+			},
+		},
+		{
+			name:  "case insensitivity",
+			input: "@Alice@Mastodon.Social",
+			expected: []Mention{
+				{Username: "alice", Domain: "mastodon.social"},
+			},
+		},
+		{
+			name:  "username with numbers",
+			input: "@user123@example.com",
+			expected: []Mention{
+				{Username: "user123", Domain: "example.com"},
+			},
+		},
+		{
+			name:  "username with underscore",
+			input: "@user_name@example.com",
+			expected: []Mention{
+				{Username: "user_name", Domain: "example.com"},
+			},
+		},
+		{
+			name:  "domain with subdomain",
+			input: "@user@sub.domain.com",
+			expected: []Mention{
+				{Username: "user", Domain: "sub.domain.com"},
+			},
+		},
+		{
+			name:     "no mentions",
+			input:    "Hello world without any mentions",
+			expected: []Mention{},
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []Mention{},
+		},
+		{
+			name:     "invalid - no domain",
+			input:    "@alice",
+			expected: []Mention{},
+		},
+		{
+			name:     "invalid - single letter TLD",
+			input:    "@alice@example.c",
+			expected: []Mention{},
+		},
+		{
+			name:  "valid - two letter TLD",
+			input: "@alice@example.de",
+			expected: []Mention{
+				{Username: "alice", Domain: "example.de"},
+			},
+		},
+		{
+			name:  "mention at start",
+			input: "@alice@example.com is here",
+			expected: []Mention{
+				{Username: "alice", Domain: "example.com"},
+			},
+		},
+		{
+			name:  "mention at end",
+			input: "Hello @alice@example.com",
+			expected: []Mention{
+				{Username: "alice", Domain: "example.com"},
+			},
+		},
+		{
+			name:  "mention after punctuation",
+			input: "Hello,@alice@example.com",
+			expected: []Mention{
+				{Username: "alice", Domain: "example.com"},
+			},
+		},
+		{
+			name:  "mention with emoji before",
+			input: "👋@alice@example.com",
+			expected: []Mention{
+				{Username: "alice", Domain: "example.com"},
+			},
+		},
+		{
+			name:     "email format should not match",
+			input:    "email@example.com", // Missing the second @
+			expected: []Mention{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseMentions(tt.input)
+
+			// Check length
+			if len(result) != len(tt.expected) {
+				t.Errorf("ParseMentions(%q) returned %d mentions, expected %d. Got: %v, Expected: %v",
+					tt.input, len(result), len(tt.expected), result, tt.expected)
+				return
+			}
+
+			// Check contents
+			for i, mention := range result {
+				if mention.Username != tt.expected[i].Username || mention.Domain != tt.expected[i].Domain {
+					t.Errorf("ParseMentions(%q)[%d] = %v, expected %v",
+						tt.input, i, mention, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseMentionsPreservesOrder(t *testing.T) {
+	input := "@first@a.com @second@b.com @third@c.com"
+	result := ParseMentions(input)
+
+	if len(result) != 3 {
+		t.Fatalf("Expected 3 mentions, got %d", len(result))
+	}
+
+	expected := []string{"first", "second", "third"}
+	for i, mention := range result {
+		if mention.Username != expected[i] {
+			t.Errorf("Order mismatch at index %d: got %q, expected %q", i, mention.Username, expected[i])
+		}
+	}
+}
+
+// Tests for HighlightMentionsTerminal
+
+func TestHighlightMentionsTerminal_SingleMention(t *testing.T) {
+	input := "Hello @alice@mastodon.social!"
+	result := HighlightMentionsTerminal(input, "example.com") // Remote user
+
+	// Check for OSC 8 hyperlink with ANSI color codes
+	// Format: \033[38;5;77;4m\033]8;;URL\033\\TEXT\033]8;;\033\\\033[39;24m
+	if !strings.Contains(result, "\033]8;;https://mastodon.social/@alice\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink, got: %s", result)
+	}
+	if !strings.Contains(result, "@alice@mastodon.social") {
+		t.Errorf("Expected mention text, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsTerminal_MultipleMentions(t *testing.T) {
+	input := "Hello @alice@mastodon.social and @bob@pixelfed.social!"
+	result := HighlightMentionsTerminal(input, "example.com") // Remote users
+
+	if !strings.Contains(result, "\033]8;;https://mastodon.social/@alice\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink for alice, got: %s", result)
+	}
+	if !strings.Contains(result, "\033]8;;https://pixelfed.social/@bob\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink for bob, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsTerminal_NoMentions(t *testing.T) {
+	input := "Hello world!"
+	result := HighlightMentionsTerminal(input, "example.com")
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsTerminal_LocalUser(t *testing.T) {
+	input := "Hello @alice@example.com!"
+	result := HighlightMentionsTerminal(input, "example.com") // Local user
+
+	// Local user should be displayed as just @alice
+	if !strings.Contains(result, "@alice") {
+		t.Errorf("Expected @alice in output, got: %s", result)
+	}
+	// Should NOT show the domain for local users
+	if strings.Contains(result, "@alice@example.com\033]8;;") {
+		t.Errorf("Local user should not show full @username@domain, got: %s", result)
+	}
+	// Should link to local profile
+	if !strings.Contains(result, "\033]8;;https://example.com/u/alice\033\\") {
+		t.Errorf("Expected local profile URL, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsTerminal_MixedLocalAndRemote(t *testing.T) {
+	input := "Hello @alice@example.com and @bob@mastodon.social!"
+	result := HighlightMentionsTerminal(input, "example.com")
+
+	// Local user (alice) should link to local profile
+	if !strings.Contains(result, "\033]8;;https://example.com/u/alice\033\\") {
+		t.Errorf("Expected local profile URL for alice, got: %s", result)
+	}
+	// Remote user (bob) should link to their instance
+	if !strings.Contains(result, "\033]8;;https://mastodon.social/@bob\033\\") {
+		t.Errorf("Expected remote profile URL for bob, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsTerminal_CaseInsensitiveLocalDomain(t *testing.T) {
+	input := "Hello @alice@EXAMPLE.COM!"
+	result := HighlightMentionsTerminal(input, "example.com")
+
+	// Should still be recognized as local user (case insensitive)
+	if !strings.Contains(result, "\033]8;;https://example.com/u/alice\033\\") {
+		t.Errorf("Expected local profile URL for case-insensitive domain match, got: %s", result)
+	}
+}
+
+// Tests for HighlightMentionsHTML
+
+func TestHighlightMentionsHTML_LocalUser(t *testing.T) {
+	input := "Hello @alice@example.com!"
+	result := HighlightMentionsHTML(input, "example.com")
+
+	expected := `Hello <a href="/u/alice" class="mention">@alice</a>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestHighlightMentionsHTML_RemoteUser(t *testing.T) {
+	input := "Hello @alice@mastodon.social!"
+	result := HighlightMentionsHTML(input, "example.com")
+
+	expected := `Hello <a href="https://mastodon.social/@alice" class="mention" target="_blank" rel="noopener noreferrer">@alice@mastodon.social</a>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestHighlightMentionsHTML_MixedUsers(t *testing.T) {
+	input := "Hello @alice@example.com and @bob@mastodon.social!"
+	result := HighlightMentionsHTML(input, "example.com")
+
+	// Local user - displayed as @alice (without domain)
+	if !strings.Contains(result, `<a href="/u/alice" class="mention">@alice</a>`) {
+		t.Errorf("Expected local user link with @alice, got: %s", result)
+	}
+	// Remote user - displayed as @bob@mastodon.social
+	if !strings.Contains(result, `<a href="https://mastodon.social/@bob" class="mention" target="_blank" rel="noopener noreferrer">@bob@mastodon.social</a>`) {
+		t.Errorf("Expected remote user link, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsHTML_CaseInsensitiveLocalDomain(t *testing.T) {
+	input := "Hello @alice@EXAMPLE.COM!"
+	result := HighlightMentionsHTML(input, "example.com")
+
+	// Should match case-insensitively and link locally, displaying as @alice
+	if !strings.Contains(result, `<a href="/u/alice" class="mention">@alice</a>`) {
+		t.Errorf("Expected local user link for case-insensitive domain match, got: %s", result)
+	}
+}
+
+func TestHighlightMentionsHTML_NoMentions(t *testing.T) {
+	input := "Hello world!"
+	result := HighlightMentionsHTML(input, "example.com")
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+// Tests for MentionsToActivityPubHTML
+
+func TestMentionsToActivityPubHTML_WithURIs(t *testing.T) {
+	input := "Hello @alice@mastodon.social!"
+	mentionURIs := map[string]string{
+		"@alice@mastodon.social": "https://mastodon.social/users/alice",
+	}
+	result := MentionsToActivityPubHTML(input, mentionURIs)
+
+	expected := `Hello <span class="h-card"><a href="https://mastodon.social/users/alice" class="u-url mention">@<span>alice</span></a></span>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestMentionsToActivityPubHTML_FallbackWithoutURI(t *testing.T) {
+	input := "Hello @alice@mastodon.social!"
+	mentionURIs := map[string]string{} // No URI provided
+	result := MentionsToActivityPubHTML(input, mentionURIs)
+
+	// Should fallback to profile URL
+	expected := `Hello <span class="h-card"><a href="https://mastodon.social/@alice" class="u-url mention">@<span>alice</span></a></span>!`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestMentionsToActivityPubHTML_MultipleMentions(t *testing.T) {
+	input := "Hello @alice@mastodon.social and @bob@pixelfed.social!"
+	mentionURIs := map[string]string{
+		"@alice@mastodon.social": "https://mastodon.social/users/alice",
+		"@bob@pixelfed.social":   "https://pixelfed.social/users/bob",
+	}
+	result := MentionsToActivityPubHTML(input, mentionURIs)
+
+	if !strings.Contains(result, `<a href="https://mastodon.social/users/alice" class="u-url mention">@<span>alice</span></a>`) {
+		t.Errorf("Expected alice mention link, got: %s", result)
+	}
+	if !strings.Contains(result, `<a href="https://pixelfed.social/users/bob" class="u-url mention">@<span>bob</span></a>`) {
+		t.Errorf("Expected bob mention link, got: %s", result)
+	}
+}
+
+func TestMentionsToActivityPubHTML_NoMentions(t *testing.T) {
+	input := "Hello world!"
+	mentionURIs := map[string]string{}
+	result := MentionsToActivityPubHTML(input, mentionURIs)
+
+	// Should be unchanged
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}

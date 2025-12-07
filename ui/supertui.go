@@ -497,7 +497,7 @@ func (m MainModel) View() string {
 
 	// Calculate responsive dimensions
 	availableHeight := common.CalculateAvailableHeight(m.height)
-	leftPanelWidth := common.CalculateLeftPanelWidth(m.width)
+	leftPanelWidth := common.TextInputDefaultWidth + 10 // Fixed width for left panel (textarea + padding)
 	rightPanelWidth := common.CalculateRightPanelWidth(m.width, leftPanelWidth)
 
 	createStyleStr := lipgloss.NewStyle().

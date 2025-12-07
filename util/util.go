@@ -26,6 +26,7 @@ var embeddedVersion string
 // Pre-compiled regex patterns for performance
 var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\`)
 var hashtagRegex = regexp.MustCompile(`#([a-zA-Z][a-zA-Z0-9_]*)`)
+var mentionRegex = regexp.MustCompile(`@([a-zA-Z0-9_]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
 
 type RsaKeyPair struct {
 	Private string
@@ -397,6 +398,110 @@ func HashtagsToActivityPubHTML(text string, baseURL string) string {
 		if len(submatches) >= 2 {
 			tag := strings.ToLower(submatches[1])
 			return fmt.Sprintf(`<a href="%s/tags/%s" class="hashtag" rel="tag">#<span>%s</span></a>`, baseURL, tag, tag)
+		}
+		return match
+	})
+}
+
+// Mention represents a parsed @username@domain mention
+type Mention struct {
+	Username string
+	Domain   string
+}
+
+// ParseMentions extracts @username@domain mentions from text.
+// Returns deduplicated mentions preserving order of first occurrence.
+func ParseMentions(text string) []Mention {
+	matches := mentionRegex.FindAllStringSubmatch(text, -1)
+
+	// Use map for deduplication (lowercase key)
+	seen := make(map[string]bool)
+	mentions := make([]Mention, 0, len(matches))
+
+	for _, match := range matches {
+		if len(match) >= 3 {
+			username := strings.ToLower(match[1])
+			domain := strings.ToLower(match[2])
+			key := username + "@" + domain
+			if !seen[key] {
+				seen[key] = true
+				mentions = append(mentions, Mention{
+					Username: username,
+					Domain:   domain,
+				})
+			}
+		}
+	}
+
+	return mentions
+}
+
+// HighlightMentionsTerminal colors mentions in text for terminal display and makes them clickable.
+// Uses green color (ANSI 38;5;77) for mentions with OSC 8 hyperlinks to the user's profile.
+// Local users are displayed as @username, remote users as @username@domain.
+func HighlightMentionsTerminal(text string, localDomain string) string {
+	return mentionRegex.ReplaceAllStringFunc(text, func(match string) string {
+		submatches := mentionRegex.FindStringSubmatch(match)
+		if len(submatches) >= 3 {
+			username := submatches[1]
+			domain := submatches[2]
+
+			var displayMention string
+			var profileURL string
+
+			if strings.EqualFold(domain, localDomain) {
+				// Local user - show just @username, link to local profile
+				displayMention = fmt.Sprintf("@%s", username)
+				profileURL = fmt.Sprintf("https://%s/u/%s", localDomain, username)
+			} else {
+				// Remote user - show @username@domain, link to their instance
+				displayMention = fmt.Sprintf("@%s@%s", username, domain)
+				profileURL = fmt.Sprintf("https://%s/@%s", domain, username)
+			}
+
+			// OSC 8 format with green color (38;5;77) and underline
+			// Format: COLOR_START + OSC8_START + TEXT + OSC8_END + COLOR_RESET
+			return fmt.Sprintf("\033[38;5;77;4m\033]8;;%s\033\\%s\033]8;;\033\\\033[39;24m", profileURL, displayMention)
+		}
+		return match
+	})
+}
+
+// HighlightMentionsHTML converts mentions in text to clickable HTML links.
+// For local users (same domain), displays as @username and links to /users/{username}.
+// For remote users, displays as @username@domain and links to their profile URL.
+func HighlightMentionsHTML(text string, localDomain string) string {
+	return mentionRegex.ReplaceAllStringFunc(text, func(match string) string {
+		submatches := mentionRegex.FindStringSubmatch(match)
+		if len(submatches) >= 3 {
+			username := submatches[1]
+			domain := submatches[2]
+			if strings.EqualFold(domain, localDomain) {
+				// Local user - show just @username, link to local profile
+				return fmt.Sprintf(`<a href="/u/%s" class="mention">@%s</a>`, username, username)
+			}
+			// Remote user - show @username@domain, link to their instance profile
+			return fmt.Sprintf(`<a href="https://%s/@%s" class="mention" target="_blank" rel="noopener noreferrer">@%s@%s</a>`, domain, username, username, domain)
+		}
+		return match
+	})
+}
+
+// MentionsToActivityPubHTML converts mentions in text to ActivityPub-compliant HTML links.
+// Uses the format: <span class="h-card"><a href="actorURI" class="u-url mention">@<span>username</span></a></span>
+// This requires pre-resolved actor URIs, so it takes a map of mention -> actorURI.
+func MentionsToActivityPubHTML(text string, mentionURIs map[string]string) string {
+	return mentionRegex.ReplaceAllStringFunc(text, func(match string) string {
+		submatches := mentionRegex.FindStringSubmatch(match)
+		if len(submatches) >= 3 {
+			username := strings.ToLower(submatches[1])
+			domain := strings.ToLower(submatches[2])
+			key := "@" + username + "@" + domain
+			if actorURI, ok := mentionURIs[key]; ok {
+				return fmt.Sprintf(`<span class="h-card"><a href="%s" class="u-url mention">@<span>%s</span></a></span>`, actorURI, username)
+			}
+			// Fallback if URI not found - just link to profile
+			return fmt.Sprintf(`<span class="h-card"><a href="https://%s/@%s" class="u-url mention">@<span>%s</span></a></span>`, domain, username, username)
 		}
 		return match
 	})

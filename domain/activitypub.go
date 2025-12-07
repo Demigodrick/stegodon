@@ -62,3 +62,13 @@ type DeliveryQueueItem struct {
 	NextRetryAt  time.Time
 	CreatedAt    time.Time
 }
+
+// NoteMention represents a @user@domain mention in a note
+type NoteMention struct {
+	Id                uuid.UUID
+	NoteId            uuid.UUID
+	MentionedActorURI string // The ActivityPub actor URI of the mentioned user
+	MentionedUsername string // The username part (@username@domain -> username)
+	MentionedDomain   string // The domain part (@username@domain -> domain)
+	CreatedAt         time.Time
+}

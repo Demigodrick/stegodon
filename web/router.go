@@ -74,6 +74,12 @@ func Router(conf *util.AppConfig) error {
 		HandleSinglePost(c, conf)
 	})
 
+	// Redirect /@username to /u/username (Mastodon-style URLs)
+	g.GET("/@:username", func(c *gin.Context) {
+		username := c.Param("username")
+		c.Redirect(301, "/u/"+username)
+	})
+
 	// Tag page
 	g.GET("/tags/:tag", func(c *gin.Context) {
 		HandleTagFeed(c, conf)

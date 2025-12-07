@@ -136,9 +136,10 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
-		// First convert markdown links, then highlight hashtags
+		// First convert markdown links, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
 		// Get reply count for this post
 		replyCount := 0
@@ -237,9 +238,10 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
-		// First convert markdown links, then highlight hashtags
+		// First convert markdown links, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
 		// Get reply count for this post
 		replyCount := 0
@@ -352,9 +354,10 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		host = conf.Conf.SslDomain
 	}
 
-	// First convert markdown links, then highlight hashtags
+	// First convert markdown links, then highlight hashtags and mentions
 	messageHTML := util.MarkdownLinksToHTML(note.Message)
 	messageHTML = util.HighlightHashtagsHTML(messageHTML)
+	messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
 	// Get reply count for this post
 	replyCount := 0
@@ -380,6 +383,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		if err == nil && parentNote != nil {
 			parentMessageHTML := util.MarkdownLinksToHTML(parentNote.Message)
 			parentMessageHTML = util.HighlightHashtagsHTML(parentMessageHTML)
+			parentMessageHTML = util.HighlightMentionsHTML(parentMessageHTML, conf.Conf.SslDomain)
 
 			// Get reply count for parent post
 			parentReplyCount := 0
@@ -405,6 +409,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		for _, replyNote := range *replyNotes {
 			replyMessageHTML := util.MarkdownLinksToHTML(replyNote.Message)
 			replyMessageHTML = util.HighlightHashtagsHTML(replyMessageHTML)
+			replyMessageHTML = util.HighlightMentionsHTML(replyMessageHTML, conf.Conf.SslDomain)
 
 			// Get reply count for this reply
 			replyReplyCount := 0
@@ -479,9 +484,10 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView with hashtag-highlighted content
 	posts := make([]PostView, 0, len(*notes))
 	for _, note := range *notes {
-		// First convert markdown links, then highlight hashtags
+		// First convert markdown links, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
 		// Get reply count for this post
 		replyCount := 0

@@ -84,7 +84,7 @@ func GetActor(actor string, conf *util.AppConfig) (error, string) {
 		getIRI(conf.Conf.SslDomain, username, outbox),
 		getIRI(conf.Conf.SslDomain, username, followers),
 		getIRI(conf.Conf.SslDomain, username, following),
-		getIRI(conf.Conf.SslDomain, username, id),
+		fmt.Sprintf("https://%s/u/%s", conf.Conf.SslDomain, username),
 		logoURL,
 		getIRI(conf.Conf.SslDomain, username, sharedInbox),
 		getIRI(conf.Conf.SslDomain, username, id),
@@ -128,9 +128,77 @@ func GetNoteObject(noteId uuid.UUID, conf *util.AppConfig) (error, string) {
 
 	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, account.Username)
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
+	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
 
 	// Convert Markdown links to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+
+	// Build cc list - start with followers
+	ccList := []string{
+		fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, account.Username),
+	}
+
+	// Extract hashtags and build tag array
+	hashtags := util.ParseHashtags(note.Message)
+	tags := make([]map[string]any, 0)
+
+	for _, tag := range hashtags {
+		tags = append(tags, map[string]any{
+			"type": "Hashtag",
+			"href": fmt.Sprintf("%s/tags/%s", baseURL, tag),
+			"name": "#" + tag,
+		})
+	}
+
+	// Convert hashtags to ActivityPub HTML
+	contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
+
+	// Extract mentions and try to resolve from stored data or WebFinger
+	mentions := util.ParseMentions(note.Message)
+	mentionURIs := make(map[string]string)
+
+	// First try to get stored mentions from database
+	err, storedMentions := database.ReadMentionsByNoteId(noteId)
+	if err == nil && len(storedMentions) > 0 {
+		for _, stored := range storedMentions {
+			mentionKey := fmt.Sprintf("@%s@%s", stored.MentionedUsername, stored.MentionedDomain)
+			mentionURIs[mentionKey] = stored.MentionedActorURI
+			ccList = append(ccList, stored.MentionedActorURI)
+			tags = append(tags, map[string]any{
+				"type": "Mention",
+				"href": stored.MentionedActorURI,
+				"name": mentionKey,
+			})
+		}
+	} else {
+		// Fall back to WebFinger resolution for mentions not in database
+		for _, mention := range mentions {
+			// Skip local mentions
+			if strings.EqualFold(mention.Domain, conf.Conf.SslDomain) {
+				continue
+			}
+
+			// Try to resolve via WebFinger
+			resolvedURI, err := ResolveWebFinger(mention.Username, mention.Domain)
+			if err != nil {
+				continue
+			}
+
+			mentionKey := fmt.Sprintf("@%s@%s", mention.Username, mention.Domain)
+			mentionURIs[mentionKey] = resolvedURI
+			ccList = append(ccList, resolvedURI)
+			tags = append(tags, map[string]any{
+				"type": "Mention",
+				"href": resolvedURI,
+				"name": mentionKey,
+			})
+		}
+	}
+
+	// Convert mentions to ActivityPub HTML
+	if len(mentionURIs) > 0 {
+		contentHTML = util.MentionsToActivityPubHTML(contentHTML, mentionURIs)
+	}
 
 	// Build the Note object
 	noteObj := map[string]any{
@@ -141,12 +209,16 @@ func GetNoteObject(noteId uuid.UUID, conf *util.AppConfig) (error, string) {
 		"content":      contentHTML,
 		"mediaType":    "text/html",
 		"published":    note.CreatedAt.Format(time.RFC3339),
+		"url":          fmt.Sprintf("%s/u/%s/%s", baseURL, account.Username, note.Id.String()),
 		"to": []string{
 			"https://www.w3.org/ns/activitystreams#Public",
 		},
-		"cc": []string{
-			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, account.Username),
-		},
+		"cc": ccList,
+	}
+
+	// Add tag array if we have hashtags or mentions
+	if len(tags) > 0 {
+		noteObj["tag"] = tags
 	}
 
 	// Add updated field if note was edited

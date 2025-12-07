@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -146,6 +147,7 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		"content":      contentHTML,
 		"mediaType":    "text/html",
 		"published":    note.CreatedAt.Format(time.RFC3339),
+		"url":          fmt.Sprintf("https://%s/u/%s/%s", conf.Conf.SslDomain, localAccount.Username, note.Id.String()),
 		"to": []string{
 			"https://www.w3.org/ns/activitystreams#Public",
 		},
@@ -160,16 +162,60 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 
 	// Extract hashtags and add to tag array
 	hashtags := util.ParseHashtags(note.Message)
-	if len(hashtags) > 0 {
-		tags := make([]map[string]any, 0, len(hashtags))
-		for _, tag := range hashtags {
-			tags = append(tags, map[string]any{
-				"type": "Hashtag",
-				"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
-				"name": "#" + tag,
-			})
+	tags := make([]map[string]any, 0)
+
+	for _, tag := range hashtags {
+		tags = append(tags, map[string]any{
+			"type": "Hashtag",
+			"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
+			"name": "#" + tag,
+		})
+	}
+
+	// Extract mentions and resolve actor URIs
+	mentions := util.ParseMentions(note.Message)
+	mentionURIs := make(map[string]string)
+	mentionedActors := make([]string, 0)
+
+	for _, mention := range mentions {
+		// Skip local mentions (same domain) - they don't need federation
+		if strings.EqualFold(mention.Domain, conf.Conf.SslDomain) {
+			continue
 		}
+
+		// Resolve via WebFinger
+		actorURI, err := resolveMentionURI(mention.Username, mention.Domain)
+		if err != nil {
+			log.Printf("Outbox: Failed to resolve mention @%s@%s: %v", mention.Username, mention.Domain, err)
+			continue
+		}
+
+		mentionKey := fmt.Sprintf("@%s@%s", mention.Username, mention.Domain)
+		mentionURIs[mentionKey] = actorURI
+		mentionedActors = append(mentionedActors, actorURI)
+
+		tags = append(tags, map[string]any{
+			"type": "Mention",
+			"href": actorURI,
+			"name": mentionKey,
+		})
+	}
+
+	if len(tags) > 0 {
 		noteObj["tag"] = tags
+	}
+
+	// Add mentioned actors to cc list for proper ActivityPub addressing
+	for _, mentionActorURI := range mentionedActors {
+		ccList = append(ccList, mentionActorURI)
+	}
+	// Update noteObj cc with the expanded list
+	noteObj["cc"] = ccList
+
+	// Convert mentions to ActivityPub HTML (after we have resolved URIs)
+	if len(mentionURIs) > 0 {
+		contentHTML = util.MentionsToActivityPubHTML(contentHTML, mentionURIs)
+		noteObj["content"] = contentHTML
 	}
 
 	// Build context - include Hashtag definition if we have hashtags
@@ -207,6 +253,10 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		log.Printf("Outbox: Failed to get followers: %v", err)
 	} else if followers != nil {
 		for _, follower := range *followers {
+			// Skip local followers - they don't need federation delivery
+			if follower.IsLocal {
+				continue
+			}
 			err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
 			if err != nil {
 				log.Printf("Outbox: Failed to get remote actor %s: %v", follower.AccountId, err)
@@ -238,6 +288,25 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 						log.Printf("Outbox: Will also deliver reply to local parent author %s", parentUsername)
 					}
 				}
+			}
+		}
+	}
+
+	// Also deliver to mentioned actors' inboxes
+	for _, mentionActorURI := range mentionedActors {
+		// Look up the remote account to get their inbox
+		err, mentionedAccount := database.ReadRemoteAccountByActorURI(mentionActorURI)
+		if err == nil && mentionedAccount != nil {
+			inboxes[mentionedAccount.InboxURI] = true
+			log.Printf("Outbox: Will also deliver to mentioned user %s@%s", mentionedAccount.Username, mentionedAccount.Domain)
+		} else {
+			// Fetch the actor if not cached
+			mentionedAccount, err = FetchRemoteActorWithDeps(mentionActorURI, defaultHTTPClient, database)
+			if err == nil && mentionedAccount != nil {
+				inboxes[mentionedAccount.InboxURI] = true
+				log.Printf("Outbox: Will also deliver to mentioned user %s@%s (fetched)", mentionedAccount.Username, mentionedAccount.Domain)
+			} else {
+				log.Printf("Outbox: Could not resolve inbox for mentioned actor %s: %v", mentionActorURI, err)
 			}
 		}
 	}
@@ -315,6 +384,7 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		"mediaType":    "text/html",
 		"published":    note.CreatedAt.Format(time.RFC3339),
 		"updated":      updatedTime.Format(time.RFC3339),
+		"url":          fmt.Sprintf("https://%s/u/%s/%s", conf.Conf.SslDomain, localAccount.Username, note.Id.String()),
 		"to": []string{
 			"https://www.w3.org/ns/activitystreams#Public",
 		},
@@ -328,16 +398,60 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 
 	// Extract hashtags and add to tag array
 	hashtags := util.ParseHashtags(note.Message)
-	if len(hashtags) > 0 {
-		tags := make([]map[string]any, 0, len(hashtags))
-		for _, tag := range hashtags {
-			tags = append(tags, map[string]any{
-				"type": "Hashtag",
-				"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
-				"name": "#" + tag,
-			})
+	tags := make([]map[string]any, 0)
+
+	for _, tag := range hashtags {
+		tags = append(tags, map[string]any{
+			"type": "Hashtag",
+			"href": fmt.Sprintf("https://%s/tags/%s", conf.Conf.SslDomain, tag),
+			"name": "#" + tag,
+		})
+	}
+
+	// Extract mentions and resolve actor URIs
+	mentions := util.ParseMentions(note.Message)
+	mentionURIs := make(map[string]string)
+	mentionedActors := make([]string, 0)
+
+	for _, mention := range mentions {
+		// Skip local mentions (same domain) - they don't need federation
+		if strings.EqualFold(mention.Domain, conf.Conf.SslDomain) {
+			continue
 		}
+
+		// Resolve via WebFinger
+		actorURI, err := resolveMentionURI(mention.Username, mention.Domain)
+		if err != nil {
+			log.Printf("Outbox: Failed to resolve mention @%s@%s: %v", mention.Username, mention.Domain, err)
+			continue
+		}
+
+		mentionKey := fmt.Sprintf("@%s@%s", mention.Username, mention.Domain)
+		mentionURIs[mentionKey] = actorURI
+		mentionedActors = append(mentionedActors, actorURI)
+
+		tags = append(tags, map[string]any{
+			"type": "Mention",
+			"href": actorURI,
+			"name": mentionKey,
+		})
+	}
+
+	if len(tags) > 0 {
 		noteObj["tag"] = tags
+	}
+
+	// Add mentioned actors to cc list for proper ActivityPub addressing
+	for _, mentionActorURI := range mentionedActors {
+		ccList = append(ccList, mentionActorURI)
+	}
+	// Update noteObj cc with the expanded list
+	noteObj["cc"] = ccList
+
+	// Convert mentions to ActivityPub HTML (after we have resolved URIs)
+	if len(mentionURIs) > 0 {
+		contentHTML = util.MentionsToActivityPubHTML(contentHTML, mentionURIs)
+		noteObj["content"] = contentHTML
 	}
 
 	// Build context - include Hashtag definition if we have hashtags
@@ -374,6 +488,10 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		log.Printf("Outbox: Failed to get followers for Update: %v", err)
 	} else if followers != nil {
 		for _, follower := range *followers {
+			// Skip local followers - they don't need federation delivery
+			if follower.IsLocal {
+				continue
+			}
 			err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
 			if err != nil {
 				log.Printf("Outbox: Failed to get remote actor %s: %v", follower.AccountId, err)
@@ -403,6 +521,25 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 						inboxes[localInboxURI] = true
 					}
 				}
+			}
+		}
+	}
+
+	// Also deliver to mentioned actors' inboxes
+	for _, mentionActorURI := range mentionedActors {
+		// Look up the remote account to get their inbox
+		err, mentionedAccount := database.ReadRemoteAccountByActorURI(mentionActorURI)
+		if err == nil && mentionedAccount != nil {
+			inboxes[mentionedAccount.InboxURI] = true
+			log.Printf("Outbox: Will also deliver Update to mentioned user %s@%s", mentionedAccount.Username, mentionedAccount.Domain)
+		} else {
+			// Fetch the actor if not cached
+			mentionedAccount, err = FetchRemoteActorWithDeps(mentionActorURI, defaultHTTPClient, database)
+			if err == nil && mentionedAccount != nil {
+				inboxes[mentionedAccount.InboxURI] = true
+				log.Printf("Outbox: Will also deliver Update to mentioned user %s@%s (fetched)", mentionedAccount.Username, mentionedAccount.Domain)
+			} else {
+				log.Printf("Outbox: Could not resolve inbox for mentioned actor %s: %v", mentionActorURI, err)
 			}
 		}
 	}
@@ -474,6 +611,10 @@ func SendDeleteWithDeps(noteId uuid.UUID, localAccount *domain.Account, conf *ut
 
 	// Queue delivery to each follower's inbox
 	for _, follower := range *followers {
+		// Skip local followers - they don't need federation delivery
+		if follower.IsLocal {
+			continue
+		}
 		err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
 		if err != nil {
 			log.Printf("Outbox: Failed to get remote actor %s: %v", follower.AccountId, err)
@@ -628,4 +769,63 @@ func extractAuthorFromURI(objectURI string, database Database, conf *util.AppCon
 	// Can't determine author - caller should handle gracefully
 	log.Printf("extractAuthorFromURI: Could not determine author for %s", objectURI)
 	return ""
+}
+
+// resolveMentionURI resolves a @username@domain mention to an ActivityPub actor URI
+// using WebFinger lookup
+func resolveMentionURI(username, domain string) (string, error) {
+	webfingerURL := fmt.Sprintf("https://%s/.well-known/webfinger?resource=acct:%s@%s",
+		domain, username, domain)
+
+	req, err := http.NewRequest("GET", webfingerURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/jrd+json")
+	req.Header.Set("User-Agent", "stegodon/1.0 ActivityPub")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("webfinger request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("webfinger failed with status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// WebFingerResponse structure for parsing
+	type webFingerLink struct {
+		Rel  string `json:"rel"`
+		Type string `json:"type"`
+		Href string `json:"href"`
+	}
+	type webFingerResponse struct {
+		Subject string          `json:"subject"`
+		Links   []webFingerLink `json:"links"`
+	}
+
+	var result webFingerResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse webfinger response: %w", err)
+	}
+
+	// Find self link with ActivityPub-compatible type
+	for _, link := range result.Links {
+		if link.Rel == "self" {
+			if link.Type == "application/activity+json" ||
+				link.Type == "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"" {
+				return link.Href, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no ActivityPub actor found in webfinger response")
 }

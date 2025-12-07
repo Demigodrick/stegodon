@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
@@ -139,6 +140,7 @@ func getOutboxPage(actor string, page int, conf *util.AppConfig) (error, string)
 func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig) []any {
 	activities := make([]any, 0, len(notes))
 	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
+	database := db.GetDB()
 
 	for _, note := range notes {
 		// Use object_uri if available, otherwise generate one
@@ -152,19 +154,82 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 		// Convert hashtags to ActivityPub-compliant HTML links
 		contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
 
+		// Build cc list - start with followers
+		ccList := []string{
+			fmt.Sprintf("%s/users/%s/followers", baseURL, actor),
+		}
+
+		// Build tag array for hashtags and mentions
+		tags := make([]map[string]any, 0)
+
+		// Extract hashtags and add to tag array
+		hashtags := util.ParseHashtags(note.Message)
+		for _, tag := range hashtags {
+			tags = append(tags, map[string]any{
+				"type": "Hashtag",
+				"href": fmt.Sprintf("%s/tags/%s", baseURL, tag),
+				"name": "#" + tag,
+			})
+		}
+
+		// Extract mentions and try to resolve from stored data
+		mentionURIs := make(map[string]string)
+		err, storedMentions := database.ReadMentionsByNoteId(note.Id)
+		if err == nil && len(storedMentions) > 0 {
+			for _, stored := range storedMentions {
+				mentionKey := fmt.Sprintf("@%s@%s", stored.MentionedUsername, stored.MentionedDomain)
+				mentionURIs[mentionKey] = stored.MentionedActorURI
+				ccList = append(ccList, stored.MentionedActorURI)
+				tags = append(tags, map[string]any{
+					"type": "Mention",
+					"href": stored.MentionedActorURI,
+					"name": mentionKey,
+				})
+			}
+		} else {
+			// Fall back to WebFinger resolution for mentions not in database
+			mentions := util.ParseMentions(note.Message)
+			for _, mention := range mentions {
+				// Skip local mentions
+				if strings.EqualFold(mention.Domain, conf.Conf.SslDomain) {
+					continue
+				}
+
+				// Try to resolve via WebFinger
+				resolvedURI, err := ResolveWebFinger(mention.Username, mention.Domain)
+				if err != nil {
+					continue
+				}
+
+				mentionKey := fmt.Sprintf("@%s@%s", mention.Username, mention.Domain)
+				mentionURIs[mentionKey] = resolvedURI
+				ccList = append(ccList, resolvedURI)
+				tags = append(tags, map[string]any{
+					"type": "Mention",
+					"href": resolvedURI,
+					"name": mentionKey,
+				})
+			}
+		}
+
+		// Convert mentions to ActivityPub HTML
+		if len(mentionURIs) > 0 {
+			contentHTML = util.MentionsToActivityPubHTML(contentHTML, mentionURIs)
+		}
+
 		// Build the Note object
 		noteObj := map[string]any{
 			"id":           objectURI,
 			"type":         "Note",
 			"attributedTo": fmt.Sprintf("%s/users/%s", baseURL, actor),
 			"content":      contentHTML,
+			"mediaType":    "text/html",
 			"published":    note.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			"url":          fmt.Sprintf("%s/u/%s/%s", baseURL, actor, note.Id.String()),
 			"to": []string{
 				"https://www.w3.org/ns/activitystreams#Public",
 			},
-			"cc": []string{
-				fmt.Sprintf("%s/users/%s/followers", baseURL, actor),
-			},
+			"cc": ccList,
 		}
 
 		// Add updated field if note was edited
@@ -172,22 +237,14 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 			noteObj["updated"] = note.EditedAt.Format("2006-01-02T15:04:05Z")
 		}
 
-		// Extract hashtags and add to tag array
-		hashtags := util.ParseHashtags(note.Message)
-		if len(hashtags) > 0 {
-			tags := make([]map[string]any, 0, len(hashtags))
-			for _, tag := range hashtags {
-				tags = append(tags, map[string]any{
-					"type": "Hashtag",
-					"href": fmt.Sprintf("%s/tags/%s", baseURL, tag),
-					"name": "#" + tag,
-				})
-			}
+		// Add tag array if we have hashtags or mentions
+		if len(tags) > 0 {
 			noteObj["tag"] = tags
 		}
 
 		// Build the Create activity wrapping the Note
-		activityURI := fmt.Sprintf("%s/activities/%s", baseURL, note.Id.String())
+		// Use note URI with #activity fragment so activity ID resolves to the note
+		activityURI := fmt.Sprintf("%s/notes/%s#activity", baseURL, note.Id.String())
 		activity := map[string]any{
 			"id":        activityURI,
 			"type":      "Create",
@@ -196,9 +253,7 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 			"to": []string{
 				"https://www.w3.org/ns/activitystreams#Public",
 			},
-			"cc": []string{
-				fmt.Sprintf("%s/users/%s/followers", baseURL, actor),
-			},
+			"cc":     ccList,
 			"object": noteObj,
 		}
 

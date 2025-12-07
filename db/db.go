@@ -730,6 +730,40 @@ func (db *DB) UpdateRemoteAccount(acc *domain.RemoteAccount) error {
 	})
 }
 
+// ReadAllRemoteAccounts returns all cached remote accounts for autocomplete
+func (db *DB) ReadAllRemoteAccounts() (error, []domain.RemoteAccount) {
+	rows, err := db.db.Query(`SELECT id, username, domain, actor_uri, display_name, summary, inbox_uri, outbox_uri, public_key_pem, avatar_url, last_fetched_at FROM remote_accounts ORDER BY username`)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var accounts []domain.RemoteAccount
+	for rows.Next() {
+		var acc domain.RemoteAccount
+		var idStr string
+		err := rows.Scan(
+			&idStr,
+			&acc.Username,
+			&acc.Domain,
+			&acc.ActorURI,
+			&acc.DisplayName,
+			&acc.Summary,
+			&acc.InboxURI,
+			&acc.OutboxURI,
+			&acc.PublicKeyPem,
+			&acc.AvatarURL,
+			&acc.LastFetchedAt,
+		)
+		if err != nil {
+			return err, nil
+		}
+		acc.Id, _ = uuid.Parse(idStr)
+		accounts = append(accounts, acc)
+	}
+	return nil, accounts
+}
+
 // Follow queries
 const (
 	sqlInsertFollow                  = `INSERT INTO follows(id, account_id, target_account_id, uri, accepted, created_at, is_local) VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -2012,6 +2046,84 @@ func (db *DB) CountNotesByHashtag(tag string) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// Mention queries
+const (
+	sqlInsertNoteMention       = `INSERT INTO note_mentions(id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	sqlSelectMentionsByNoteId  = `SELECT id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at FROM note_mentions WHERE note_id = ?`
+	sqlSelectMentionsByActorURI = `SELECT nm.id, nm.note_id, nm.mentioned_actor_uri, nm.mentioned_username, nm.mentioned_domain, nm.created_at
+								   FROM note_mentions nm ORDER BY nm.created_at DESC LIMIT ? OFFSET ?`
+	sqlDeleteMentionsByNoteId  = `DELETE FROM note_mentions WHERE note_id = ?`
+)
+
+// CreateNoteMention creates a new mention record for a note
+func (db *DB) CreateNoteMention(mention *domain.NoteMention) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlInsertNoteMention,
+			mention.Id.String(),
+			mention.NoteId.String(),
+			mention.MentionedActorURI,
+			strings.ToLower(mention.MentionedUsername),
+			strings.ToLower(mention.MentionedDomain),
+			mention.CreatedAt)
+		return err
+	})
+}
+
+// LinkNoteMentions creates mention records for all mentions in a note
+func (db *DB) LinkNoteMentions(noteId uuid.UUID, mentions []domain.NoteMention) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		for _, mention := range mentions {
+			_, err := tx.Exec(sqlInsertNoteMention,
+				mention.Id.String(),
+				noteId.String(),
+				mention.MentionedActorURI,
+				strings.ToLower(mention.MentionedUsername),
+				strings.ToLower(mention.MentionedDomain),
+				time.Now())
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ReadMentionsByNoteId returns all mentions for a given note
+func (db *DB) ReadMentionsByNoteId(noteId uuid.UUID) (error, []domain.NoteMention) {
+	rows, err := db.db.Query(sqlSelectMentionsByNoteId, noteId.String())
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var mentions []domain.NoteMention
+	for rows.Next() {
+		var mention domain.NoteMention
+		var idStr, noteIdStr, createdAtStr string
+		if err := rows.Scan(&idStr, &noteIdStr, &mention.MentionedActorURI, &mention.MentionedUsername, &mention.MentionedDomain, &createdAtStr); err != nil {
+			return err, mentions
+		}
+		mention.Id = uuid.MustParse(idStr)
+		mention.NoteId = uuid.MustParse(noteIdStr)
+		if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+			mention.CreatedAt = parsedTime
+		}
+		mentions = append(mentions, mention)
+	}
+	if err = rows.Err(); err != nil {
+		return err, mentions
+	}
+	return nil, mentions
+}
+
+// DeleteMentionsByNoteId removes all mentions for a specific note
+func (db *DB) DeleteMentionsByNoteId(noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlDeleteMentionsByNoteId, noteId.String())
+		return err
+	})
 }
 
 // Reply query methods
