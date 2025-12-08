@@ -1832,7 +1832,7 @@ func TestHandleCreateActivityWithDeps_DuplicateSkipsReplyCount(t *testing.T) {
 	localNoteURI := "https://local.example.com/notes/local-reply"
 	localNote := &domain.Note{
 		Id:           uuid.New(),
-		CreatedBy:   localAccount.Id.String(),
+		CreatedBy:    localAccount.Id.String(),
 		Message:      "My local reply",
 		ObjectURI:    localNoteURI,
 		InReplyToURI: "https://example.com/notes/parent-post",

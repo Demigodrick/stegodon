@@ -35,6 +35,7 @@ const (
 	ansiMentionColor = "48"        // ANSI 48 (#00ff87) - matches COLOR_MENTION
 	ansiLinkRGB      = "0;255;135" // RGB for links (#00ff87) - matches COLOR_LINK_RGB
 )
+
 var urlRegex = regexp.MustCompile(`^https?://[^\s]+$`)
 
 type RsaKeyPair struct {

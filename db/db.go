@@ -2050,11 +2050,11 @@ func (db *DB) CountNotesByHashtag(tag string) (int, error) {
 
 // Mention queries
 const (
-	sqlInsertNoteMention       = `INSERT INTO note_mentions(id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-	sqlSelectMentionsByNoteId  = `SELECT id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at FROM note_mentions WHERE note_id = ?`
+	sqlInsertNoteMention        = `INSERT INTO note_mentions(id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	sqlSelectMentionsByNoteId   = `SELECT id, note_id, mentioned_actor_uri, mentioned_username, mentioned_domain, created_at FROM note_mentions WHERE note_id = ?`
 	sqlSelectMentionsByActorURI = `SELECT nm.id, nm.note_id, nm.mentioned_actor_uri, nm.mentioned_username, nm.mentioned_domain, nm.created_at
 								   FROM note_mentions nm ORDER BY nm.created_at DESC LIMIT ? OFFSET ?`
-	sqlDeleteMentionsByNoteId  = `DELETE FROM note_mentions WHERE note_id = ?`
+	sqlDeleteMentionsByNoteId = `DELETE FROM note_mentions WHERE note_id = ?`
 )
 
 // CreateNoteMention creates a new mention record for a note

@@ -4,8 +4,8 @@ import "github.com/charmbracelet/lipgloss"
 
 const (
 	// === Primary UI Colors ===
-	COLOR_ACCENT    = "69"  // ANSI 69 (#5f87ff) - Primary accent: borders, selections, header
-	COLOR_SECONDARY = "75"  // ANSI 75 (#5fafff) - Secondary accent: timestamps, domains, hashtags
+	COLOR_ACCENT    = "69" // ANSI 69 (#5f87ff) - Primary accent: borders, selections, header
+	COLOR_SECONDARY = "75" // ANSI 75 (#5fafff) - Secondary accent: timestamps, domains, hashtags
 
 	// === Text Colors ===
 	COLOR_WHITE = "255" // ANSI 255 (#eeeeee) - Primary text, post content

@@ -9,9 +9,9 @@ import (
 type SessionState uint
 
 const (
-	CreateNoteView SessionState = iota
-	HomeTimelineView            // Unified home timeline (local + remote)
-	MyPostsView                 // View only your own posts
+	CreateNoteView   SessionState = iota
+	HomeTimelineView              // Unified home timeline (local + remote)
+	MyPostsView                   // View only your own posts
 	CreateUserView
 	UpdateNoteList
 	FollowUserView    // Follow remote users

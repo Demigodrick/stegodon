@@ -34,7 +34,7 @@ func (note *Note) ToString() string {
 // HomePost represents a unified post in the home timeline (either local or remote)
 type HomePost struct {
 	ID         uuid.UUID
-	Author     string    // @user (local) or @user@domain (remote)
+	Author     string // @user (local) or @user@domain (remote)
 	Content    string
 	Time       time.Time
 	ObjectURI  string
