@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/deemkeen/stegodon/activitypub"
 	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/ui/admin"
@@ -22,6 +24,8 @@ import (
 	"github.com/deemkeen/stegodon/ui/myposts"
 	"github.com/deemkeen/stegodon/ui/threadview"
 	"github.com/deemkeen/stegodon/ui/writenote"
+	"github.com/deemkeen/stegodon/util"
+	"github.com/google/uuid"
 )
 
 var (
@@ -208,12 +212,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case common.ThreadView:
 			m.state = common.ThreadView
 		case common.UpdateNoteList:
-			// Recreate my posts pager - it will be initialized via routing below
-			m.myPostsModel = myposts.NewPager(m.account.Id, m.width, m.height)
-			// Store command to init my posts, will be added to cmds below
-			cmd = m.myPostsModel.Init()
-			cmds = append(cmds, cmd)
-			// Home timeline will reload via SessionState routing below
+			// Route to models that need to refresh (handled by SessionState routing below)
+			// Note: This message is also a SessionState, so it will trigger reloads
+			// in myposts and hometimeline via the SessionState routing
 		}
 
 	case common.EditNoteMsg:
@@ -239,6 +240,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
 		m.state = common.ThreadView
 		return m, cmd
+
+	case common.LikeNoteMsg:
+		// Handle like/unlike
+		return m, likeNoteCmd(m.account.Id, msg.NoteURI, msg.NoteID, msg.IsLocal, &m.account)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -379,6 +384,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		// Also route SessionState to home timeline for UpdateNoteList handling
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
+		cmds = append(cmds, cmd)
+		// Route SessionState to threadview for like count updates
+		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
 		cmds = append(cmds, cmd)
 	case tea.KeyMsg:
 		// Keyboard input handled below in separate switch
@@ -635,30 +643,38 @@ func (m MainModel) View() string {
 		var viewCommands string
 		switch m.state {
 		case common.HomeTimelineView:
-			viewCommands = "↑/↓: select • enter: thread • r: reply • o: link"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: link"
 		case common.MyPostsView:
-			viewCommands = "↑/↓: select • u: edit • d: delete"
+			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐"
 		case common.FollowUserView:
 			viewCommands = "enter: follow"
 		case common.FollowersView:
 			viewCommands = "↑/↓: scroll"
 		case common.FollowingView:
-			viewCommands = "↑/↓: select • u/enter: unfollow"
+			viewCommands = "↑/↓ • u/enter: unfollow"
 		case common.LocalUsersView:
-			viewCommands = "↑/↓: select • enter: toggle follow"
+			viewCommands = "↑/↓ • enter: toggle follow"
 		case common.AdminPanelView:
-			viewCommands = "↑/↓: select • m: mute • k: kick"
+			viewCommands = "↑/↓ • m: mute • k: kick"
 		case common.DeleteAccountView:
 			viewCommands = "y: confirm • n/esc: cancel"
 		case common.ThreadView:
-			viewCommands = "↑/↓: select • enter: thread • r: reply • esc: back"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • esc: back"
 		default:
 			viewCommands = " "
 		}
 
-		helpText := fmt.Sprintf(
-			"focused > %s\t\tkeys > tab: next • shift+tab: prev • %s • ctrl-c: exit",
-			model, viewCommands)
+		var helpText string
+		if m.state == common.ThreadView {
+			// Thread view doesn't use tab navigation
+			helpText = fmt.Sprintf(
+				"focused > %s\t\tkeys > %s • ctrl-c: exit",
+				model, viewCommands)
+		} else {
+			helpText = fmt.Sprintf(
+				"focused > %s\t\tkeys > tab: next • shift+tab: prev • %s • ctrl-c: exit",
+				model, viewCommands)
+		}
 
 		helpStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(common.COLOR_HELP)).
@@ -739,4 +755,190 @@ func deactivateOldView(oldState common.SessionState) tea.Cmd {
 		return func() tea.Msg { return common.DeactivateViewMsg{} }
 	}
 	return nil
+}
+
+// likeNoteCmd handles liking/unliking a note
+func likeNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal bool, account *domain.Account) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+
+		// Determine the actual note ID and URI to use
+		var actualNoteID uuid.UUID
+		var actualNoteURI string
+		var isRemotePost bool
+
+		if isLocal && noteID != uuid.Nil {
+			actualNoteID = noteID
+			// Get the note's ObjectURI for federation
+			err, note := database.ReadNoteId(noteID)
+			if err != nil {
+				log.Printf("Failed to read note for like: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = note.ObjectURI
+		} else if noteURI != "" && !strings.HasPrefix(noteURI, "local:") {
+			// Remote note - find it by ObjectURI
+			err, activity := database.ReadActivityByObjectURI(noteURI)
+			if err != nil || activity == nil {
+				log.Printf("Failed to find activity for like: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = noteURI
+			isRemotePost = true
+			// Try to find a local note with this URI (federated back)
+			err, localNote := database.ReadNoteByURI(noteURI)
+			if err == nil && localNote != nil {
+				actualNoteID = localNote.Id
+				isRemotePost = false // It's actually a local post that was federated back
+			}
+		} else if strings.HasPrefix(noteURI, "local:") {
+			// Parse local: prefix
+			idStr := strings.TrimPrefix(noteURI, "local:")
+			parsedID, err := uuid.Parse(idStr)
+			if err != nil {
+				log.Printf("Failed to parse local note ID: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteID = parsedID
+			// Get the note's ObjectURI for federation
+			err, note := database.ReadNoteId(parsedID)
+			if err != nil {
+				log.Printf("Failed to read note for like: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = note.ObjectURI
+		}
+
+		// Check if we already liked this post
+		var hasLike bool
+		var err error
+		if isRemotePost {
+			hasLike, err = database.HasLikeByObjectURI(accountId, actualNoteURI)
+		} else {
+			hasLike, err = database.HasLike(accountId, actualNoteID)
+		}
+		if err != nil {
+			log.Printf("Failed to check existing like: %v", err)
+			return common.UpdateNoteList
+		}
+
+		if hasLike {
+			// Unlike - remove the like
+			var existingLike *domain.Like
+			if isRemotePost {
+				err, existingLike = database.ReadLikeByAccountAndObjectURI(accountId, actualNoteURI)
+			} else {
+				err, existingLike = database.ReadLikeByAccountAndNote(accountId, actualNoteID)
+			}
+			if err != nil {
+				log.Printf("Failed to read existing like: %v", err)
+				return common.UpdateNoteList
+			}
+
+			// Delete the like
+			if isRemotePost {
+				if err := database.DeleteLikeByAccountAndObjectURI(accountId, actualNoteURI); err != nil {
+					log.Printf("Failed to delete like: %v", err)
+					return common.UpdateNoteList
+				}
+				// Decrement like count on the activity
+				if err := database.DecrementLikeCountByObjectURI(actualNoteURI); err != nil {
+					log.Printf("Failed to decrement activity like count: %v", err)
+				}
+			} else {
+				if err := database.DeleteLikeByAccountAndNote(accountId, actualNoteID); err != nil {
+					log.Printf("Failed to delete like: %v", err)
+					return common.UpdateNoteList
+				}
+				// Decrement like count on the note
+				if err := database.DecrementLikeCountByNoteId(actualNoteID); err != nil {
+					log.Printf("Failed to decrement like count: %v", err)
+				}
+			}
+
+			log.Printf("Unliked post %s", actualNoteURI)
+
+			// Send Undo Like to remote server (background task)
+			if actualNoteURI != "" && existingLike != nil {
+				go func() {
+					conf, err := util.ReadConf()
+					if err != nil {
+						log.Printf("Failed to read config for unlike federation: %v", err)
+						return
+					}
+
+					if !conf.Conf.WithAp {
+						return
+					}
+
+					if err := activitypub.SendUndoLike(account, actualNoteURI, existingLike.URI, conf); err != nil {
+						log.Printf("Failed to federate unlike: %v", err)
+					} else {
+						log.Printf("Unlike federated successfully")
+					}
+				}()
+			}
+		} else {
+			// Like - create a new like
+			likeURI := ""
+			conf, err := util.ReadConf()
+			if err == nil && conf.Conf.WithAp {
+				likeURI = fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+			}
+
+			like := &domain.Like{
+				Id:        uuid.New(),
+				AccountId: accountId,
+				NoteId:    actualNoteID, // Will be uuid.Nil for remote posts
+				URI:       likeURI,
+				CreatedAt: time.Now(),
+			}
+
+			// Create the like
+			if isRemotePost {
+				if err := database.CreateLikeByObjectURI(like, actualNoteURI); err != nil {
+					log.Printf("Failed to create like: %v", err)
+					return common.UpdateNoteList
+				}
+				// Increment like count on the activity
+				if err := database.IncrementLikeCountByObjectURI(actualNoteURI); err != nil {
+					log.Printf("Failed to increment activity like count: %v", err)
+				}
+			} else {
+				if err := database.CreateLike(like); err != nil {
+					log.Printf("Failed to create like: %v", err)
+					return common.UpdateNoteList
+				}
+				// Increment like count on the note
+				if err := database.IncrementLikeCountByNoteId(actualNoteID); err != nil {
+					log.Printf("Failed to increment like count: %v", err)
+				}
+			}
+
+			log.Printf("Liked post %s", actualNoteURI)
+
+			// Send Like to remote server (background task)
+			if actualNoteURI != "" {
+				go func() {
+					conf, err := util.ReadConf()
+					if err != nil {
+						log.Printf("Failed to read config for like federation: %v", err)
+						return
+					}
+
+					if !conf.Conf.WithAp {
+						return
+					}
+
+					if err := activitypub.SendLike(account, actualNoteURI, conf); err != nil {
+						log.Printf("Failed to federate like: %v", err)
+					} else {
+						log.Printf("Like federated successfully")
+					}
+				}()
+			}
+		}
+
+		return common.UpdateNoteList
+	}
 }

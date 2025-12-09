@@ -47,6 +47,22 @@ type Database interface {
 	// Engagement count operations
 	IncrementReplyCountByURI(parentURI string) error
 
+	// Like operations
+	CreateLike(like *domain.Like) error
+	HasLikeByURI(uri string) (bool, error)
+	HasLike(accountId, noteId uuid.UUID) (bool, error)
+	ReadLikeByAccountAndNote(accountId, noteId uuid.UUID) (error, *domain.Like)
+	DeleteLikeByAccountAndNote(accountId, noteId uuid.UUID) error
+	IncrementLikeCountByNoteId(noteId uuid.UUID) error
+	DecrementLikeCountByNoteId(noteId uuid.UUID) error
+
+	// Boost operations
+	CreateBoost(boost *domain.Boost) error
+	HasBoost(accountId, noteId uuid.UUID) (bool, error)
+	DeleteBoostByAccountAndNote(accountId, noteId uuid.UUID) error
+	IncrementBoostCountByNoteId(noteId uuid.UUID) error
+	DecrementBoostCountByNoteId(noteId uuid.UUID) error
+
 	// Delivery queue operations
 	EnqueueDelivery(item *domain.DeliveryQueueItem) error
 	ReadPendingDeliveries(limit int) (error, *[]domain.DeliveryQueueItem)

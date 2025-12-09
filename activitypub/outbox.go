@@ -740,6 +740,95 @@ func SendUndoWithDeps(localAccount *domain.Account, follow *domain.Follow, remot
 	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
 }
 
+// SendLike sends a Like activity for a note.
+// This is the production wrapper that uses the default HTTP client and database.
+func SendLike(localAccount *domain.Account, noteURI string, conf *util.AppConfig) error {
+	return SendLikeWithDeps(localAccount, noteURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendLikeWithDeps sends a Like activity for a note.
+// This version accepts dependencies for testing.
+func SendLikeWithDeps(localAccount *domain.Account, noteURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
+	// Find the author of the note to deliver the Like
+	authorURI := extractAuthorFromURI(noteURI, database, conf)
+	if authorURI == "" {
+		return fmt.Errorf("could not determine note author for %s", noteURI)
+	}
+
+	// Check if this is a local note (don't send ActivityPub for local likes)
+	if strings.Contains(authorURI, conf.Conf.SslDomain) {
+		log.Printf("Outbox: Skipping Like delivery for local note %s", noteURI)
+		return nil
+	}
+
+	// Fetch remote actor to get inbox
+	remoteActor, err := GetOrFetchActorWithDeps(authorURI, client, database)
+	if err != nil {
+		return fmt.Errorf("failed to fetch note author: %w", err)
+	}
+
+	likeID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	like := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       likeID,
+		"type":     "Like",
+		"actor":    actorURI,
+		"object":   noteURI,
+	}
+
+	log.Printf("Outbox: Sending Like from %s for note %s to %s@%s", localAccount.Username, noteURI, remoteActor.Username, remoteActor.Domain)
+	return SendActivityWithDeps(like, remoteActor.InboxURI, localAccount, conf, client)
+}
+
+// SendUndoLike sends an Undo activity for a Like (i.e., unlike).
+// This is the production wrapper that uses the default HTTP client and database.
+func SendUndoLike(localAccount *domain.Account, noteURI string, likeURI string, conf *util.AppConfig) error {
+	return SendUndoLikeWithDeps(localAccount, noteURI, likeURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendUndoLikeWithDeps sends an Undo activity for a Like (i.e., unlike).
+// This version accepts dependencies for testing.
+func SendUndoLikeWithDeps(localAccount *domain.Account, noteURI string, likeURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
+	// Find the author of the note to deliver the Undo
+	authorURI := extractAuthorFromURI(noteURI, database, conf)
+	if authorURI == "" {
+		return fmt.Errorf("could not determine note author for %s", noteURI)
+	}
+
+	// Check if this is a local note (don't send ActivityPub for local unlikes)
+	if strings.Contains(authorURI, conf.Conf.SslDomain) {
+		log.Printf("Outbox: Skipping Undo Like delivery for local note %s", noteURI)
+		return nil
+	}
+
+	// Fetch remote actor to get inbox
+	remoteActor, err := GetOrFetchActorWithDeps(authorURI, client, database)
+	if err != nil {
+		return fmt.Errorf("failed to fetch note author: %w", err)
+	}
+
+	undoID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	undo := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]any{
+			"id":     likeURI,
+			"type":   "Like",
+			"actor":  actorURI,
+			"object": noteURI,
+		},
+	}
+
+	log.Printf("Outbox: Sending Undo Like from %s for note %s to %s@%s", localAccount.Username, noteURI, remoteActor.Username, remoteActor.Domain)
+	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
+}
+
 // mustMarshal marshals v to JSON, panicking on error
 func mustMarshal(v any) string {
 	b, err := json.Marshal(v)

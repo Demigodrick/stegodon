@@ -122,6 +122,58 @@ func (w *DBWrapper) IncrementReplyCountByURI(parentURI string) error {
 	return w.db.IncrementReplyCountByURI(parentURI)
 }
 
+// Like operations
+
+func (w *DBWrapper) CreateLike(like *domain.Like) error {
+	return w.db.CreateLike(like)
+}
+
+func (w *DBWrapper) HasLikeByURI(uri string) (bool, error) {
+	return w.db.HasLikeByURI(uri)
+}
+
+func (w *DBWrapper) HasLike(accountId, noteId uuid.UUID) (bool, error) {
+	return w.db.HasLike(accountId, noteId)
+}
+
+func (w *DBWrapper) ReadLikeByAccountAndNote(accountId, noteId uuid.UUID) (error, *domain.Like) {
+	return w.db.ReadLikeByAccountAndNote(accountId, noteId)
+}
+
+func (w *DBWrapper) DeleteLikeByAccountAndNote(accountId, noteId uuid.UUID) error {
+	return w.db.DeleteLikeByAccountAndNote(accountId, noteId)
+}
+
+func (w *DBWrapper) IncrementLikeCountByNoteId(noteId uuid.UUID) error {
+	return w.db.IncrementLikeCountByNoteId(noteId)
+}
+
+func (w *DBWrapper) DecrementLikeCountByNoteId(noteId uuid.UUID) error {
+	return w.db.DecrementLikeCountByNoteId(noteId)
+}
+
+// Boost operations
+
+func (w *DBWrapper) CreateBoost(boost *domain.Boost) error {
+	return w.db.CreateBoost(boost)
+}
+
+func (w *DBWrapper) HasBoost(accountId, noteId uuid.UUID) (bool, error) {
+	return w.db.HasBoost(accountId, noteId)
+}
+
+func (w *DBWrapper) DeleteBoostByAccountAndNote(accountId, noteId uuid.UUID) error {
+	return w.db.DeleteBoostByAccountAndNote(accountId, noteId)
+}
+
+func (w *DBWrapper) IncrementBoostCountByNoteId(noteId uuid.UUID) error {
+	return w.db.IncrementBoostCountByNoteId(noteId)
+}
+
+func (w *DBWrapper) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
+	return w.db.DecrementBoostCountByNoteId(noteId)
+}
+
 // Delivery queue operations
 
 func (w *DBWrapper) EnqueueDelivery(item *domain.DeliveryQueueItem) error {

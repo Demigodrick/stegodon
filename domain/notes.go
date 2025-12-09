@@ -25,6 +25,10 @@ type Note struct {
 	Federated      bool   // Whether to federate this note
 	Sensitive      bool   // Contains sensitive content
 	ContentWarning string // Content warning text
+	// Engagement counters
+	ReplyCount int // Number of replies
+	LikeCount  int // Number of likes
+	BoostCount int // Number of boosts
 }
 
 func (note *Note) ToString() string {
@@ -41,4 +45,6 @@ type HomePost struct {
 	IsLocal    bool      // true = local note, false = remote activity
 	NoteID     uuid.UUID // only set for local posts (for editing/deleting)
 	ReplyCount int       // number of replies to this post
+	LikeCount  int       // number of likes on this post
+	BoostCount int       // number of boosts on this post
 }

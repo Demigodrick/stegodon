@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -2314,5 +2315,372 @@ func TestSendUpdateWithDeps_Hashtags(t *testing.T) {
 		if len(tags) != 2 {
 			t.Errorf("Expected 2 hashtags in tag array, got %d", len(tags))
 		}
+	}
+}
+
+// Tests for Like activity
+
+func TestLikeActivityGeneration(t *testing.T) {
+	// Test the structure of Like activity
+	likeID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	noteURI := "https://mastodon.social/users/bob/statuses/123"
+
+	like := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       likeID,
+		"type":     "Like",
+		"actor":    actorURI,
+		"object":   noteURI,
+	}
+
+	// Verify structure can be marshaled
+	jsonBytes, err := json.Marshal(like)
+	if err != nil {
+		t.Fatalf("Failed to marshal Like activity: %v", err)
+	}
+
+	// Parse back to verify structure
+	var parsed map[string]any
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal Like: %v", err)
+	}
+
+	if parsed["type"] != "Like" {
+		t.Errorf("Expected type Like, got %v", parsed["type"])
+	}
+	if parsed["actor"] != actorURI {
+		t.Errorf("Expected actor %s, got %v", actorURI, parsed["actor"])
+	}
+	if parsed["object"] != noteURI {
+		t.Errorf("Expected object %s, got %v", noteURI, parsed["object"])
+	}
+}
+
+func TestUndoLikeActivityGeneration(t *testing.T) {
+	// Test the structure of Undo Like activity
+	undoID := "https://stegodon.example/activities/" + uuid.New().String()
+	likeID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	noteURI := "https://mastodon.social/users/bob/statuses/123"
+
+	undo := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]any{
+			"id":     likeID,
+			"type":   "Like",
+			"actor":  actorURI,
+			"object": noteURI,
+		},
+	}
+
+	// Verify structure can be marshaled
+	jsonBytes, err := json.Marshal(undo)
+	if err != nil {
+		t.Fatalf("Failed to marshal Undo Like activity: %v", err)
+	}
+
+	// Parse back to verify structure
+	var parsed map[string]any
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal Undo Like: %v", err)
+	}
+
+	if parsed["type"] != "Undo" {
+		t.Errorf("Expected type Undo, got %v", parsed["type"])
+	}
+	if parsed["actor"] != actorURI {
+		t.Errorf("Expected actor %s, got %v", actorURI, parsed["actor"])
+	}
+
+	// Verify embedded Like object
+	obj := parsed["object"].(map[string]any)
+	if obj["type"] != "Like" {
+		t.Error("Expected embedded object type Like")
+	}
+	if obj["id"] != likeID {
+		t.Error("Expected embedded object to have Like ID")
+	}
+	if obj["object"] != noteURI {
+		t.Error("Expected embedded Like object to reference note")
+	}
+}
+
+func TestLikeActivityStructureValidation(t *testing.T) {
+	// Test that Like activity follows ActivityPub specification
+	likeID := "https://stegodon.example/activities/" + uuid.New().String()
+	actorURI := "https://stegodon.example/users/alice"
+	noteURI := "https://mastodon.social/users/bob/statuses/123"
+
+	like := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       likeID,
+		"type":     "Like",
+		"actor":    actorURI,
+		"object":   noteURI,
+	}
+
+	jsonBytes, err := json.Marshal(like)
+	if err != nil {
+		t.Fatalf("Failed to marshal Like activity: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal Like: %v", err)
+	}
+
+	// Required fields
+	if parsed["@context"] == nil {
+		t.Error("Like activity must have @context")
+	}
+	if parsed["id"] == nil {
+		t.Error("Like activity must have id")
+	}
+	if parsed["type"] != "Like" {
+		t.Error("Like activity must have type 'Like'")
+	}
+	if parsed["actor"] == nil {
+		t.Error("Like activity must have actor")
+	}
+	if parsed["object"] == nil {
+		t.Error("Like activity must have object")
+	}
+}
+
+func TestSendLikeWithDeps_LocalNote(t *testing.T) {
+	// Test that SendLikeWithDeps skips delivery for local notes
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := &domain.Account{
+		Id:            uuid.New(),
+		Username:      "alice",
+		WebPublicKey:  keypair.PublicPEM,
+		WebPrivateKey: keypair.PrivatePEM,
+	}
+	mockDB.AddAccount(account)
+
+	// Create a local note
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:        noteId,
+		CreatedBy: "bob",
+		Message:   "Test note",
+		ObjectURI: "https://local.example.com/notes/" + noteId.String(),
+	}
+	mockDB.Notes[noteId] = note
+	mockDB.NotesByURI[note.ObjectURI] = note
+
+	// Add activity for the note so extractAuthorFromURI can find the author
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://local.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     "https://local.example.com/users/bob", // Local author
+		ObjectURI:    note.ObjectURI,
+		Processed:    true,
+	}
+	mockDB.AddActivity(activity)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+	conf.Conf.WithAp = true
+
+	// SendLikeWithDeps should return nil (no error) but not make HTTP request
+	err := SendLikeWithDeps(account, note.ObjectURI, conf, mockHTTP, mockDB)
+	if err != nil {
+		t.Errorf("SendLikeWithDeps failed: %v", err)
+	}
+
+	// No HTTP requests should have been made for local note
+	if len(mockHTTP.Requests) > 0 {
+		t.Error("Should not make HTTP request for local note like")
+	}
+}
+
+func TestSendLikeWithDeps_RemoteNote(t *testing.T) {
+	// Test that SendLikeWithDeps sends Like to remote server
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := &domain.Account{
+		Id:            uuid.New(),
+		Username:      "alice",
+		WebPublicKey:  keypair.PublicPEM,
+		WebPrivateKey: keypair.PrivatePEM,
+	}
+	mockDB.AddAccount(account)
+
+	// Create a remote actor
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Set up remote actor response for HTTP fetch
+	actorResponse := ActorResponse{
+		ID:                remoteActor.ActorURI,
+		Type:              "Person",
+		PreferredUsername: "bob",
+		Name:              "Bob",
+		Inbox:             remoteActor.InboxURI,
+	}
+	actorResponse.PublicKey.PublicKeyPem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+	err := mockHTTP.SetJSONResponse(remoteActor.ActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set actor response: %v", err)
+	}
+
+	// Set up successful inbox response
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, []byte("Accepted"))
+
+	// Add activity for the note so extractAuthorFromURI can find the author
+	noteURI := "https://remote.example.com/users/bob/statuses/123"
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     remoteActor.ActorURI,
+		ObjectURI:    noteURI,
+		Processed:    true,
+	}
+	mockDB.AddActivity(activity)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+	conf.Conf.WithAp = true
+
+	// SendLikeWithDeps should make HTTP request
+	err = SendLikeWithDeps(account, noteURI, conf, mockHTTP, mockDB)
+	if err != nil {
+		t.Errorf("SendLikeWithDeps failed: %v", err)
+	}
+
+	// Verify HTTP requests were made (actor fetch + inbox POST)
+	if len(mockHTTP.Requests) < 1 {
+		t.Errorf("Expected at least 1 HTTP request, got %d", len(mockHTTP.Requests))
+		return
+	}
+
+	// Find the POST request to inbox
+	var postReq *http.Request
+	for _, req := range mockHTTP.Requests {
+		if req.Method == "POST" && req.URL.String() == remoteActor.InboxURI {
+			postReq = req
+			break
+		}
+	}
+
+	if postReq == nil {
+		t.Error("Expected POST request to inbox")
+		return
+	}
+
+	// Verify request has Content-Type header for ActivityPub
+	contentType := postReq.Header.Get("Content-Type")
+	if contentType == "" {
+		t.Error("Expected Content-Type header to be set")
+	}
+}
+
+func TestSendUndoLikeWithDeps_RemoteNote(t *testing.T) {
+	// Test that SendUndoLikeWithDeps sends Undo Like to remote server
+	mockDB := NewMockDatabase()
+	mockHTTP := NewMockHTTPClient()
+
+	keypair, _ := GenerateTestKeyPair()
+	account := &domain.Account{
+		Id:            uuid.New(),
+		Username:      "alice",
+		WebPublicKey:  keypair.PublicPEM,
+		WebPrivateKey: keypair.PrivatePEM,
+	}
+	mockDB.AddAccount(account)
+
+	// Create a remote actor
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Set up remote actor response for HTTP fetch
+	actorResponse := ActorResponse{
+		ID:                remoteActor.ActorURI,
+		Type:              "Person",
+		PreferredUsername: "bob",
+		Name:              "Bob",
+		Inbox:             remoteActor.InboxURI,
+	}
+	actorResponse.PublicKey.PublicKeyPem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+	err := mockHTTP.SetJSONResponse(remoteActor.ActorURI, 200, actorResponse)
+	if err != nil {
+		t.Fatalf("Failed to set actor response: %v", err)
+	}
+
+	// Set up successful inbox response
+	mockHTTP.SetResponse(remoteActor.InboxURI, 202, []byte("Accepted"))
+
+	// Add activity for the note so extractAuthorFromURI can find the author
+	noteURI := "https://remote.example.com/users/bob/statuses/123"
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/" + uuid.New().String(),
+		ActivityType: "Create",
+		ActorURI:     remoteActor.ActorURI,
+		ObjectURI:    noteURI,
+		Processed:    true,
+	}
+	mockDB.AddActivity(activity)
+
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "local.example.com"
+	conf.Conf.WithAp = true
+
+	likeURI := "https://local.example.com/activities/" + uuid.New().String()
+
+	// SendUndoLikeWithDeps should make HTTP request
+	err = SendUndoLikeWithDeps(account, noteURI, likeURI, conf, mockHTTP, mockDB)
+	if err != nil {
+		t.Errorf("SendUndoLikeWithDeps failed: %v", err)
+	}
+
+	// Verify HTTP requests were made (actor fetch + inbox POST)
+	if len(mockHTTP.Requests) < 1 {
+		t.Errorf("Expected at least 1 HTTP request, got %d", len(mockHTTP.Requests))
+		return
+	}
+
+	// Find the POST request to inbox
+	var postReq *http.Request
+	for _, req := range mockHTTP.Requests {
+		if req.Method == "POST" && req.URL.String() == remoteActor.InboxURI {
+			postReq = req
+			break
+		}
+	}
+
+	if postReq == nil {
+		t.Error("Expected POST request to inbox")
+		return
+	}
+
+	// Verify request has Content-Type header for ActivityPub
+	contentType := postReq.Header.Get("Content-Type")
+	if contentType == "" {
+		t.Error("Expected Content-Type header to be set")
 	}
 }

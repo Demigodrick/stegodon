@@ -172,6 +172,12 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			http.Error(w, "Failed to process Like", http.StatusInternalServerError)
 			return
 		}
+	case "Announce":
+		if err := handleAnnounceActivityWithDeps(body, username, deps); err != nil {
+			log.Printf("Inbox: Failed to handle Announce: %v", err)
+			http.Error(w, "Failed to process Announce", http.StatusInternalServerError)
+			return
+		}
 	case "Accept":
 		// Accept activities are confirmations of Follow requests
 		if err := handleAcceptActivityWithDeps(body, username, deps); err != nil {
@@ -273,7 +279,7 @@ func handleUndoActivity(body []byte, username string, remoteActor *domain.Remote
 	return handleUndoActivityWithDeps(body, username, remoteActor, deps)
 }
 
-// handleUndoActivityWithDeps processes an Undo activity (e.g., Undo Follow).
+// handleUndoActivityWithDeps processes an Undo activity (e.g., Undo Follow, Undo Like).
 // This version accepts dependencies for testing.
 func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domain.RemoteAccount, deps *InboxDeps) error {
 	// Parse the Undo activity
@@ -288,16 +294,18 @@ func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domai
 
 	// Parse the embedded object
 	var obj struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
+		Type   string `json:"type"`
+		ID     string `json:"id"`
+		Object string `json:"object"` // For Like, this is the URI of the liked note
 	}
 	if err := json.Unmarshal(undo.Object, &obj); err != nil {
 		return fmt.Errorf("failed to parse Undo object: %w", err)
 	}
 
+	database := deps.Database
+
 	if obj.Type == "Follow" {
 		// Verify authorization: Undo actor must match Follow actor
-		database := deps.Database
 
 		// Fetch the follow to verify ownership
 		err, follow := database.ReadFollowByURI(obj.ID)
@@ -323,6 +331,58 @@ func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domai
 			return fmt.Errorf("failed to delete follow: %w", err)
 		}
 		log.Printf("Inbox: Removed follow from %s@%s", remoteActor.Username, remoteActor.Domain)
+	} else if obj.Type == "Like" {
+		// Handle Undo Like
+		// Find the note being unliked
+		err, note := database.ReadNoteByURI(obj.Object)
+		if err != nil || note == nil {
+			log.Printf("Inbox: Note not found for Undo Like object %s", obj.Object)
+			return nil // Not an error - note might not exist locally
+		}
+
+		// Verify the actor matches (they can only undo their own likes)
+		if remoteActor.ActorURI != undo.Actor {
+			return fmt.Errorf("unauthorized: actor %s cannot undo like", undo.Actor)
+		}
+
+		// Delete the like
+		if err := database.DeleteLikeByAccountAndNote(remoteActor.Id, note.Id); err != nil {
+			log.Printf("Inbox: Failed to delete like: %v", err)
+			return nil // Don't fail if like doesn't exist
+		}
+
+		// Decrement like count
+		if err := database.DecrementLikeCountByNoteId(note.Id); err != nil {
+			log.Printf("Inbox: Failed to decrement like count: %v", err)
+		}
+
+		log.Printf("Inbox: Removed like from %s@%s on note %s", remoteActor.Username, remoteActor.Domain, note.Id)
+	} else if obj.Type == "Announce" {
+		// Handle Undo Announce (unboost)
+		// Find the note being unboosted
+		err, note := database.ReadNoteByURI(obj.Object)
+		if err != nil || note == nil {
+			log.Printf("Inbox: Note not found for Undo Announce object %s", obj.Object)
+			return nil // Not an error - note might not exist locally
+		}
+
+		// Verify the actor matches (they can only undo their own boosts)
+		if remoteActor.ActorURI != undo.Actor {
+			return fmt.Errorf("unauthorized: actor %s cannot undo boost", undo.Actor)
+		}
+
+		// Delete the boost
+		if err := database.DeleteBoostByAccountAndNote(remoteActor.Id, note.Id); err != nil {
+			log.Printf("Inbox: Failed to delete boost: %v", err)
+			return nil // Don't fail if boost doesn't exist
+		}
+
+		// Decrement boost count
+		if err := database.DecrementBoostCountByNoteId(note.Id); err != nil {
+			log.Printf("Inbox: Failed to decrement boost count: %v", err)
+		}
+
+		log.Printf("Inbox: Removed boost from %s@%s on note %s", remoteActor.Username, remoteActor.Domain, note.Id)
 	}
 
 	return nil
@@ -498,7 +558,170 @@ func handleLikeActivity(body []byte, username string) error {
 // This version accepts dependencies for testing.
 func handleLikeActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
 	log.Printf("Inbox: Processing Like activity for %s", username)
-	// TODO: Store like in likes table
+
+	var likeActivity struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Actor  string `json:"actor"`
+		Object string `json:"object"` // URI of the liked object (note)
+	}
+
+	if err := json.Unmarshal(body, &likeActivity); err != nil {
+		return fmt.Errorf("failed to parse Like activity: %w", err)
+	}
+
+	if likeActivity.ID == "" {
+		return fmt.Errorf("Like activity missing id")
+	}
+	if likeActivity.Actor == "" {
+		return fmt.Errorf("Like activity missing actor")
+	}
+	if likeActivity.Object == "" {
+		return fmt.Errorf("Like activity missing object")
+	}
+
+	database := deps.Database
+
+	// Find the note being liked by its object_uri
+	err, note := database.ReadNoteByURI(likeActivity.Object)
+	if err != nil || note == nil {
+		log.Printf("Inbox: Note not found for Like object %s: %v", likeActivity.Object, err)
+		return nil // Not an error - the note might not exist locally
+	}
+
+	// Get or create remote account for the liker using the existing helper
+	remoteAcc, fetchErr := GetOrFetchActorWithDeps(likeActivity.Actor, deps.HTTPClient, database)
+	if fetchErr != nil {
+		log.Printf("Inbox: Could not fetch actor %s for Like: %v", likeActivity.Actor, fetchErr)
+		return nil // Not a fatal error
+	}
+
+	// Check if we already have a like from this account on this note (dedupe by account+note)
+	exists, err := database.HasLike(remoteAcc.Id, note.Id)
+	if err != nil {
+		log.Printf("Inbox: Error checking for existing Like: %v", err)
+	}
+	if exists {
+		log.Printf("Inbox: Like from %s on note %s already exists, skipping", likeActivity.Actor, note.Id)
+		return nil
+	}
+
+	// Create the Like record
+	like := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: remoteAcc.Id,
+		NoteId:    note.Id,
+		URI:       likeActivity.ID,
+		CreatedAt: time.Now(),
+	}
+
+	if err := database.CreateLike(like); err != nil {
+		return fmt.Errorf("failed to store Like: %w", err)
+	}
+
+	// Increment like count on the note
+	if err := database.IncrementLikeCountByNoteId(note.Id); err != nil {
+		log.Printf("Inbox: Failed to increment like count: %v", err)
+	}
+
+	log.Printf("Inbox: Stored Like from %s on note %s", likeActivity.Actor, note.Id)
+	return nil
+}
+
+// handleAnnounceActivity processes an Announce (boost/reblog) activity
+func handleAnnounceActivity(body []byte, username string) error {
+	deps := &InboxDeps{
+		Database:   NewDBWrapper(),
+		HTTPClient: defaultHTTPClient,
+	}
+	return handleAnnounceActivityWithDeps(body, username, deps)
+}
+
+// handleAnnounceActivityWithDeps processes an Announce (boost/reblog) activity.
+// This version accepts dependencies for testing.
+func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
+	log.Printf("Inbox: Processing Announce activity for %s", username)
+
+	var announceActivity struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Actor  string `json:"actor"`
+		Object any    `json:"object"` // Can be string URI or object with id field
+	}
+
+	if err := json.Unmarshal(body, &announceActivity); err != nil {
+		return fmt.Errorf("failed to parse Announce activity: %w", err)
+	}
+
+	if announceActivity.ID == "" {
+		return fmt.Errorf("Announce activity missing id")
+	}
+	if announceActivity.Actor == "" {
+		return fmt.Errorf("Announce activity missing actor")
+	}
+	if announceActivity.Object == nil {
+		return fmt.Errorf("Announce activity missing object")
+	}
+
+	// Extract object URI from the object field (can be string or object with id)
+	var objectURI string
+	switch obj := announceActivity.Object.(type) {
+	case string:
+		objectURI = obj
+	case map[string]any:
+		if id, ok := obj["id"].(string); ok {
+			objectURI = id
+		}
+	}
+	if objectURI == "" {
+		return fmt.Errorf("Announce activity has invalid object format")
+	}
+
+	database := deps.Database
+
+	// Find the note being boosted by its object_uri
+	err, note := database.ReadNoteByURI(objectURI)
+	if err != nil || note == nil {
+		log.Printf("Inbox: Note not found for Announce object %s: %v", objectURI, err)
+		return nil // Not an error - the note might not exist locally
+	}
+
+	// Get or create remote account for the booster using the existing helper
+	remoteAcc, fetchErr := GetOrFetchActorWithDeps(announceActivity.Actor, deps.HTTPClient, database)
+	if fetchErr != nil {
+		log.Printf("Inbox: Could not fetch actor %s for Announce: %v", announceActivity.Actor, fetchErr)
+		return nil // Not a fatal error
+	}
+
+	// Check if we already have a boost from this account on this note (dedupe by account+note)
+	exists, err := database.HasBoost(remoteAcc.Id, note.Id)
+	if err != nil {
+		log.Printf("Inbox: Error checking for existing Boost: %v", err)
+	}
+	if exists {
+		log.Printf("Inbox: Boost from %s on note %s already exists, skipping", announceActivity.Actor, note.Id)
+		return nil
+	}
+
+	// Create the Boost record
+	boost := &domain.Boost{
+		Id:        uuid.New(),
+		AccountId: remoteAcc.Id,
+		NoteId:    note.Id,
+		URI:       announceActivity.ID,
+		CreatedAt: time.Now(),
+	}
+
+	if err := database.CreateBoost(boost); err != nil {
+		return fmt.Errorf("failed to store Boost: %w", err)
+	}
+
+	// Increment boost count on the note
+	if err := database.IncrementBoostCountByNoteId(note.Id); err != nil {
+		log.Printf("Inbox: Failed to increment boost count: %v", err)
+	}
+
+	log.Printf("Inbox: Stored Boost from %s on note %s", announceActivity.Actor, note.Id)
 	return nil
 }
 

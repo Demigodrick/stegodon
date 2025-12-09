@@ -55,6 +55,8 @@ type PostView struct {
 	TimeAgo      string
 	InReplyToURI string // URI of parent post if this is a reply
 	ReplyCount   int    // Number of replies to this post
+	LikeCount    int    // Number of likes on this post
+	BoostCount   int    // Number of boosts on this post
 }
 
 func formatTimeAgo(t time.Time) string {
@@ -154,6 +156,8 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 			MessageHTML: template.HTML(messageHTML),
 			TimeAgo:     formatTimeAgo(note.CreatedAt),
 			ReplyCount:  replyCount,
+			LikeCount:   note.LikeCount,
+			BoostCount:  note.BoostCount,
 		})
 	}
 
@@ -256,6 +260,8 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 			MessageHTML: template.HTML(messageHTML),
 			TimeAgo:     formatTimeAgo(note.CreatedAt),
 			ReplyCount:  replyCount,
+			LikeCount:   note.LikeCount,
+			BoostCount:  note.BoostCount,
 		})
 	}
 
@@ -373,6 +379,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		TimeAgo:      formatTimeAgo(note.CreatedAt),
 		InReplyToURI: note.InReplyToURI,
 		ReplyCount:   replyCount,
+		LikeCount:    note.LikeCount,
+		BoostCount:   note.BoostCount,
 	}
 
 	// Check if this is a reply and fetch parent post
@@ -398,6 +406,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 				MessageHTML: template.HTML(parentMessageHTML),
 				TimeAgo:     formatTimeAgo(parentNote.CreatedAt),
 				ReplyCount:  parentReplyCount,
+				LikeCount:   parentNote.LikeCount,
+				BoostCount:  parentNote.BoostCount,
 			}
 		}
 	}
@@ -424,6 +434,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 				MessageHTML: template.HTML(replyMessageHTML),
 				TimeAgo:     formatTimeAgo(replyNote.CreatedAt),
 				ReplyCount:  replyReplyCount,
+				LikeCount:   replyNote.LikeCount,
+				BoostCount:  replyNote.BoostCount,
 			})
 		}
 	}
@@ -502,6 +514,8 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 			MessageHTML: template.HTML(messageHTML),
 			TimeAgo:     formatTimeAgo(note.CreatedAt),
 			ReplyCount:  replyCount,
+			LikeCount:   note.LikeCount,
+			BoostCount:  note.BoostCount,
 		})
 	}
 

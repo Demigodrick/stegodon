@@ -514,9 +514,13 @@ h2 {
   background: #0a0a0a;
   border-top: 1px solid #333;
   padding: 6px 10px;
-  text-align: right;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
 }
 
+.like-count,
+.boost-count,
 .reply-count {
   color: #666;
   text-decoration: none;
@@ -525,7 +529,16 @@ h2 {
     "Liberation Mono", "Courier New", monospace;
 }
 
+.post-footer .icon {
+  filter: grayscale(100%) sepia(100%) saturate(1000%) hue-rotate(90deg)
+    brightness(1.2);
+}
+
+.reply-count {
+  color: #00ff7f;
+}
+
 .reply-count:hover {
-  color: #5fafff;
+  color: #00ff7f;
   text-decoration: underline;
 }

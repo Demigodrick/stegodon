@@ -79,6 +79,22 @@ const (
 	sqlCreateLikesIndices = `
 		CREATE INDEX IF NOT EXISTS idx_likes_note_id ON likes(note_id);
 		CREATE INDEX IF NOT EXISTS idx_likes_account_id ON likes(account_id);
+		CREATE INDEX IF NOT EXISTS idx_likes_object_uri ON likes(object_uri);
+	`
+
+	// Boosts/announces table
+	sqlCreateBoostsTable = `CREATE TABLE IF NOT EXISTS boosts (
+		id TEXT NOT NULL PRIMARY KEY,
+		account_id TEXT NOT NULL,
+		note_id TEXT NOT NULL,
+		uri TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(account_id, note_id)
+	)`
+
+	sqlCreateBoostsIndices = `
+		CREATE INDEX IF NOT EXISTS idx_boosts_note_id ON boosts(note_id);
+		CREATE INDEX IF NOT EXISTS idx_boosts_account_id ON boosts(account_id);
 	`
 
 	// Delivery queue table
@@ -177,6 +193,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateLikesTable, "likes"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateBoostsTable, "boosts"); err != nil {
+			return err
+		}
 		if err := db.createTableIfNotExists(tx, sqlCreateDeliveryQueueTable, "delivery_queue"); err != nil {
 			return err
 		}
@@ -202,6 +221,9 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateLikesIndices); err != nil {
 			log.Printf("Warning: Failed to create likes indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateBoostsIndices); err != nil {
+			log.Printf("Warning: Failed to create boosts indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateDeliveryQueueIndices); err != nil {
 			log.Printf("Warning: Failed to create delivery_queue indices: %v", err)
@@ -283,6 +305,13 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 
 	// Add account_id column to delivery_queue table to support account-based cleanup
 	tx.Exec("ALTER TABLE delivery_queue ADD COLUMN account_id TEXT")
+
+	// Add object_uri column to likes table for remote post likes
+	tx.Exec("ALTER TABLE likes ADD COLUMN object_uri TEXT")
+
+	// Add unique index for remote post likes (account_id + object_uri)
+	// This allows one like per account per remote post (identified by object_uri)
+	tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_account_object_uri ON likes(account_id, object_uri) WHERE object_uri IS NOT NULL AND object_uri != ''")
 
 	log.Println("Extended existing tables with new columns")
 }

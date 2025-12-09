@@ -99,6 +99,7 @@ func setupTestDB(t *testing.T) *DB {
 		account_id uuid NOT NULL,
 		note_id uuid NOT NULL,
 		uri varchar(500),
+		object_uri TEXT,
 		created_at timestamp default current_timestamp,
 		UNIQUE(account_id, note_id)
 	)`)
@@ -2832,5 +2833,405 @@ func TestCountActivitiesByInReplyTo_OnlyCountsCreateType(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("Expected 1 reply (only Create type), got %d", count)
+	}
+}
+
+// Tests for remote post likes with object_uri
+
+func TestCreateLikeByObjectURI_DeterministicPlaceholder(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	objectURI := "https://remote.example.com/notes/123"
+
+	like := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/1",
+		CreatedAt: time.Now(),
+	}
+
+	// Create the like
+	err := db.CreateLikeByObjectURI(like, objectURI)
+	if err != nil {
+		t.Fatalf("CreateLikeByObjectURI failed: %v", err)
+	}
+
+	// Verify it was created with the object_uri
+	hasLike, err := db.HasLikeByObjectURI(accountId, objectURI)
+	if err != nil {
+		t.Fatalf("HasLikeByObjectURI failed: %v", err)
+	}
+	if !hasLike {
+		t.Error("Expected HasLikeByObjectURI to return true")
+	}
+
+	// Verify the placeholder note_id is deterministic (same object_uri = same placeholder)
+	expectedPlaceholder := uuid.NewSHA1(uuid.NameSpaceURL, []byte(objectURI))
+	var storedNoteId string
+	err = db.db.QueryRow("SELECT note_id FROM likes WHERE object_uri = ?", objectURI).Scan(&storedNoteId)
+	if err != nil {
+		t.Fatalf("Failed to query note_id: %v", err)
+	}
+	if storedNoteId != expectedPlaceholder.String() {
+		t.Errorf("Expected placeholder note_id %s, got %s", expectedPlaceholder.String(), storedNoteId)
+	}
+}
+
+func TestCreateLikeByObjectURI_DifferentPostsDifferentPlaceholders(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	objectURI1 := "https://remote.example.com/notes/123"
+	objectURI2 := "https://remote.example.com/notes/456"
+
+	like1 := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/1",
+		CreatedAt: time.Now(),
+	}
+	like2 := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/2",
+		CreatedAt: time.Now(),
+	}
+
+	// Create likes for two different remote posts
+	if err := db.CreateLikeByObjectURI(like1, objectURI1); err != nil {
+		t.Fatalf("CreateLikeByObjectURI for first post failed: %v", err)
+	}
+	if err := db.CreateLikeByObjectURI(like2, objectURI2); err != nil {
+		t.Fatalf("CreateLikeByObjectURI for second post failed: %v", err)
+	}
+
+	// Verify both likes exist
+	hasLike1, _ := db.HasLikeByObjectURI(accountId, objectURI1)
+	hasLike2, _ := db.HasLikeByObjectURI(accountId, objectURI2)
+	if !hasLike1 || !hasLike2 {
+		t.Error("Expected both likes to exist")
+	}
+
+	// Verify they have different placeholder note_ids
+	var noteId1, noteId2 string
+	db.db.QueryRow("SELECT note_id FROM likes WHERE object_uri = ?", objectURI1).Scan(&noteId1)
+	db.db.QueryRow("SELECT note_id FROM likes WHERE object_uri = ?", objectURI2).Scan(&noteId2)
+	if noteId1 == noteId2 {
+		t.Errorf("Expected different placeholder note_ids for different posts, both got %s", noteId1)
+	}
+}
+
+func TestCreateLikeByObjectURI_UniqueConstraintPreventsDoubleLike(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	objectURI := "https://remote.example.com/notes/123"
+
+	like1 := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/1",
+		CreatedAt: time.Now(),
+	}
+	like2 := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/2",
+		CreatedAt: time.Now(),
+	}
+
+	// First like should succeed
+	if err := db.CreateLikeByObjectURI(like1, objectURI); err != nil {
+		t.Fatalf("First CreateLikeByObjectURI failed: %v", err)
+	}
+
+	// Second like to same post should fail (unique constraint)
+	err := db.CreateLikeByObjectURI(like2, objectURI)
+	if err == nil {
+		t.Error("Expected second like to same post to fail with unique constraint")
+	}
+}
+
+func TestDeleteLikeByAccountAndObjectURI(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	objectURI := "https://remote.example.com/notes/123"
+
+	like := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/1",
+		CreatedAt: time.Now(),
+	}
+
+	// Create the like
+	if err := db.CreateLikeByObjectURI(like, objectURI); err != nil {
+		t.Fatalf("CreateLikeByObjectURI failed: %v", err)
+	}
+
+	// Verify it exists
+	hasLike, _ := db.HasLikeByObjectURI(accountId, objectURI)
+	if !hasLike {
+		t.Fatal("Like should exist before deletion")
+	}
+
+	// Delete it
+	if err := db.DeleteLikeByAccountAndObjectURI(accountId, objectURI); err != nil {
+		t.Fatalf("DeleteLikeByAccountAndObjectURI failed: %v", err)
+	}
+
+	// Verify it's gone
+	hasLike, _ = db.HasLikeByObjectURI(accountId, objectURI)
+	if hasLike {
+		t.Error("Like should not exist after deletion")
+	}
+}
+
+func TestReadLikeByAccountAndObjectURI(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	objectURI := "https://remote.example.com/notes/123"
+	likeId := uuid.New()
+
+	like := &domain.Like{
+		Id:        likeId,
+		AccountId: accountId,
+		URI:       "https://local.example.com/likes/1",
+		CreatedAt: time.Now(),
+	}
+
+	// Create the like
+	if err := db.CreateLikeByObjectURI(like, objectURI); err != nil {
+		t.Fatalf("CreateLikeByObjectURI failed: %v", err)
+	}
+
+	// Read it back
+	err, readLike := db.ReadLikeByAccountAndObjectURI(accountId, objectURI)
+	if err != nil {
+		t.Fatalf("ReadLikeByAccountAndObjectURI failed: %v", err)
+	}
+	if readLike == nil {
+		t.Fatal("Expected to find like")
+	}
+	if readLike.Id != likeId {
+		t.Errorf("Expected like ID %s, got %s", likeId, readLike.Id)
+	}
+	if readLike.AccountId != accountId {
+		t.Errorf("Expected account ID %s, got %s", accountId, readLike.AccountId)
+	}
+}
+
+func TestIncrementDecrementLikeCountByObjectURI(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	objectURI := "https://remote.example.com/notes/123"
+
+	// Create an activity for this object
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + objectURI + `","content":"Hello"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(activity); err != nil {
+		t.Fatalf("Failed to create activity: %v", err)
+	}
+
+	// Increment like count
+	if err := db.IncrementLikeCountByObjectURI(objectURI); err != nil {
+		t.Fatalf("IncrementLikeCountByObjectURI failed: %v", err)
+	}
+
+	// Verify count is 1
+	var likeCount int
+	db.db.QueryRow("SELECT like_count FROM activities WHERE object_uri = ?", objectURI).Scan(&likeCount)
+	if likeCount != 1 {
+		t.Errorf("Expected like_count 1, got %d", likeCount)
+	}
+
+	// Increment again
+	db.IncrementLikeCountByObjectURI(objectURI)
+	db.db.QueryRow("SELECT like_count FROM activities WHERE object_uri = ?", objectURI).Scan(&likeCount)
+	if likeCount != 2 {
+		t.Errorf("Expected like_count 2, got %d", likeCount)
+	}
+
+	// Decrement
+	if err := db.DecrementLikeCountByObjectURI(objectURI); err != nil {
+		t.Fatalf("DecrementLikeCountByObjectURI failed: %v", err)
+	}
+	db.db.QueryRow("SELECT like_count FROM activities WHERE object_uri = ?", objectURI).Scan(&likeCount)
+	if likeCount != 1 {
+		t.Errorf("Expected like_count 1 after decrement, got %d", likeCount)
+	}
+}
+
+func TestReadActivitiesByInReplyTo_IncludesLikeAndBoostCounts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	parentURI := "https://example.com/notes/parent"
+	replyURI := "https://remote.example.com/notes/reply1"
+
+	// Create a reply activity with like and boost counts
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    replyURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + replyURI + `","inReplyTo":"` + parentURI + `","content":"Reply"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(activity); err != nil {
+		t.Fatalf("Failed to create activity: %v", err)
+	}
+
+	// Set like and boost counts directly
+	db.db.Exec("UPDATE activities SET like_count = 5, boost_count = 3 WHERE object_uri = ?", replyURI)
+
+	// Read activities by in_reply_to
+	err, activities := db.ReadActivitiesByInReplyTo(parentURI)
+	if err != nil {
+		t.Fatalf("ReadActivitiesByInReplyTo failed: %v", err)
+	}
+	if activities == nil || len(*activities) != 1 {
+		t.Fatalf("Expected 1 activity, got %v", activities)
+	}
+
+	reply := (*activities)[0]
+	if reply.LikeCount != 5 {
+		t.Errorf("Expected LikeCount 5, got %d", reply.LikeCount)
+	}
+	if reply.BoostCount != 3 {
+		t.Errorf("Expected BoostCount 3, got %d", reply.BoostCount)
+	}
+}
+
+func TestReadActivityByObjectURI_IncludesLikeAndBoostCounts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	objectURI := "https://remote.example.com/notes/123"
+
+	// Create an activity
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/alice",
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + objectURI + `","content":"Hello"}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+	}
+	if err := db.CreateActivity(activity); err != nil {
+		t.Fatalf("Failed to create activity: %v", err)
+	}
+
+	// Set like and boost counts
+	db.db.Exec("UPDATE activities SET like_count = 10, boost_count = 7 WHERE object_uri = ?", objectURI)
+
+	// Read the activity by object URI
+	err, readActivity := db.ReadActivityByObjectURI(objectURI)
+	if err != nil {
+		t.Fatalf("ReadActivityByObjectURI failed: %v", err)
+	}
+	if readActivity == nil {
+		t.Fatal("Expected to find activity")
+	}
+
+	if readActivity.LikeCount != 10 {
+		t.Errorf("Expected LikeCount 10, got %d", readActivity.LikeCount)
+	}
+	if readActivity.BoostCount != 7 {
+		t.Errorf("Expected BoostCount 7, got %d", readActivity.BoostCount)
+	}
+}
+
+func TestReadHomeTimelinePosts_RemotePostsIncludeLikeAndBoostCounts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create a local account
+	localAccountId := uuid.New()
+	createTestAccount(t, db, localAccountId, "localuser", "ssh-key", "webpub", "webpriv")
+
+	// Create a remote account
+	remoteAccountId := uuid.New()
+	_, err := db.db.Exec(`INSERT INTO remote_accounts(id, username, domain, actor_uri, inbox_uri) VALUES (?, ?, ?, ?, ?)`,
+		remoteAccountId.String(), "remoteuser", "remote.example.com",
+		"https://remote.example.com/users/remoteuser",
+		"https://remote.example.com/users/remoteuser/inbox")
+	if err != nil {
+		t.Fatalf("Failed to create remote account: %v", err)
+	}
+
+	// Create a follow relationship
+	followId := uuid.New()
+	_, err = db.db.Exec(`INSERT INTO follows(id, account_id, target_account_id, accepted, is_local) VALUES (?, ?, ?, 1, 0)`,
+		followId.String(), localAccountId.String(), remoteAccountId.String())
+	if err != nil {
+		t.Fatalf("Failed to create follow: %v", err)
+	}
+
+	// Create an activity from the remote user
+	objectURI := "https://remote.example.com/notes/123"
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://remote.example.com/activities/create",
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/remoteuser",
+		ObjectURI:    objectURI,
+		RawJSON:      `{"type":"Create","object":{"id":"` + objectURI + `","content":"Hello from remote","inReplyTo":null}}`,
+		Processed:    true,
+		CreatedAt:    time.Now(),
+		Local:        false,
+	}
+	if err := db.CreateActivity(activity); err != nil {
+		t.Fatalf("Failed to create activity: %v", err)
+	}
+
+	// Set like and boost counts
+	db.db.Exec("UPDATE activities SET like_count = 15, boost_count = 8 WHERE object_uri = ?", objectURI)
+
+	// Read home timeline
+	err, posts := db.ReadHomeTimelinePosts(localAccountId, 10)
+	if err != nil {
+		t.Fatalf("ReadHomeTimelinePosts failed: %v", err)
+	}
+
+	// Find the remote post
+	var remotePost *domain.HomePost
+	for i := range *posts {
+		if (*posts)[i].ObjectURI == objectURI {
+			remotePost = &(*posts)[i]
+			break
+		}
+	}
+
+	if remotePost == nil {
+		t.Fatal("Expected to find remote post in home timeline")
+	}
+
+	if remotePost.LikeCount != 15 {
+		t.Errorf("Expected LikeCount 15, got %d", remotePost.LikeCount)
+	}
+	if remotePost.BoostCount != 8 {
+		t.Errorf("Expected BoostCount 8, got %d", remotePost.BoostCount)
 	}
 }

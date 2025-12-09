@@ -80,6 +80,8 @@ type ThreadPost struct {
 	IsParent   bool // Whether this is the parent post
 	IsDeleted  bool // Whether this post was deleted (placeholder)
 	ReplyCount int  // Number of replies to this post
+	LikeCount  int  // Number of likes on this post
+	BoostCount int  // Number of boosts on this post
 }
 
 // Model represents the thread view state
@@ -95,22 +97,33 @@ type Model struct {
 	isActive     bool
 	loading      bool
 	errorMessage string
+	// Fields to support reloading
+	parentNoteID    uuid.UUID // Local note ID (for local notes)
+	parentIsLocal   bool      // Whether the parent is a local note
+	parentAuthor    string    // Original author (for reload)
+	parentContent   string    // Original content (for reload)
+	parentCreatedAt time.Time // Original timestamp (for reload)
+	// Fields to restore selection after reload
+	pendingSelection int  // Selection to restore after reload (-2 means no pending restore)
+	pendingOffset    int  // Offset to restore after reload
 }
 
 // InitialModel creates a new thread view model
 func InitialModel(accountId uuid.UUID, width, height int) Model {
 	return Model{
-		AccountId:    accountId,
-		ParentURI:    "",
-		ParentPost:   nil,
-		Replies:      []ThreadPost{},
-		Selected:     -1, // Start with parent selected
-		Offset:       -1, // Start at parent
-		Width:        width,
-		Height:       height,
-		isActive:     false,
-		loading:      false,
-		errorMessage: "",
+		AccountId:        accountId,
+		ParentURI:        "",
+		ParentPost:       nil,
+		Replies:          []ThreadPost{},
+		Selected:         -1, // Start with parent selected
+		Offset:           -1, // Start at parent
+		Width:            width,
+		Height:           height,
+		isActive:         false,
+		loading:          false,
+		errorMessage:     "",
+		pendingSelection: -2, // -2 means no pending restore
+		pendingOffset:    -2,
 	}
 }
 
@@ -165,6 +178,8 @@ func loadThread(parentURI string) tea.Cmd {
 				IsLocal:    true,
 				IsParent:   true,
 				ReplyCount: replyCount,
+				LikeCount:  localNote.LikeCount,
+				BoostCount: localNote.BoostCount,
 			}
 		} else {
 			// Check if it's a stored activity (federated post)
@@ -183,6 +198,8 @@ func loadThread(parentURI string) tea.Cmd {
 					IsLocal:    false,
 					IsParent:   true,
 					ReplyCount: replyCount,
+					LikeCount:  activity.LikeCount,
+					BoostCount: activity.BoostCount,
 				}
 			}
 		}
@@ -210,6 +227,8 @@ func loadThread(parentURI string) tea.Cmd {
 					IsLocal:    true,
 					IsParent:   false,
 					ReplyCount: replyCount,
+					LikeCount:  note.LikeCount,
+					BoostCount: note.BoostCount,
 				})
 			}
 		}
@@ -248,6 +267,8 @@ func loadThread(parentURI string) tea.Cmd {
 					IsLocal:    false,
 					IsParent:   false,
 					ReplyCount: replyCount,
+					LikeCount:  activity.LikeCount,
+					BoostCount: activity.BoostCount,
 				})
 			}
 		}
@@ -304,6 +325,14 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 		// Count replies for parent (local + remote)
 		parentReplyCount, _ := database.CountRepliesByNoteId(noteID)
 
+		// Get like count and boost count from database
+		parentLikeCount := 0
+		parentBoostCount := 0
+		if err, note := database.ReadNoteId(noteID); err == nil && note != nil {
+			parentLikeCount = note.LikeCount
+			parentBoostCount = note.BoostCount
+		}
+
 		// Create parent from the provided data
 		parent := &ThreadPost{
 			ID:         noteID,
@@ -314,6 +343,8 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 			IsLocal:    true,
 			IsParent:   true,
 			ReplyCount: parentReplyCount,
+			LikeCount:  parentLikeCount,
+			BoostCount: parentBoostCount,
 		}
 
 		// Load local replies using the note ID - this searches for any in_reply_to_uri
@@ -341,6 +372,8 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 					IsLocal:    true,
 					IsParent:   false,
 					ReplyCount: replyCount,
+					LikeCount:  note.LikeCount,
+					BoostCount: note.BoostCount,
 				})
 			}
 		}
@@ -380,6 +413,8 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 						IsLocal:    false,
 						IsParent:   false,
 						ReplyCount: replyCount,
+						LikeCount:  activity.LikeCount,
+						BoostCount: activity.BoostCount,
 					})
 				}
 			}
@@ -463,10 +498,30 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Only reload if we somehow got back to this view with stale data
 		return m, nil
 
+	case common.SessionState:
+		// Handle UpdateNoteList to refresh when notes are liked
+		if msg == common.UpdateNoteList && m.isActive && m.ParentURI != "" {
+			// Store current selection to restore after reload
+			m.pendingSelection = m.Selected
+			m.pendingOffset = m.Offset
+			// Reload the thread to get updated like counts
+			if m.parentIsLocal && m.parentNoteID != uuid.Nil {
+				return m, loadThreadByID(m.parentNoteID, m.ParentURI, m.parentAuthor, m.parentContent, m.parentCreatedAt)
+			}
+			return m, loadThread(m.ParentURI)
+		}
+		return m, nil
+
 	case common.ViewThreadMsg:
 		// Load a new thread
 		m.SetThread(msg.NoteURI)
 		m.isActive = true
+		// Store info needed for reload
+		m.parentNoteID = msg.NoteID
+		m.parentIsLocal = msg.IsLocal
+		m.parentAuthor = msg.Author
+		m.parentContent = msg.Content
+		m.parentCreatedAt = msg.CreatedAt
 		// For local notes, use loadThreadByID which doesn't rely on object_uri in DB
 		if msg.IsLocal && msg.NoteID != uuid.Nil {
 			return m, loadThreadByID(msg.NoteID, msg.NoteURI, msg.Author, msg.Content, msg.CreatedAt)
@@ -481,8 +536,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.ParentPost = msg.parent
 			m.Replies = msg.replies
-			m.Selected = -1 // Select parent
-			m.Offset = -1
+			// Check if we have a pending selection to restore (from reload after like)
+			if m.pendingSelection != -2 {
+				// Restore selection, making sure it's within bounds
+				if m.pendingSelection >= -1 && m.pendingSelection < len(m.Replies) {
+					m.Selected = m.pendingSelection
+					m.Offset = m.pendingOffset
+				} else {
+					m.Selected = -1
+					m.Offset = -1
+				}
+				// Clear pending restore
+				m.pendingSelection = -2
+				m.pendingOffset = -2
+			} else {
+				// Initial load - select parent
+				m.Selected = -1
+				m.Offset = -1
+			}
 		}
 		return m, nil
 
@@ -582,6 +653,40 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return common.HomeTimelineView
 			}
+		case "l":
+			// Like/unlike selected post
+			if m.Selected == -1 && m.ParentPost != nil && !m.ParentPost.IsDeleted {
+				// Like the parent post
+				noteURI := m.ParentPost.ObjectURI
+				if noteURI == "" && m.ParentPost.IsLocal && m.ParentPost.ID != uuid.Nil {
+					noteURI = "local:" + m.ParentPost.ID.String()
+				}
+				if noteURI != "" || m.ParentPost.ID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.LikeNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  m.ParentPost.ID,
+							IsLocal: m.ParentPost.IsLocal,
+						}
+					}
+				}
+			} else if m.Selected >= 0 && m.Selected < len(m.Replies) {
+				// Like a reply
+				reply := m.Replies[m.Selected]
+				noteURI := reply.ObjectURI
+				if noteURI == "" && reply.IsLocal && reply.ID != uuid.Nil {
+					noteURI = "local:" + reply.ID.String()
+				}
+				if noteURI != "" || reply.ID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.LikeNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  reply.ID,
+							IsLocal: reply.IsLocal,
+						}
+					}
+				}
+			}
 		}
 	}
 	return m, nil
@@ -659,12 +764,18 @@ func (m Model) View() string {
 			itemWidth = contentWidth - indentWidth
 		}
 
-		// Format timestamp with reply count indicator
+		// Format timestamp with engagement indicators
 		timeStr := formatTime(post.Time)
 		if post.ReplyCount == 1 {
 			timeStr = fmt.Sprintf("%s · 1 reply", timeStr)
 		} else if post.ReplyCount > 1 {
 			timeStr = fmt.Sprintf("%s · %d replies", timeStr, post.ReplyCount)
+		}
+		if post.LikeCount > 0 {
+			timeStr = fmt.Sprintf("%s · ⭐ %d", timeStr, post.LikeCount)
+		}
+		if post.BoostCount > 0 {
+			timeStr = fmt.Sprintf("%s · 🔁 %d", timeStr, post.BoostCount)
 		}
 
 		// Format author with indicator for local vs remote

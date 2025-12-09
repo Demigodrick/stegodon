@@ -2192,6 +2192,718 @@ func TestHandleLikeActivityWithDeps(t *testing.T) {
 	}
 }
 
+// TestHandleLikeActivity_StoresLikeAndIncrementsCount tests that a Like activity
+// properly stores the like record and increments the note's like count
+func TestHandleLikeActivity_StoresLikeAndIncrementsCount(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Create local account
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Create a note to be liked
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:        noteId,
+		CreatedBy: "alice",
+		Message:   "Hello world!",
+		ObjectURI: "https://local.example.com/notes/" + noteId.String(),
+		LikeCount: 0,
+	}
+	mockDB.AddNote(note)
+
+	// Create remote account that will like the note
+	remoteAccount := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+		LastFetchedAt: time.Now(), // Set to now so cache is considered fresh
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	likeBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/like-123",
+		"type": "Like",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "` + note.ObjectURI + `"
+	}`)
+
+	err := handleLikeActivityWithDeps(likeBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleLikeActivityWithDeps failed: %v", err)
+	}
+
+	// Verify like was stored
+	if len(mockDB.Likes) != 1 {
+		t.Errorf("Expected 1 like stored, got %d", len(mockDB.Likes))
+	}
+
+	// Verify the like has correct data
+	for _, like := range mockDB.Likes {
+		if like.AccountId != remoteAccount.Id {
+			t.Errorf("Like has wrong account ID: got %s, want %s", like.AccountId, remoteAccount.Id)
+		}
+		if like.NoteId != noteId {
+			t.Errorf("Like has wrong note ID: got %s, want %s", like.NoteId, noteId)
+		}
+		if like.URI != "https://remote.example.com/activities/like-123" {
+			t.Errorf("Like has wrong URI: got %s", like.URI)
+		}
+	}
+
+	// Verify like count was incremented
+	if len(mockDB.IncrementLikeCountCalls) != 1 {
+		t.Errorf("Expected IncrementLikeCountByNoteId to be called once, got %d calls", len(mockDB.IncrementLikeCountCalls))
+	}
+	if len(mockDB.IncrementLikeCountCalls) > 0 && mockDB.IncrementLikeCountCalls[0] != noteId {
+		t.Errorf("IncrementLikeCountByNoteId called with wrong note ID: got %s, want %s",
+			mockDB.IncrementLikeCountCalls[0], noteId)
+	}
+}
+
+// TestHandleLikeActivity_DuplicateLikeIgnored tests that duplicate likes from the same
+// account on the same note are ignored (no error, no duplicate storage)
+func TestHandleLikeActivity_DuplicateLikeIgnored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:        noteId,
+		CreatedBy: "alice",
+		Message:   "Hello world!",
+		ObjectURI: "https://local.example.com/notes/" + noteId.String(),
+		LikeCount: 1,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+		LastFetchedAt: time.Now(), // Set to now so cache is considered fresh
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	// Pre-add an existing like from bob on this note
+	existingLike := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: remoteAccount.Id,
+		NoteId:    noteId,
+		URI:       "https://remote.example.com/activities/like-old",
+	}
+	mockDB.Likes[existingLike.Id] = existingLike
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Try to like again with a different activity URI
+	likeBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/like-new",
+		"type": "Like",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "` + note.ObjectURI + `"
+	}`)
+
+	err := handleLikeActivityWithDeps(likeBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleLikeActivityWithDeps should not error on duplicate: %v", err)
+	}
+
+	// Verify no additional like was stored
+	if len(mockDB.Likes) != 1 {
+		t.Errorf("Expected still 1 like stored (no duplicate), got %d", len(mockDB.Likes))
+	}
+
+	// Verify like count was NOT incremented again
+	if len(mockDB.IncrementLikeCountCalls) != 0 {
+		t.Errorf("Expected IncrementLikeCountByNoteId NOT to be called for duplicate, got %d calls",
+			len(mockDB.IncrementLikeCountCalls))
+	}
+}
+
+// TestHandleLikeActivity_NoteNotFound tests that liking a non-existent note
+// doesn't cause an error (graceful handling)
+func TestHandleLikeActivity_NoteNotFound(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	likeBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/like-123",
+		"type": "Like",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/notes/nonexistent"
+	}`)
+
+	// Should not error - note simply doesn't exist locally
+	err := handleLikeActivityWithDeps(likeBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleLikeActivityWithDeps should not error for missing note: %v", err)
+	}
+
+	// Verify no like was stored
+	if len(mockDB.Likes) != 0 {
+		t.Errorf("Expected 0 likes stored for missing note, got %d", len(mockDB.Likes))
+	}
+}
+
+// TestHandleUndoLike tests that Undo Like properly removes the like and decrements count
+func TestHandleUndoLike(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:        noteId,
+		CreatedBy: "alice",
+		Message:   "Hello world!",
+		ObjectURI: "https://local.example.com/notes/" + noteId.String(),
+		LikeCount: 1,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	// Add existing like
+	existingLike := &domain.Like{
+		Id:        uuid.New(),
+		AccountId: remoteAccount.Id,
+		NoteId:    noteId,
+		URI:       "https://remote.example.com/activities/like-123",
+	}
+	mockDB.Likes[existingLike.Id] = existingLike
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-like-123",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/like-123",
+			"type": "Like",
+			"actor": "https://remote.example.com/users/bob",
+			"object": "` + note.ObjectURI + `"
+		}
+	}`)
+
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteAccount, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps failed: %v", err)
+	}
+
+	// Verify like was removed
+	if len(mockDB.Likes) != 0 {
+		t.Errorf("Expected 0 likes after undo, got %d", len(mockDB.Likes))
+	}
+
+	// Verify like count was decremented
+	if note.LikeCount != 0 {
+		t.Errorf("Expected like count to be 0 after undo, got %d", note.LikeCount)
+	}
+}
+
+// TestHandleUndoLike_NoExistingLike tests that Undo Like for a non-existent like
+// is handled gracefully
+func TestHandleUndoLike_NoExistingLike(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:        noteId,
+		CreatedBy: "alice",
+		Message:   "Hello world!",
+		ObjectURI: "https://local.example.com/notes/" + noteId.String(),
+		LikeCount: 0,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Undo a like that doesn't exist
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-like-123",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/like-nonexistent",
+			"type": "Like",
+			"actor": "https://remote.example.com/users/bob",
+			"object": "` + note.ObjectURI + `"
+		}
+	}`)
+
+	// Should not error
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteAccount, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps should not error for missing like: %v", err)
+	}
+
+	// Verify like count didn't go negative
+	if note.LikeCount < 0 {
+		t.Errorf("Like count went negative: %d", note.LikeCount)
+	}
+}
+
+// ============================================================================
+// Announce (Boost) Activity Tests
+// ============================================================================
+
+// TestHandleAnnounceActivity_StoresBoostAndIncrementsCount tests that an Announce
+// activity properly stores a boost and increments the boost count
+func TestHandleAnnounceActivity_StoresBoostAndIncrementsCount(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Create local account
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Create a note to be boosted
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:         noteId,
+		CreatedBy:  "alice",
+		Message:    "Hello world!",
+		ObjectURI:  "https://local.example.com/notes/" + noteId.String(),
+		BoostCount: 0,
+	}
+	mockDB.AddNote(note)
+
+	// Create remote account that will boost the note
+	remoteAccount := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+		LastFetchedAt: time.Now(), // Set to now so cache is considered fresh
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "` + note.ObjectURI + `"
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Verify boost was stored
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected 1 boost stored, got %d", len(mockDB.Boosts))
+	}
+
+	// Verify the boost has correct data
+	for _, boost := range mockDB.Boosts {
+		if boost.AccountId != remoteAccount.Id {
+			t.Errorf("Boost has wrong account ID: got %s, want %s", boost.AccountId, remoteAccount.Id)
+		}
+		if boost.NoteId != noteId {
+			t.Errorf("Boost has wrong note ID: got %s, want %s", boost.NoteId, noteId)
+		}
+		if boost.URI != "https://remote.example.com/activities/announce-123" {
+			t.Errorf("Boost has wrong URI: got %s", boost.URI)
+		}
+	}
+
+	// Verify boost count was incremented
+	if len(mockDB.IncrementBoostCountCalls) != 1 {
+		t.Errorf("Expected IncrementBoostCountByNoteId to be called once, got %d calls", len(mockDB.IncrementBoostCountCalls))
+	}
+	if len(mockDB.IncrementBoostCountCalls) > 0 && mockDB.IncrementBoostCountCalls[0] != noteId {
+		t.Errorf("IncrementBoostCountByNoteId called with wrong note ID: got %s, want %s",
+			mockDB.IncrementBoostCountCalls[0], noteId)
+	}
+}
+
+// TestHandleAnnounceActivity_DuplicateBoostIgnored tests that duplicate boosts from the same
+// account on the same note are ignored (no error, no duplicate storage)
+func TestHandleAnnounceActivity_DuplicateBoostIgnored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:         noteId,
+		CreatedBy:  "alice",
+		Message:    "Hello world!",
+		ObjectURI:  "https://local.example.com/notes/" + noteId.String(),
+		BoostCount: 1,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+		LastFetchedAt: time.Now(), // Set to now so cache is considered fresh
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	// Pre-add an existing boost from bob on this note
+	existingBoost := &domain.Boost{
+		Id:        uuid.New(),
+		AccountId: remoteAccount.Id,
+		NoteId:    noteId,
+		URI:       "https://remote.example.com/activities/announce-old",
+	}
+	mockDB.Boosts[existingBoost.Id] = existingBoost
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Try to boost again with a different activity URI
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-new",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "` + note.ObjectURI + `"
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps should not error on duplicate: %v", err)
+	}
+
+	// Verify no additional boost was stored
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected still 1 boost stored (no duplicate), got %d", len(mockDB.Boosts))
+	}
+
+	// Verify boost count was NOT incremented again
+	if len(mockDB.IncrementBoostCountCalls) != 0 {
+		t.Errorf("Expected IncrementBoostCountByNoteId NOT to be called for duplicate, got %d calls",
+			len(mockDB.IncrementBoostCountCalls))
+	}
+}
+
+// TestHandleAnnounceActivity_NoteNotFound tests that boosting a non-existent note
+// doesn't cause an error (graceful handling)
+func TestHandleAnnounceActivity_NoteNotFound(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://local.example.com/notes/nonexistent"
+	}`)
+
+	// Should not error - note simply doesn't exist locally
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps should not error for missing note: %v", err)
+	}
+
+	// Verify no boost was stored
+	if len(mockDB.Boosts) != 0 {
+		t.Errorf("Expected 0 boosts stored for missing note, got %d", len(mockDB.Boosts))
+	}
+}
+
+// TestHandleUndoAnnounce tests that Undo Announce properly removes the boost and decrements count
+func TestHandleUndoAnnounce(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:         noteId,
+		CreatedBy:  "alice",
+		Message:    "Hello world!",
+		ObjectURI:  "https://local.example.com/notes/" + noteId.String(),
+		BoostCount: 1,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	// Add existing boost
+	existingBoost := &domain.Boost{
+		Id:        uuid.New(),
+		AccountId: remoteAccount.Id,
+		NoteId:    noteId,
+		URI:       "https://remote.example.com/activities/announce-123",
+	}
+	mockDB.Boosts[existingBoost.Id] = existingBoost
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-announce-123",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/announce-123",
+			"type": "Announce",
+			"actor": "https://remote.example.com/users/bob",
+			"object": "` + note.ObjectURI + `"
+		}
+	}`)
+
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteAccount, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps failed: %v", err)
+	}
+
+	// Verify boost was removed
+	if len(mockDB.Boosts) != 0 {
+		t.Errorf("Expected 0 boosts after undo, got %d", len(mockDB.Boosts))
+	}
+
+	// Verify boost count was decremented
+	if note.BoostCount != 0 {
+		t.Errorf("Expected boost count to be 0 after undo, got %d", note.BoostCount)
+	}
+}
+
+// TestHandleUndoAnnounce_NoExistingBoost tests that Undo Announce for a non-existent boost
+// is handled gracefully
+func TestHandleUndoAnnounce_NoExistingBoost(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:         noteId,
+		CreatedBy:  "alice",
+		Message:    "Hello world!",
+		ObjectURI:  "https://local.example.com/notes/" + noteId.String(),
+		BoostCount: 0,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Undo an announce that doesn't exist
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-announce-123",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/announce-nonexistent",
+			"type": "Announce",
+			"actor": "https://remote.example.com/users/bob",
+			"object": "` + note.ObjectURI + `"
+		}
+	}`)
+
+	// Should not error
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteAccount, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps should not error for missing boost: %v", err)
+	}
+
+	// Verify boost count didn't go negative
+	if note.BoostCount < 0 {
+		t.Errorf("Boost count went negative: %d", note.BoostCount)
+	}
+}
+
+// TestHandleAnnounceActivity_ObjectAsMap tests that Announce activity with object as map
+// (containing id field) is handled correctly
+func TestHandleAnnounceActivity_ObjectAsMap(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	noteId := uuid.New()
+	note := &domain.Note{
+		Id:         noteId,
+		CreatedBy:  "alice",
+		Message:    "Hello world!",
+		ObjectURI:  "https://local.example.com/notes/" + noteId.String(),
+		BoostCount: 0,
+	}
+	mockDB.AddNote(note)
+
+	remoteAccount := &domain.RemoteAccount{
+		Id:            uuid.New(),
+		Username:      "bob",
+		Domain:        "remote.example.com",
+		ActorURI:      "https://remote.example.com/users/bob",
+		InboxURI:      "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem:  "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+		LastFetchedAt: time.Now(),
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Object is a map with id field (some servers send it this way)
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "` + note.ObjectURI + `",
+			"type": "Note"
+		}
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed with object as map: %v", err)
+	}
+
+	// Verify boost was stored
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected 1 boost stored for object-as-map format, got %d", len(mockDB.Boosts))
+	}
+}
+
 // ============================================================================
 // HandleInboxWithDeps Integration Tests (with httptest)
 // ============================================================================

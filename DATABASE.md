@@ -82,6 +82,15 @@ erDiagram
         TEXT account_id FK
         TEXT note_id FK
         TEXT uri
+        TEXT object_uri
+        TIMESTAMP created_at
+    }
+
+    boosts {
+        TEXT id PK
+        TEXT account_id FK
+        TEXT note_id FK
+        TEXT uri
         TIMESTAMP created_at
     }
 
@@ -119,8 +128,10 @@ erDiagram
     accounts ||--o{ notes : "creates"
     accounts ||--o{ follows : "follower"
     accounts ||--o{ likes : "likes"
+    accounts ||--o{ boosts : "boosts"
     accounts ||--o{ delivery_queue : "owns"
     notes ||--o{ likes : "receives"
+    notes ||--o{ boosts : "receives"
     notes ||--o{ note_hashtags : "has"
     notes ||--o{ note_mentions : "mentions"
     hashtags ||--o{ note_hashtags : "used_in"
@@ -145,7 +156,10 @@ Cached ActivityPub actors from other servers. Includes public keys for signature
 Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for debugging and replay. Includes denormalized engagement counters for remote posts displayed in timelines.
 
 ### likes
-Like/favorite relationships between accounts and notes.
+Like/favorite relationships between accounts and notes. For local notes, `note_id` references the note directly. For remote/federated posts, `object_uri` stores the ActivityPub object URI and `note_id` contains a deterministic placeholder UUID derived from the object URI (to satisfy the unique constraint).
+
+### boosts
+Boost/reblog relationships between accounts and notes. Created when receiving `Announce` activities.
 
 ### delivery_queue
 Background queue for federating activities to remote servers. Supports retry with exponential backoff (1 minute to 24 hours).
@@ -178,6 +192,9 @@ Stores @username@domain mentions found in notes. Used for notification features 
 | activities | idx_activities_created_at | created_at DESC |
 | likes | idx_likes_note_id | note_id |
 | likes | idx_likes_account_id | account_id |
+| likes | idx_likes_object_uri | object_uri |
+| boosts | idx_boosts_note_id | note_id |
+| boosts | idx_boosts_account_id | account_id |
 | delivery_queue | idx_delivery_queue_next_retry | next_retry_at |
 | hashtags | idx_hashtags_name | name |
 | hashtags | idx_hashtags_usage | usage_count DESC |
@@ -193,11 +210,11 @@ For performance optimization, engagement counts are denormalized on both `notes`
 | Column | Description |
 |--------|-------------|
 | `reply_count` | Total number of replies (including nested sub-replies, recursively counted) |
-| `like_count` | Number of likes/favorites (reserved for future use) |
-| `boost_count` | Number of boosts/retweets (reserved for future use) |
+| `like_count` | Number of likes/favorites received |
+| `boost_count` | Number of boosts/reblogs received |
 
 These counters are:
-- **Incrementally updated** when new replies are received (walks up the ancestor chain)
-- **Decremented** when replies are deleted
+- **Incrementally updated** when new replies, likes, or boosts are received
+- **Decremented** when replies are deleted or likes/boosts are undone
 - **Deduplicated** to avoid counting federated copies of local posts twice
 - **Backfilled** during database migration for existing data

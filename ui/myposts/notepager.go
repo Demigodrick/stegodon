@@ -69,6 +69,13 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case common.SessionState:
+		// Handle UpdateNoteList to refresh when notes are created/updated/liked
+		if msg == common.UpdateNoteList {
+			return m, loadNotes(m.userId)
+		}
+		return m, nil
+
 	case notesLoadedMsg:
 		m.Notes = msg.notes
 		// Restore selection after reload, but make sure it's within bounds
@@ -127,6 +134,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.confirmingDelete = true
 				m.deleteTargetId = m.Notes[m.Selected].Id
 			}
+		case "l":
+			// Like/unlike selected note
+			if len(m.Notes) > 0 && m.Selected < len(m.Notes) {
+				selectedNote := m.Notes[m.Selected]
+				noteURI := selectedNote.ObjectURI
+				// For local notes without ObjectURI, use local: prefix
+				if noteURI == "" {
+					noteURI = "local:" + selectedNote.Id.String()
+				}
+				return m, func() tea.Msg {
+					return common.LikeNoteMsg{
+						NoteURI: noteURI,
+						NoteID:  selectedNote.Id,
+						IsLocal: true, // myposts only shows local notes
+					}
+				}
+			}
 		}
 	}
 	return m, nil
@@ -166,6 +190,15 @@ func (m Model) View() string {
 				timeStr += " (edited)"
 			}
 
+			// Format engagement stats
+			engagementStr := ""
+			if note.LikeCount > 0 {
+				engagementStr = fmt.Sprintf(" · ⭐ %d", note.LikeCount)
+			}
+			if note.BoostCount > 0 {
+				engagementStr += fmt.Sprintf(" · 🔁 %d", note.BoostCount)
+			}
+
 			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags and mentions
 			messageWithLinks := util.MarkdownLinksToTerminal(note.Message)
 			messageWithLinksAndHashtags := util.HighlightHashtagsTerminal(messageWithLinks)
@@ -183,7 +216,7 @@ func (m Model) View() string {
 					Width(contentWidth)
 
 				// Render each line with the background and inverted text colors
-				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr))
+				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr + engagementStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render("@" + note.CreatedBy))
 				contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
 
@@ -195,7 +228,7 @@ func (m Model) View() string {
 				unselectedStyle := lipgloss.NewStyle().
 					Width(contentWidth)
 
-				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
+				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr + engagementStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render("@" + note.CreatedBy))
 				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
 

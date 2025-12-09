@@ -112,9 +112,11 @@
                             <p class="post-time">{{.TimeAgo}}</p>
                             <p class="post-text">{{.MessageHTML}}</p>
                         </div>
-                        {{if gt .ReplyCount 0}}
+                        {{if or (gt .ReplyCount 0) (gt .LikeCount 0) (gt .BoostCount 0)}}
                         <div class="post-footer">
-                            <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count">{{.ReplyCount}} {{if eq .ReplyCount 1}}reply{{else}}replies{{end}}</a>
+                            {{if gt .LikeCount 0}}<span class="like-count"><span class="icon">⭐</span> {{.LikeCount}}</span>{{end}}
+                            {{if gt .BoostCount 0}}<span class="boost-count"><span class="icon">🔁</span> {{.BoostCount}}</span>{{end}}
+                            {{if gt .ReplyCount 0}}<a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
                         </div>
                         {{end}}
                     </div>

@@ -16,12 +16,15 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - `Follow(Actor)` - Auto-accepted, creates follower relationship
 - `Accept(Follow)` - Confirms outgoing follow requests
 - `Undo(Follow)` - Removes follower relationship (authorization verified)
+- `Undo(Like)` - Removes like and decrements counter
+- `Undo(Announce)` - Removes boost and decrements counter
 - `Create(Note)` - Stores posts from followed accounts (with `inReplyTo` support)
 - `Update(Note)` - Updates stored post content
 - `Update(Person)` - Re-fetches and caches actor profile
 - `Delete(Note)` - Removes stored post (authorization verified)
 - `Delete(Actor)` - Removes actor and all associated follows
-- `Like` - Acknowledged but not fully processed
+- `Like` - Stores like and increments counter on target note
+- `Announce` - Stores boost and increments counter on target note
 
 ### Sending (Outbox)
 
@@ -31,6 +34,8 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - `Create(Note)` - Delivered to all followers when posting (includes `inReplyTo` for replies)
 - `Update(Note)` - Delivered to all followers when editing
 - `Delete(Note)` - Delivered to all followers when deleting
+- `Like` - Sent when pressing 'l' on a remote post (TUI)
+- `Undo(Like)` - Sent when unliking a previously liked remote post
 
 ## Object types
 
@@ -84,7 +89,7 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - Replies are stored with their `in_reply_to_uri` in the database for thread reconstruction
 - Reply counts are denormalized and recursively updated (includes all nested sub-replies)
 - Duplicate detection prevents counting federated copies of local posts twice
-- TUI: Press `r` on a post to reply, press `Enter` to view thread
+- TUI: Press `r` on a post to reply, press `Enter` to view thread, press `l` to like/unlike
 - Web: Single post pages show parent context and replies section
 - Full thread depth supported with nested reply navigation
 
@@ -99,8 +104,7 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 
 ## Not yet implemented
 
-- `Announce` (boost/reblog) activities
-- `Like` sending
+- `Announce` (boost/reblog) sending
 - Direct messages
 - Media attachments
 - Notifications for mentions

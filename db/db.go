@@ -59,10 +59,10 @@ const (
 	sqlInsertNote     = `INSERT INTO notes(id, user_id, message, created_at) VALUES (?, ?, ?, ?)`
 	sqlUpdateNote     = `UPDATE notes SET message = ?, edited_at = ? WHERE id = ?`
 	sqlDeleteNote     = `DELETE FROM notes WHERE id = ?`
-	sqlSelectNoteById = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at FROM notes
+	sqlSelectNoteById = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at, COALESCE(notes.like_count, 0), COALESCE(notes.boost_count, 0) FROM notes
     														INNER JOIN accounts ON accounts.id = notes.user_id
                                                             WHERE notes.id = ?`
-	sqlSelectNotesByUserId = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at, notes.in_reply_to_uri FROM notes
+	sqlSelectNotesByUserId = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at, notes.in_reply_to_uri, notes.like_count, notes.boost_count FROM notes
     														INNER JOIN accounts ON accounts.id = notes.user_id
                                                             WHERE notes.user_id = ?
                                                             ORDER BY notes.created_at DESC`
@@ -70,7 +70,7 @@ const (
     														INNER JOIN accounts ON accounts.id = notes.user_id
                                                             WHERE accounts.username = ?
                                                             ORDER BY notes.created_at DESC`
-	sqlSelectAllNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at, notes.in_reply_to_uri FROM notes
+	sqlSelectAllNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.edited_at, notes.in_reply_to_uri, COALESCE(notes.like_count, 0), COALESCE(notes.boost_count, 0) FROM notes
     														INNER JOIN accounts ON accounts.id = notes.user_id
                                                             ORDER BY notes.created_at DESC`
 
@@ -294,7 +294,7 @@ func (db *DB) ReadNotesByUserId(userId uuid.UUID) (error, *[]domain.Note) {
 		var createdAtStr string
 		var editedAtStr sql.NullString
 		var inReplyToURI sql.NullString
-		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI); err != nil {
+		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &note.LikeCount, &note.BoostCount); err != nil {
 			return err, &notes
 		}
 
@@ -367,7 +367,7 @@ func (db *DB) ReadNoteId(id uuid.UUID) (error, *domain.Note) {
 	var note domain.Note
 	var createdAtStr string
 	var editedAtStr sql.NullString
-	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr)
+	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &note.LikeCount, &note.BoostCount)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -404,7 +404,7 @@ func (db *DB) ReadAllNotes() (error, *[]domain.Note) {
 		var createdAtStr string
 		var editedAtStr sql.NullString
 		var inReplyToURI sql.NullString
-		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI); err != nil {
+		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &note.LikeCount, &note.BoostCount); err != nil {
 			return err, &notes
 		}
 
@@ -967,14 +967,14 @@ func (db *DB) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity
 	// Search for CREATE activities where the raw JSON contains the object URI
 	// Filter by activity_type='Create' to avoid finding Update/Delete activities
 	err := db.db.QueryRow(
-		`SELECT id, activity_uri, activity_type, actor_uri, raw_json, processed, local, created_at
+		`SELECT id, activity_uri, activity_type, actor_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
 		 FROM activities
 		 WHERE activity_type = 'Create' AND raw_json LIKE ? ESCAPE '\'
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		"%\"id\":\""+escapedURI+"\"%",
 	).Scan(&idStr, &activity.ActivityURI, &activity.ActivityType, &actorURIStr,
-		&activity.RawJSON, &activity.Processed, &activity.Local, &activity.CreatedAt)
+		&activity.RawJSON, &activity.Processed, &activity.Local, &activity.CreatedAt, &activity.LikeCount, &activity.BoostCount)
 
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
@@ -1032,8 +1032,8 @@ func (db *DB) ReadFederatedActivities(accountId uuid.UUID, limit int) (error, *[
 // Home Timeline queries - combines local notes and remote activities
 const (
 	// Local notes for home timeline: own posts + posts from followed local users (excluding replies)
-	// Includes reply_count for denormalized reply counting
-	sqlSelectHomeLocalNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.object_uri, COALESCE(notes.reply_count, 0) FROM notes
+	// Includes reply_count, like_count, and boost_count for denormalized counts
+	sqlSelectHomeLocalNotes = `SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.object_uri, COALESCE(notes.reply_count, 0), COALESCE(notes.like_count, 0), COALESCE(notes.boost_count, 0) FROM notes
 		INNER JOIN accounts ON accounts.id = notes.user_id
 		WHERE (notes.in_reply_to_uri IS NULL OR notes.in_reply_to_uri = '')
 		AND (notes.user_id = ? OR notes.user_id IN (
@@ -1046,7 +1046,7 @@ const (
 	// Excludes replies (activities where inReplyTo has a URL value, not null)
 	// Top-level posts have "inReplyTo":null, replies have "inReplyTo":"https://..."
 	// Includes reply_count for denormalized reply counting
-	sqlSelectHomeRemoteActivities = `SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, ra.username, ra.domain, COALESCE(a.reply_count, 0)
+	sqlSelectHomeRemoteActivities = `SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, ra.username, ra.domain, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
 		FROM activities a
 		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
 		INNER JOIN follows f ON f.target_account_id = ra.id
@@ -1073,8 +1073,10 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		var createdAtStr string
 		var objectURI sql.NullString
 		var replyCount int
+		var likeCount int
+		var boostCount int
 
-		if err := localRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount); err != nil {
+		if err := localRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount, &likeCount, &boostCount); err != nil {
 			return err, &posts
 		}
 
@@ -1095,6 +1097,8 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 			IsLocal:    true,
 			NoteID:     noteId,
 			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
 		})
 	}
 	if err = localRows.Err(); err != nil {
@@ -1117,8 +1121,10 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		var username string
 		var remDomain string
 		var replyCount int
+		var likeCount int
+		var boostCount int
 
-		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount); err != nil {
+		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount, &likeCount, &boostCount); err != nil {
 			return err, &posts
 		}
 
@@ -1137,6 +1143,8 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 			IsLocal:    false,
 			NoteID:     uuid.Nil,
 			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
 		})
 	}
 	if err = remoteRows.Err(); err != nil {
@@ -1943,7 +1951,7 @@ const (
 	sqlSelectHashtagByName    = `SELECT id, name, usage_count, last_used_at FROM hashtags WHERE name = ?`
 	sqlInsertNoteHashtag      = `INSERT OR IGNORE INTO note_hashtags(note_id, hashtag_id) VALUES (?, ?)`
 	sqlSelectHashtagsByNoteId = `SELECT h.name FROM hashtags h INNER JOIN note_hashtags nh ON h.id = nh.hashtag_id WHERE nh.note_id = ?`
-	sqlSelectNotesByHashtag   = `SELECT n.id, a.username, n.message, n.created_at, n.edited_at
+	sqlSelectNotesByHashtag   = `SELECT n.id, a.username, n.message, n.created_at, n.edited_at, COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 								FROM notes n
 								INNER JOIN accounts a ON a.id = n.user_id
 								INNER JOIN note_hashtags nh ON nh.note_id = n.id
@@ -2016,7 +2024,7 @@ func (db *DB) ReadNotesByHashtag(tag string, limit, offset int) (error, *[]domai
 		var note domain.Note
 		var createdAtStr string
 		var editedAtStr sql.NullString
-		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr); err != nil {
+		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &note.LikeCount, &note.BoostCount); err != nil {
 			return err, &notes
 		}
 
@@ -2126,6 +2134,286 @@ func (db *DB) DeleteMentionsByNoteId(noteId uuid.UUID) error {
 	})
 }
 
+// Like queries
+const (
+	sqlInsertLike               = `INSERT INTO likes(id, account_id, note_id, uri, created_at) VALUES (?, ?, ?, ?, ?)`
+	sqlSelectLikeByURI          = `SELECT id, account_id, note_id, uri, created_at FROM likes WHERE uri = ?`
+	sqlSelectLikeExists         = `SELECT COUNT(*) FROM likes WHERE account_id = ? AND note_id = ?`
+	sqlSelectLikeByAccountNote  = `SELECT id, account_id, note_id, uri, created_at FROM likes WHERE account_id = ? AND note_id = ?`
+	sqlSelectLikesByNoteId      = `SELECT id, account_id, note_id, uri, created_at FROM likes WHERE note_id = ?`
+	sqlCountLikesByNoteId       = `SELECT COUNT(*) FROM likes WHERE note_id = ?`
+	sqlDeleteLikeByURI          = `DELETE FROM likes WHERE uri = ?`
+	sqlDeleteLikeByAccountNote  = `DELETE FROM likes WHERE account_id = ? AND note_id = ?`
+	sqlUpdateNoteLikeCount      = `UPDATE notes SET like_count = ? WHERE id = ?`
+)
+
+// CreateLike creates a new like record
+func (db *DB) CreateLike(like *domain.Like) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlInsertLike,
+			like.Id.String(),
+			like.AccountId.String(),
+			like.NoteId.String(),
+			like.URI,
+			like.CreatedAt)
+		return err
+	})
+}
+
+// HasLike checks if a like already exists for this account and note
+func (db *DB) HasLike(accountId, noteId uuid.UUID) (bool, error) {
+	var count int
+	err := db.db.QueryRow(sqlSelectLikeExists, accountId.String(), noteId.String()).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// HasLikeByURI checks if a like already exists by its activity URI
+func (db *DB) HasLikeByURI(uri string) (bool, error) {
+	var like domain.Like
+	var idStr, accountIdStr, noteIdStr, createdAtStr string
+	err := db.db.QueryRow(sqlSelectLikeByURI, uri).Scan(&idStr, &accountIdStr, &noteIdStr, &like.URI, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReadLikesByNoteId returns all likes for a given note
+func (db *DB) ReadLikesByNoteId(noteId uuid.UUID) (error, []domain.Like) {
+	rows, err := db.db.Query(sqlSelectLikesByNoteId, noteId.String())
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var likes []domain.Like
+	for rows.Next() {
+		var like domain.Like
+		var idStr, accountIdStr, noteIdStr, createdAtStr string
+		if err := rows.Scan(&idStr, &accountIdStr, &noteIdStr, &like.URI, &createdAtStr); err != nil {
+			return err, likes
+		}
+		like.Id = uuid.MustParse(idStr)
+		like.AccountId = uuid.MustParse(accountIdStr)
+		like.NoteId = uuid.MustParse(noteIdStr)
+		if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+			like.CreatedAt = parsedTime
+		}
+		likes = append(likes, like)
+	}
+	if err = rows.Err(); err != nil {
+		return err, likes
+	}
+	return nil, likes
+}
+
+// CountLikesByNoteId returns the number of likes for a given note
+func (db *DB) CountLikesByNoteId(noteId uuid.UUID) (int, error) {
+	var count int
+	err := db.db.QueryRow(sqlCountLikesByNoteId, noteId.String()).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// DeleteLikeByURI removes a like by its activity URI
+func (db *DB) DeleteLikeByURI(uri string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlDeleteLikeByURI, uri)
+		return err
+	})
+}
+
+// UpdateNoteLikeCount updates the like_count for a specific note
+func (db *DB) UpdateNoteLikeCount(noteId uuid.UUID, count int) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlUpdateNoteLikeCount, count, noteId.String())
+		return err
+	})
+}
+
+// IncrementLikeCountByNoteId increments the like_count for a note and returns new count
+func (db *DB) IncrementLikeCountByNoteId(noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE notes SET like_count = like_count + 1 WHERE id = ?`, noteId.String())
+		return err
+	})
+}
+
+// DecrementLikeCountByNoteId decrements the like_count for a note
+func (db *DB) DecrementLikeCountByNoteId(noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE notes SET like_count = CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END WHERE id = ?`, noteId.String())
+		return err
+	})
+}
+
+// ReadLikeByAccountAndNote finds a like by the account that created it and the note it's on
+func (db *DB) ReadLikeByAccountAndNote(accountId, noteId uuid.UUID) (error, *domain.Like) {
+	var like domain.Like
+	var idStr, accountIdStr, noteIdStr, createdAtStr string
+	err := db.db.QueryRow(sqlSelectLikeByAccountNote, accountId.String(), noteId.String()).Scan(
+		&idStr, &accountIdStr, &noteIdStr, &like.URI, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return err, nil
+	}
+	like.Id = uuid.MustParse(idStr)
+	like.AccountId = uuid.MustParse(accountIdStr)
+	like.NoteId = uuid.MustParse(noteIdStr)
+	if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+		like.CreatedAt = parsedTime
+	}
+	return nil, &like
+}
+
+// DeleteLikeByAccountAndNote removes a like by the account and note IDs
+func (db *DB) DeleteLikeByAccountAndNote(accountId, noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlDeleteLikeByAccountNote, accountId.String(), noteId.String())
+		return err
+	})
+}
+
+// IncrementLikeCountByObjectURI increments the like_count for an activity by object URI
+func (db *DB) IncrementLikeCountByObjectURI(objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE activities SET like_count = like_count + 1 WHERE object_uri = ?`, objectURI)
+		return err
+	})
+}
+
+// DecrementLikeCountByObjectURI decrements the like_count for an activity by object URI
+func (db *DB) DecrementLikeCountByObjectURI(objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE activities SET like_count = CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END WHERE object_uri = ?`, objectURI)
+		return err
+	})
+}
+
+// HasLikeByObjectURI checks if an account has liked a post by its object URI
+func (db *DB) HasLikeByObjectURI(accountId uuid.UUID, objectURI string) (bool, error) {
+	var count int
+	err := db.db.QueryRow(`SELECT COUNT(*) FROM likes WHERE account_id = ? AND object_uri = ?`, accountId.String(), objectURI).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// CreateLikeByObjectURI creates a like for a remote post using object URI
+func (db *DB) CreateLikeByObjectURI(like *domain.Like, objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		// Use a deterministic UUID derived from the object_uri as the note_id placeholder
+		// This ensures the unique constraint (account_id, note_id) works correctly for remote posts
+		placeholderNoteId := uuid.NewSHA1(uuid.NameSpaceURL, []byte(objectURI))
+		_, err := tx.Exec(`INSERT INTO likes(id, account_id, note_id, uri, object_uri, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			like.Id.String(),
+			like.AccountId.String(),
+			placeholderNoteId.String(), // Deterministic placeholder based on object_uri
+			like.URI,
+			objectURI,
+			like.CreatedAt.Format(time.RFC3339))
+		return err
+	})
+}
+
+// ReadLikeByAccountAndObjectURI finds a like by account ID and object URI
+func (db *DB) ReadLikeByAccountAndObjectURI(accountId uuid.UUID, objectURI string) (error, *domain.Like) {
+	var like domain.Like
+	var idStr, accountIdStr, noteIdStr, createdAtStr string
+	var objURI sql.NullString
+	err := db.db.QueryRow(`SELECT id, account_id, note_id, uri, object_uri, created_at FROM likes WHERE account_id = ? AND object_uri = ?`,
+		accountId.String(), objectURI).Scan(&idStr, &accountIdStr, &noteIdStr, &like.URI, &objURI, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return err, nil
+	}
+	like.Id = uuid.MustParse(idStr)
+	like.AccountId = uuid.MustParse(accountIdStr)
+	if noteIdStr != "" {
+		like.NoteId = uuid.MustParse(noteIdStr)
+	}
+	if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+		like.CreatedAt = parsedTime
+	}
+	return nil, &like
+}
+
+// DeleteLikeByAccountAndObjectURI removes a like by account ID and object URI
+func (db *DB) DeleteLikeByAccountAndObjectURI(accountId uuid.UUID, objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM likes WHERE account_id = ? AND object_uri = ?`, accountId.String(), objectURI)
+		return err
+	})
+}
+
+// Boost queries
+const (
+	sqlInsertBoost              = `INSERT INTO boosts(id, account_id, note_id, uri, created_at) VALUES (?, ?, ?, ?, ?)`
+	sqlSelectBoostExists        = `SELECT COUNT(*) FROM boosts WHERE account_id = ? AND note_id = ?`
+	sqlSelectBoostByAccountNote = `SELECT id, account_id, note_id, uri, created_at FROM boosts WHERE account_id = ? AND note_id = ?`
+	sqlDeleteBoostByAccountNote = `DELETE FROM boosts WHERE account_id = ? AND note_id = ?`
+)
+
+// CreateBoost creates a new boost record
+func (db *DB) CreateBoost(boost *domain.Boost) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlInsertBoost,
+			boost.Id.String(),
+			boost.AccountId.String(),
+			boost.NoteId.String(),
+			boost.URI,
+			boost.CreatedAt)
+		return err
+	})
+}
+
+// HasBoost checks if a boost already exists for this account and note
+func (db *DB) HasBoost(accountId, noteId uuid.UUID) (bool, error) {
+	var count int
+	err := db.db.QueryRow(sqlSelectBoostExists, accountId.String(), noteId.String()).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// DeleteBoostByAccountAndNote removes a boost by the account and note IDs
+func (db *DB) DeleteBoostByAccountAndNote(accountId, noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlDeleteBoostByAccountNote, accountId.String(), noteId.String())
+		return err
+	})
+}
+
+// IncrementBoostCountByNoteId increments the boost_count for a note
+func (db *DB) IncrementBoostCountByNoteId(noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE notes SET boost_count = boost_count + 1 WHERE id = ?`, noteId.String())
+		return err
+	})
+}
+
+// DecrementBoostCountByNoteId decrements the boost_count for a note
+func (db *DB) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE notes SET boost_count = CASE WHEN boost_count > 0 THEN boost_count - 1 ELSE 0 END WHERE id = ?`, noteId.String())
+		return err
+	})
+}
+
 // Reply query methods
 
 // ReadRepliesByNoteId returns all direct replies to a local note by its UUID
@@ -2144,7 +2432,7 @@ func (db *DB) ReadRepliesByNoteId(noteId uuid.UUID) (error, *[]domain.Note) {
 
 	// Otherwise search by the note ID in the in_reply_to_uri (for local notes without object_uri)
 	rows, err := db.db.Query(`
-		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri
+		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri, COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 		FROM notes n
 		INNER JOIN accounts a ON a.id = n.user_id
 		WHERE n.in_reply_to_uri LIKE ?
@@ -2161,7 +2449,7 @@ func (db *DB) ReadRepliesByNoteId(noteId uuid.UUID) (error, *[]domain.Note) {
 // ReadRepliesByURI returns all direct replies to a note by its ActivityPub URI
 func (db *DB) ReadRepliesByURI(objectURI string) (error, *[]domain.Note) {
 	rows, err := db.db.Query(`
-		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri
+		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri, COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 		FROM notes n
 		INNER JOIN accounts a ON a.id = n.user_id
 		WHERE n.in_reply_to_uri = ?
@@ -2505,7 +2793,7 @@ func (db *DB) countRemoteRepliesByURIPattern(uriPattern string) (int, error) {
 func (db *DB) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 	// First try exact match on object_uri column
 	row := db.db.QueryRow(`
-		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri
+		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri, COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 		FROM notes n
 		INNER JOIN accounts a ON a.id = n.user_id
 		WHERE n.object_uri = ?`,
@@ -2514,7 +2802,7 @@ func (db *DB) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 	var note domain.Note
 	var createdAtStr string
 	var editedAtStr, inReplyToURI, noteObjectURI sql.NullString
-	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &noteObjectURI)
+	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &noteObjectURI, &note.LikeCount, &note.BoostCount)
 	if err == nil {
 		note.CreatedAt, _ = parseTimestamp(createdAtStr)
 		if editedAtStr.Valid {
@@ -2551,7 +2839,7 @@ func (db *DB) ReadNoteByURI(objectURI string) (error, *domain.Note) {
 // ReadNoteIdWithReplyInfo returns a note with full reply information
 func (db *DB) ReadNoteIdWithReplyInfo(id uuid.UUID) (error, *domain.Note) {
 	row := db.db.QueryRow(`
-		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri
+		SELECT n.id, a.username, n.message, n.created_at, n.edited_at, n.in_reply_to_uri, n.object_uri, COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 		FROM notes n
 		INNER JOIN accounts a ON a.id = n.user_id
 		WHERE n.id = ?`,
@@ -2560,7 +2848,7 @@ func (db *DB) ReadNoteIdWithReplyInfo(id uuid.UUID) (error, *domain.Note) {
 	var note domain.Note
 	var createdAtStr string
 	var editedAtStr, inReplyToURI, objectURI sql.NullString
-	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &objectURI)
+	err := row.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &objectURI, &note.LikeCount, &note.BoostCount)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -2587,7 +2875,7 @@ func (db *DB) scanNotesWithReplyInfo(rows *sql.Rows) (error, *[]domain.Note) {
 		var note domain.Note
 		var createdAtStr string
 		var editedAtStr, inReplyToURI, objectURI sql.NullString
-		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &objectURI); err != nil {
+		if err := rows.Scan(&note.Id, &note.CreatedBy, &note.Message, &createdAtStr, &editedAtStr, &inReplyToURI, &objectURI, &note.LikeCount, &note.BoostCount); err != nil {
 			return err, &notes
 		}
 
@@ -2617,7 +2905,7 @@ func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Acti
 	// Search for activities where the inReplyTo field matches the parentURI
 	// We search in raw_json since inReplyTo is nested in the object
 	rows, err := db.db.Query(`
-		SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at
+		SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
 		FROM activities
 		WHERE activity_type = 'Create'
 		AND (raw_json LIKE ? OR raw_json LIKE ?)
@@ -2633,7 +2921,7 @@ func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Acti
 	for rows.Next() {
 		var a domain.Activity
 		var idStr string
-		err := rows.Scan(&idStr, &a.ActivityURI, &a.ActivityType, &a.ActorURI, &a.ObjectURI, &a.RawJSON, &a.Processed, &a.Local, &a.CreatedAt)
+		err := rows.Scan(&idStr, &a.ActivityURI, &a.ActivityType, &a.ActorURI, &a.ObjectURI, &a.RawJSON, &a.Processed, &a.Local, &a.CreatedAt, &a.LikeCount, &a.BoostCount)
 		if err != nil {
 			continue
 		}

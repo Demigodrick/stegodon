@@ -226,6 +226,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 			}
+		case "l":
+			// Like/unlike the selected post
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				noteURI := selectedPost.ObjectURI
+				// For local posts without ObjectURI, use local: prefix
+				if noteURI == "" && selectedPost.IsLocal && selectedPost.NoteID != uuid.Nil {
+					noteURI = "local:" + selectedPost.NoteID.String()
+				}
+				if noteURI != "" || selectedPost.NoteID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.LikeNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  selectedPost.NoteID,
+							IsLocal: selectedPost.IsLocal,
+						}
+					}
+				}
+			}
 		}
 	}
 	return m, nil
@@ -255,12 +274,18 @@ func (m Model) View() string {
 		for i := start; i < end; i++ {
 			post := m.Posts[i]
 
-			// Format timestamp with reply count indicator
+			// Format timestamp with engagement indicators
 			timeStr := formatTime(post.Time)
 			if post.ReplyCount == 1 {
 				timeStr = fmt.Sprintf("%s · 1 reply", timeStr)
 			} else if post.ReplyCount > 1 {
 				timeStr = fmt.Sprintf("%s · %d replies", timeStr, post.ReplyCount)
+			}
+			if post.LikeCount > 0 {
+				timeStr = fmt.Sprintf("%s · ⭐ %d", timeStr, post.LikeCount)
+			}
+			if post.BoostCount > 0 {
+				timeStr = fmt.Sprintf("%s · 🔁 %d", timeStr, post.BoostCount)
 			}
 
 			// Format author with indicator for local vs remote

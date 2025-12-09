@@ -27,12 +27,17 @@ type MockDatabase struct {
 	DeliveryQueue   map[uuid.UUID]*domain.DeliveryQueueItem
 	Notes           map[uuid.UUID]*domain.Note
 	NotesByURI      map[string]*domain.Note
+	Likes           map[uuid.UUID]*domain.Like
+	LikesByURI      map[string]*domain.Like
+	Boosts          map[uuid.UUID]*domain.Boost
 
 	// Error injection for testing error handling
 	ForceError error
 
 	// Call tracking for testing
-	IncrementReplyCountCalls []string // URIs passed to IncrementReplyCountByURI
+	IncrementReplyCountCalls []string    // URIs passed to IncrementReplyCountByURI
+	IncrementLikeCountCalls  []uuid.UUID // Note IDs passed to IncrementLikeCountByNoteId
+	IncrementBoostCountCalls []uuid.UUID // Note IDs passed to IncrementBoostCountByNoteId
 }
 
 // NewMockDatabase creates a new mock database with initialized maps
@@ -50,6 +55,9 @@ func NewMockDatabase() *MockDatabase {
 		DeliveryQueue:   make(map[uuid.UUID]*domain.DeliveryQueueItem),
 		Notes:           make(map[uuid.UUID]*domain.Note),
 		NotesByURI:      make(map[string]*domain.Note),
+		Likes:           make(map[uuid.UUID]*domain.Like),
+		LikesByURI:      make(map[string]*domain.Like),
+		Boosts:          make(map[uuid.UUID]*domain.Boost),
 	}
 }
 
@@ -459,6 +467,102 @@ func (m *MockDatabase) IncrementReplyCountByURI(parentURI string) error {
 	return nil
 }
 
+// Like operations
+
+func (m *MockDatabase) CreateLike(like *domain.Like) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.Likes[like.Id] = like
+	if like.URI != "" {
+		m.LikesByURI[like.URI] = like
+	}
+	return nil
+}
+
+func (m *MockDatabase) HasLikeByURI(uri string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return false, m.ForceError
+	}
+	_, ok := m.LikesByURI[uri]
+	return ok, nil
+}
+
+func (m *MockDatabase) HasLike(accountId, noteId uuid.UUID) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return false, m.ForceError
+	}
+	for _, like := range m.Likes {
+		if like.AccountId == accountId && like.NoteId == noteId {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *MockDatabase) ReadLikeByAccountAndNote(accountId, noteId uuid.UUID) (error, *domain.Like) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return m.ForceError, nil
+	}
+	for _, like := range m.Likes {
+		if like.AccountId == accountId && like.NoteId == noteId {
+			return nil, like
+		}
+	}
+	return sql.ErrNoRows, nil
+}
+
+func (m *MockDatabase) DeleteLikeByAccountAndNote(accountId, noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	for id, like := range m.Likes {
+		if like.AccountId == accountId && like.NoteId == noteId {
+			delete(m.LikesByURI, like.URI)
+			delete(m.Likes, id)
+			break
+		}
+	}
+	return nil
+}
+
+func (m *MockDatabase) IncrementLikeCountByNoteId(noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.IncrementLikeCountCalls = append(m.IncrementLikeCountCalls, noteId)
+	if note, ok := m.Notes[noteId]; ok {
+		note.LikeCount++
+	}
+	return nil
+}
+
+func (m *MockDatabase) DecrementLikeCountByNoteId(noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	if note, ok := m.Notes[noteId]; ok {
+		if note.LikeCount > 0 {
+			note.LikeCount--
+		}
+	}
+	return nil
+}
+
 // AddNote adds a note to the mock database
 func (m *MockDatabase) AddNote(note *domain.Note) {
 	m.mu.Lock()
@@ -467,6 +571,74 @@ func (m *MockDatabase) AddNote(note *domain.Note) {
 	if note.ObjectURI != "" {
 		m.NotesByURI[note.ObjectURI] = note
 	}
+}
+
+// Boost operations
+
+func (m *MockDatabase) CreateBoost(boost *domain.Boost) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.Boosts[boost.Id] = boost
+	return nil
+}
+
+func (m *MockDatabase) HasBoost(accountId, noteId uuid.UUID) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return false, m.ForceError
+	}
+	for _, boost := range m.Boosts {
+		if boost.AccountId == accountId && boost.NoteId == noteId {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *MockDatabase) DeleteBoostByAccountAndNote(accountId, noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	for id, boost := range m.Boosts {
+		if boost.AccountId == accountId && boost.NoteId == noteId {
+			delete(m.Boosts, id)
+			break
+		}
+	}
+	return nil
+}
+
+func (m *MockDatabase) IncrementBoostCountByNoteId(noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.IncrementBoostCountCalls = append(m.IncrementBoostCountCalls, noteId)
+	if note, ok := m.Notes[noteId]; ok {
+		note.BoostCount++
+	}
+	return nil
+}
+
+func (m *MockDatabase) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	if note, ok := m.Notes[noteId]; ok {
+		if note.BoostCount > 0 {
+			note.BoostCount--
+		}
+	}
+	return nil
 }
 
 // Ensure MockDatabase implements Database interface

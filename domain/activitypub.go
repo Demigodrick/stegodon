@@ -40,6 +40,15 @@ type Like struct {
 	CreatedAt time.Time
 }
 
+// Boost represents a boost/reblog/announce on a note
+type Boost struct {
+	Id        uuid.UUID
+	AccountId uuid.UUID // Who boosted (can be local or remote)
+	NoteId    uuid.UUID // Which note was boosted
+	URI       string    // ActivityPub Announce activity URI
+	CreatedAt time.Time
+}
+
 // Activity represents an ActivityPub activity (for logging/deduplication)
 type Activity struct {
 	Id           uuid.UUID
@@ -51,6 +60,8 @@ type Activity struct {
 	Processed    bool
 	CreatedAt    time.Time
 	Local        bool // true if originated from this server
+	LikeCount    int  // Denormalized like count
+	BoostCount   int  // Denormalized boost count
 }
 
 // DeliveryQueueItem represents an item in the delivery queue

@@ -57,3 +57,10 @@ type ViewThreadMsg struct {
 	Content   string    // Full content
 	CreatedAt time.Time // Timestamp
 }
+
+// LikeNoteMsg is sent when user presses 'l' to like/unlike a post
+type LikeNoteMsg struct {
+	NoteURI string    // ActivityPub object URI of the note being liked
+	NoteID  uuid.UUID // Local UUID (if local note)
+	IsLocal bool      // Whether this is a local note
+}
