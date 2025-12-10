@@ -96,6 +96,10 @@ func (w *DBWrapper) UpdateActivity(activity *domain.Activity) error {
 	return w.db.UpdateActivity(activity)
 }
 
+func (w *DBWrapper) ReadActivityByURI(uri string) (error, *domain.Activity) {
+	return w.db.ReadActivityByURI(uri)
+}
+
 func (w *DBWrapper) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity) {
 	return w.db.ReadActivityByObjectURI(objectURI)
 }
@@ -190,6 +194,28 @@ func (w *DBWrapper) UpdateDeliveryAttempt(id uuid.UUID, attempts int, nextRetry 
 
 func (w *DBWrapper) DeleteDelivery(id uuid.UUID) error {
 	return w.db.DeleteDelivery(id)
+}
+
+// Relay operations
+
+func (w *DBWrapper) CreateRelay(relay *domain.Relay) error {
+	return w.db.CreateRelay(relay)
+}
+
+func (w *DBWrapper) ReadActiveRelays() (error, *[]domain.Relay) {
+	return w.db.ReadActiveRelays()
+}
+
+func (w *DBWrapper) ReadRelayByActorURI(actorURI string) (error, *domain.Relay) {
+	return w.db.ReadRelayByActorURI(actorURI)
+}
+
+func (w *DBWrapper) UpdateRelayStatus(id uuid.UUID, status string, acceptedAt *time.Time) error {
+	return w.db.UpdateRelayStatus(id, status, acceptedAt)
+}
+
+func (w *DBWrapper) DeleteRelay(id uuid.UUID) error {
+	return w.db.DeleteRelay(id)
 }
 
 // Ensure DBWrapper implements Database interface

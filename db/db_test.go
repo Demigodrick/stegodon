@@ -128,6 +128,18 @@ func setupTestDB(t *testing.T) *DB {
 		PRIMARY KEY (note_id, hashtag_id)
 	)`)
 
+	// Create relays table
+	db.db.Exec(`CREATE TABLE IF NOT EXISTS relays (
+		id TEXT NOT NULL PRIMARY KEY,
+		actor_uri TEXT UNIQUE NOT NULL,
+		inbox_uri TEXT NOT NULL,
+		follow_uri TEXT,
+		name TEXT,
+		status TEXT DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		accepted_at TIMESTAMP
+	)`)
+
 	return db
 }
 
@@ -3233,5 +3245,209 @@ func TestReadHomeTimelinePosts_RemotePostsIncludeLikeAndBoostCounts(t *testing.T
 	}
 	if remotePost.BoostCount != 8 {
 		t.Errorf("Expected BoostCount 8, got %d", remotePost.BoostCount)
+	}
+}
+
+// ============ Relay Tests ============
+
+func TestCreateRelay(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	relay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay.example.com/actor",
+		InboxURI:  "https://relay.example.com/inbox",
+		Name:      "Test Relay",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	err := db.CreateRelay(relay)
+	if err != nil {
+		t.Fatalf("CreateRelay failed: %v", err)
+	}
+
+	// Verify it was created
+	err, fetched := db.ReadRelayByActorURI(relay.ActorURI)
+	if err != nil {
+		t.Fatalf("ReadRelayByActorURI failed: %v", err)
+	}
+
+	if fetched.Name != relay.Name {
+		t.Errorf("Expected Name %s, got %s", relay.Name, fetched.Name)
+	}
+	if fetched.Status != "pending" {
+		t.Errorf("Expected Status 'pending', got %s", fetched.Status)
+	}
+}
+
+func TestReadAllRelays(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create multiple relays
+	relay1 := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay1.example.com/actor",
+		InboxURI:  "https://relay1.example.com/inbox",
+		Name:      "Relay 1",
+		Status:    "active",
+		CreatedAt: time.Now(),
+	}
+	relay2 := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay2.example.com/actor",
+		InboxURI:  "https://relay2.example.com/inbox",
+		Name:      "Relay 2",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	db.CreateRelay(relay1)
+	db.CreateRelay(relay2)
+
+	err, relays := db.ReadAllRelays()
+	if err != nil {
+		t.Fatalf("ReadAllRelays failed: %v", err)
+	}
+
+	if len(*relays) != 2 {
+		t.Errorf("Expected 2 relays, got %d", len(*relays))
+	}
+}
+
+func TestReadActiveRelays(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create active and pending relays
+	activeRelay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://active.relay.example.com/actor",
+		InboxURI:  "https://active.relay.example.com/inbox",
+		Name:      "Active Relay",
+		Status:    "active",
+		CreatedAt: time.Now(),
+	}
+	pendingRelay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://pending.relay.example.com/actor",
+		InboxURI:  "https://pending.relay.example.com/inbox",
+		Name:      "Pending Relay",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	db.CreateRelay(activeRelay)
+	db.CreateRelay(pendingRelay)
+
+	err, relays := db.ReadActiveRelays()
+	if err != nil {
+		t.Fatalf("ReadActiveRelays failed: %v", err)
+	}
+
+	if len(*relays) != 1 {
+		t.Errorf("Expected 1 active relay, got %d", len(*relays))
+	}
+	if (*relays)[0].Name != "Active Relay" {
+		t.Errorf("Expected 'Active Relay', got %s", (*relays)[0].Name)
+	}
+}
+
+func TestUpdateRelayStatus(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	relay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay.example.com/actor",
+		InboxURI:  "https://relay.example.com/inbox",
+		Name:      "Test Relay",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+	db.CreateRelay(relay)
+
+	// Update to active
+	now := time.Now()
+	err := db.UpdateRelayStatus(relay.Id, "active", &now)
+	if err != nil {
+		t.Fatalf("UpdateRelayStatus failed: %v", err)
+	}
+
+	// Verify update
+	err, fetched := db.ReadRelayByActorURI(relay.ActorURI)
+	if err != nil {
+		t.Fatalf("ReadRelayByActorURI failed: %v", err)
+	}
+
+	if fetched.Status != "active" {
+		t.Errorf("Expected Status 'active', got %s", fetched.Status)
+	}
+	if fetched.AcceptedAt == nil {
+		t.Error("Expected AcceptedAt to be set")
+	}
+}
+
+func TestDeleteRelay(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	relay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay.example.com/actor",
+		InboxURI:  "https://relay.example.com/inbox",
+		Name:      "Test Relay",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+	db.CreateRelay(relay)
+
+	// Delete relay
+	err := db.DeleteRelay(relay.Id)
+	if err != nil {
+		t.Fatalf("DeleteRelay failed: %v", err)
+	}
+
+	// Verify deletion
+	err, fetched := db.ReadRelayByActorURI(relay.ActorURI)
+	if err == nil && fetched != nil {
+		t.Error("Expected relay to be deleted")
+	}
+}
+
+func TestReadRelayByActorURINotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	err, relay := db.ReadRelayByActorURI("https://nonexistent.relay.com/actor")
+	if err == nil && relay != nil {
+		t.Error("Expected error for non-existent relay")
+	}
+}
+
+func TestReadRelayById(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	relay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  "https://relay.example.com/actor",
+		InboxURI:  "https://relay.example.com/inbox",
+		Name:      "Test Relay",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+	db.CreateRelay(relay)
+
+	// Read by ID
+	err, fetched := db.ReadRelayById(relay.Id)
+	if err != nil {
+		t.Fatalf("ReadRelayById failed: %v", err)
+	}
+
+	if fetched.ActorURI != relay.ActorURI {
+		t.Errorf("Expected ActorURI %s, got %s", relay.ActorURI, fetched.ActorURI)
 	}
 }

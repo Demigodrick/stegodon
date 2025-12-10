@@ -105,7 +105,7 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 		return
 	}
 
-	// Store activity in database
+	// Store activity in database (except for Announce which may need special handling for relays)
 	database := deps.Database
 
 	// Extract ObjectURI from the activity's object field
@@ -123,27 +123,31 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 		}
 	}
 
-	activityRecord := &domain.Activity{
-		Id:           uuid.New(),
-		ActivityURI:  activity.ID,
-		ActivityType: activity.Type,
-		ActorURI:     activity.Actor,
-		ObjectURI:    objectURI,
-		RawJSON:      string(body),
-		Processed:    false,
-		Local:        false,
-		CreatedAt:    time.Now(),
-	}
-
-	if err := database.CreateActivity(activityRecord); err != nil {
-		// Check if this is a duplicate (already processed)
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			log.Printf("Inbox: Activity %s already processed, returning success", activity.ID)
-			w.WriteHeader(http.StatusAccepted)
-			return
+	// For Announce activities, defer storage to the handler (relay vs regular boost have different storage needs)
+	var activityRecord *domain.Activity
+	if activity.Type != "Announce" {
+		activityRecord = &domain.Activity{
+			Id:           uuid.New(),
+			ActivityURI:  activity.ID,
+			ActivityType: activity.Type,
+			ActorURI:     activity.Actor,
+			ObjectURI:    objectURI,
+			RawJSON:      string(body),
+			Processed:    false,
+			Local:        false,
+			CreatedAt:    time.Now(),
 		}
-		log.Printf("Inbox: Failed to store activity: %v", err)
-		// Don't fail the request, we'll process it anyway
+
+		if err := database.CreateActivity(activityRecord); err != nil {
+			// Check if this is a duplicate (already processed)
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				log.Printf("Inbox: Activity %s already processed, returning success", activity.ID)
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			log.Printf("Inbox: Failed to store activity: %v", err)
+			// Don't fail the request, we'll process it anyway
+		}
 	}
 
 	// Process activity based on type
@@ -200,11 +204,13 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 		log.Printf("Inbox: Unsupported activity type: %s", activity.Type)
 	}
 
-	// Mark activity as processed
-	activityRecord.Processed = true
-	if err := database.UpdateActivity(activityRecord); err != nil {
-		log.Printf("Inbox: Failed to update activity: %v", err)
-		// Continue anyway, this is not critical
+	// Mark activity as processed (only if we stored it above - Announce handles its own storage)
+	if activityRecord != nil {
+		activityRecord.Processed = true
+		if err := database.UpdateActivity(activityRecord); err != nil {
+			log.Printf("Inbox: Failed to update activity: %v", err)
+			// Continue anyway, this is not critical
+		}
 	}
 
 	// Return 202 Accepted
@@ -643,10 +649,11 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 	log.Printf("Inbox: Processing Announce activity for %s", username)
 
 	var announceActivity struct {
-		ID     string `json:"id"`
-		Type   string `json:"type"`
-		Actor  string `json:"actor"`
-		Object any    `json:"object"` // Can be string URI or object with id field
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		Actor     string `json:"actor"`
+		Object    any    `json:"object"`    // Can be string URI or object with id field
+		Published string `json:"published"` // For relay-forwarded content
 	}
 
 	if err := json.Unmarshal(body, &announceActivity); err != nil {
@@ -663,12 +670,27 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 		return fmt.Errorf("Announce activity missing object")
 	}
 
-	// Extract object URI from the object field (can be string or object with id)
+	database := deps.Database
+
+	// Check if this Announce is from a relay we're subscribed to
+	// First try exact match
+	err, relay := database.ReadRelayByActorURI(announceActivity.Actor)
+	isFromRelay := err == nil && relay != nil
+
+	// If not exact match, check if the actor is from any relay's domain
+	// (e.g., relay.fedi.buzz/tag/prints when we subscribed to relay.fedi.buzz/tag/music)
+	if !isFromRelay {
+		isFromRelay = isActorFromAnyRelay(announceActivity.Actor, database)
+	}
+
+	// Extract object URI and possibly the full object from the object field
 	var objectURI string
+	var embeddedObject map[string]any
 	switch obj := announceActivity.Object.(type) {
 	case string:
 		objectURI = obj
 	case map[string]any:
+		embeddedObject = obj
 		if id, ok := obj["id"].(string); ok {
 			objectURI = id
 		}
@@ -677,12 +699,20 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 		return fmt.Errorf("Announce activity has invalid object format")
 	}
 
-	database := deps.Database
+	// If this is from a relay, handle it as relay-forwarded content
+	if isFromRelay {
+		return handleRelayAnnounce(announceActivity.ID, objectURI, embeddedObject, deps)
+	}
 
-	// Find the note being boosted by its object_uri
+	// Standard boost handling - find the note being boosted by its object_uri
 	err, note := database.ReadNoteByURI(objectURI)
 	if err != nil || note == nil {
-		log.Printf("Inbox: Note not found for Announce object %s: %v", objectURI, err)
+		// Check if this looks like a relay actor (contains /tag/ in path) but we're not subscribed
+		if strings.Contains(announceActivity.Actor, "/tag/") || strings.Contains(announceActivity.Actor, "/relay") {
+			log.Printf("Inbox: Ignoring Announce from unsubscribed relay %s (object: %s)", announceActivity.Actor, objectURI)
+		} else {
+			log.Printf("Inbox: Note not found for Announce object %s: %v", objectURI, err)
+		}
 		return nil // Not an error - the note might not exist locally
 	}
 
@@ -725,6 +755,187 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 	return nil
 }
 
+// handleRelayAnnounce processes an Announce from a relay, fetching and storing the announced content
+func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string]any, deps *InboxDeps) error {
+	database := deps.Database
+
+	// Check if we already have this announce activity (by activity_uri)
+	err, existingByAnnounce := database.ReadActivityByURI(announceID)
+	if err == nil && existingByAnnounce != nil {
+		log.Printf("Inbox: Relay-forwarded activity %s already exists (matched ID: %s), skipping", announceID, existingByAnnounce.ActivityURI)
+		return nil
+	}
+
+	// Check if we already have this object (by object_uri)
+	err, existingActivity := database.ReadActivityByObjectURI(objectURI)
+	if err == nil && existingActivity != nil {
+		log.Printf("Inbox: Relay-forwarded object %s already exists (activity: %s), skipping", objectURI, existingActivity.ActivityURI)
+		return nil
+	}
+
+	// Try to get the object content - either embedded or by fetching
+	var objectContent map[string]any
+	var actorURI string
+
+	if embeddedObject != nil {
+		// Object is embedded in the Announce
+		objectContent = embeddedObject
+		if actor, ok := embeddedObject["attributedTo"].(string); ok {
+			actorURI = actor
+		} else if actor, ok := embeddedObject["actor"].(string); ok {
+			actorURI = actor
+		}
+	} else {
+		// Need to fetch the object
+		log.Printf("Inbox: Fetching relay-forwarded object %s", objectURI)
+		fetchedObject, err := fetchActivityPubObject(objectURI, deps.HTTPClient)
+		if err != nil {
+			log.Printf("Inbox: Failed to fetch relay-forwarded object %s: %v", objectURI, err)
+			return nil // Not a fatal error
+		}
+		objectContent = fetchedObject
+		if actor, ok := fetchedObject["attributedTo"].(string); ok {
+			actorURI = actor
+		} else if actor, ok := fetchedObject["actor"].(string); ok {
+			actorURI = actor
+		}
+	}
+
+	if actorURI == "" {
+		log.Printf("Inbox: Relay-forwarded object %s has no attributedTo/actor", objectURI)
+		return nil
+	}
+
+	// Get the object type
+	objectType, _ := objectContent["type"].(string)
+	if objectType != "Note" && objectType != "Article" {
+		log.Printf("Inbox: Relay-forwarded object %s is type %s, skipping", objectURI, objectType)
+		return nil
+	}
+
+	// Fetch and cache the actor
+	_, err = GetOrFetchActorWithDeps(actorURI, deps.HTTPClient, database)
+	if err != nil {
+		log.Printf("Inbox: Failed to fetch actor %s for relay-forwarded content: %v", actorURI, err)
+		// Continue anyway - we can still store the activity
+	}
+
+	// Marshal the object content for storage
+	rawJSON, err := json.Marshal(map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"type":     "Create",
+		"actor":    actorURI,
+		"object":   objectContent,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal relay-forwarded object: %w", err)
+	}
+
+	// Store as a Create activity so it shows in the timeline
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  announceID, // Use the Announce ID as the activity URI (unique)
+		ActivityType: "Create",   // Store as Create so it shows in timeline
+		ActorURI:     actorURI,
+		ObjectURI:    objectURI,
+		RawJSON:      string(rawJSON),
+		Processed:    true,
+		Local:        false,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := database.CreateActivity(activity); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			log.Printf("Inbox: Relay-forwarded activity %s already exists", announceID)
+			return nil
+		}
+		return fmt.Errorf("failed to store relay-forwarded activity: %w", err)
+	}
+
+	log.Printf("Inbox: Stored relay-forwarded %s from %s", objectType, actorURI)
+	return nil
+}
+
+// isActorFromAnyRelay checks if an actor URI belongs to any relay domain we're subscribed to.
+// This handles cases where a relay like relay.fedi.buzz sends Announces from different tag actors
+// (e.g., /tag/prints) when we subscribed to /tag/music - they're all from the same relay domain.
+func isActorFromAnyRelay(actorURI string, database Database) bool {
+	// Extract domain from the actor URI
+	actorDomain := extractDomainFromURI(actorURI)
+	if actorDomain == "" {
+		return false
+	}
+
+	// Get all active relays
+	err, relays := database.ReadActiveRelays()
+	if err != nil || relays == nil {
+		log.Printf("Inbox: Error reading relays for domain check: %v", err)
+		return false
+	}
+
+	// Check if the actor's domain matches any relay's domain
+	for _, relay := range *relays {
+		relayDomain := extractDomainFromURI(relay.ActorURI)
+		if relayDomain != "" && relayDomain == actorDomain {
+			log.Printf("Inbox: Actor %s is from relay domain %s (matched relay: %s)", actorURI, actorDomain, relay.ActorURI)
+			return true
+		}
+	}
+
+	return false
+}
+
+// extractDomainFromURI extracts the domain (host) from a URI
+func extractDomainFromURI(uri string) string {
+	// Simple extraction: find the domain between :// and the next /
+	if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
+		return ""
+	}
+
+	// Find start after ://
+	start := strings.Index(uri, "://")
+	if start == -1 {
+		return ""
+	}
+	start += 3
+
+	// Find end at next / or end of string
+	rest := uri[start:]
+	end := strings.Index(rest, "/")
+	if end == -1 {
+		return rest
+	}
+	return rest[:end]
+}
+
+// fetchActivityPubObject fetches an ActivityPub object by URI
+func fetchActivityPubObject(uri string, client HTTPClient) (map[string]any, error) {
+	req, err := http.NewRequest("GET", uri, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "application/activity+json, application/ld+json")
+	req.Header.Set("User-Agent", "Stegodon/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // handleAcceptActivity processes an Accept activity (response to Follow)
 func handleAcceptActivity(body []byte, username string) error {
 	deps := &InboxDeps{
@@ -764,8 +975,21 @@ func handleAcceptActivityWithDeps(body []byte, username string, deps *InboxDeps)
 		return fmt.Errorf("could not extract Follow ID from Accept object")
 	}
 
-	// Update the follow to accepted=true
 	database := deps.Database
+
+	// First check if this is an Accept for a relay subscription
+	err, relay := database.ReadRelayByActorURI(accept.Actor)
+	if err == nil && relay != nil {
+		// This is an Accept from a relay - update relay status to active
+		now := time.Now()
+		if err := database.UpdateRelayStatus(relay.Id, "active", &now); err != nil {
+			return fmt.Errorf("failed to update relay status: %w", err)
+		}
+		log.Printf("Inbox: Relay %s accepted our subscription", accept.Actor)
+		return nil
+	}
+
+	// Not a relay - try updating a regular follow to accepted=true
 	if err := database.AcceptFollowByURI(followID); err != nil {
 		return fmt.Errorf("failed to accept follow: %w", err)
 	}

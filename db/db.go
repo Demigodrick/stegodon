@@ -953,11 +953,34 @@ func (db *DB) ReadActivityByURI(uri string) (error, *domain.Activity) {
 	return nil, &activity
 }
 
-// ReadActivityByObjectURI reads an activity by searching for the object URI in the raw JSON
-// This is needed because Create activities are stored with their activity ID, not the Note ID
+// ReadActivityByObjectURI reads an activity by the object URI
+// First tries exact match on object_uri column, falls back to searching raw_json for older activities
 func (db *DB) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity) {
 	var activity domain.Activity
 	var idStr, actorURIStr string
+
+	// First try exact match on object_uri column (faster and more reliable)
+	err := db.db.QueryRow(
+		`SELECT id, activity_uri, activity_type, actor_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
+		 FROM activities
+		 WHERE activity_type = 'Create' AND object_uri = ?
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		objectURI,
+	).Scan(&idStr, &activity.ActivityURI, &activity.ActivityType, &actorURIStr,
+		&activity.RawJSON, &activity.Processed, &activity.Local, &activity.CreatedAt, &activity.LikeCount, &activity.BoostCount)
+
+	if err == nil {
+		activity.Id, _ = uuid.Parse(idStr)
+		activity.ActorURI = actorURIStr
+		activity.ObjectURI = objectURI
+		return nil, &activity
+	}
+
+	// If not found by column, fall back to LIKE search in raw_json for older activities
+	if err.Error() != "sql: no rows in result set" {
+		return err, nil
+	}
 
 	// Escape LIKE special characters to prevent wildcard injection
 	escapedURI := strings.ReplaceAll(objectURI, "\\", "\\\\") // Escape backslash first
@@ -966,7 +989,7 @@ func (db *DB) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity
 
 	// Search for CREATE activities where the raw JSON contains the object URI
 	// Filter by activity_type='Create' to avoid finding Update/Delete activities
-	err := db.db.QueryRow(
+	err = db.db.QueryRow(
 		`SELECT id, activity_uri, activity_type, actor_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
 		 FROM activities
 		 WHERE activity_type = 'Create' AND raw_json LIKE ? ESCAPE '\'
@@ -1151,6 +1174,66 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		return err, &posts
 	}
 
+	// Fetch relay-forwarded activities (from active relays, not requiring follow relationship)
+	// These are identified by activity_uri having the same domain as any active relay
+	// We extract the domain by finding content between :// and the next /
+	relayRows, err := db.db.Query(`
+		SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
+		FROM activities a
+		WHERE a.activity_type = 'Create' AND a.local = 0
+		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
+		AND EXISTS (
+			SELECT 1 FROM relays r
+			WHERE r.status = 'active'
+			AND substr(a.activity_uri, 1, instr(substr(a.activity_uri, 9), '/') + 8) =
+			    substr(r.actor_uri, 1, instr(substr(r.actor_uri, 9), '/') + 8)
+		)
+		ORDER BY a.created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return err, &posts
+	}
+	defer relayRows.Close()
+
+	for relayRows.Next() {
+		var idStr string
+		var actorURI string
+		var objectURI string
+		var rawJSON string
+		var createdAtStr string
+		var replyCount int
+		var likeCount int
+		var boostCount int
+
+		if err := relayRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &replyCount, &likeCount, &boostCount); err != nil {
+			return err, &posts
+		}
+
+		activityId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		// Extract content from raw JSON
+		content := extractContentFromJSON(rawJSON)
+
+		// Extract author info from actorURI (format: https://domain/users/username)
+		author := extractAuthorFromActorURI(actorURI)
+
+		posts = append(posts, domain.HomePost{
+			ID:         activityId,
+			Author:     author,
+			Content:    content,
+			Time:       parsedTime,
+			ObjectURI:  objectURI,
+			IsLocal:    false,
+			NoteID:     uuid.Nil,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+		})
+	}
+	if err = relayRows.Err(); err != nil {
+		return err, &posts
+	}
+
 	// Sort combined posts by time (newest first)
 	sortPostsByTime(posts)
 
@@ -1226,6 +1309,44 @@ func sortPostsByTime(posts []domain.HomePost) {
 			}
 		}
 	}
+}
+
+// extractAuthorFromActorURI extracts username@domain from an ActivityPub actor URI
+// e.g., "https://mastodon.social/users/alice" -> "@alice@mastodon.social"
+func extractAuthorFromActorURI(actorURI string) string {
+	// Remove protocol prefix
+	uri := strings.TrimPrefix(actorURI, "https://")
+	uri = strings.TrimPrefix(uri, "http://")
+
+	// Split into domain and path
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) < 2 {
+		return actorURI // Return original if can't parse
+	}
+
+	domain := parts[0]
+	path := parts[1]
+
+	// Extract username from path (common patterns: /users/X, /@X, /u/X)
+	var username string
+	if strings.HasPrefix(path, "users/") {
+		username = strings.TrimPrefix(path, "users/")
+	} else if strings.HasPrefix(path, "@") {
+		username = strings.TrimPrefix(path, "@")
+	} else if strings.HasPrefix(path, "u/") {
+		username = strings.TrimPrefix(path, "u/")
+	} else {
+		// Just use last path segment as username
+		pathParts := strings.Split(path, "/")
+		username = pathParts[len(pathParts)-1]
+	}
+
+	// Remove any trailing path segments from username
+	if idx := strings.Index(username, "/"); idx > 0 {
+		username = username[:idx]
+	}
+
+	return "@" + username + "@" + domain
 }
 
 // Delivery Queue queries
@@ -2952,4 +3073,144 @@ func (db *DB) CountActivitiesByInReplyTo(parentURI string) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// ========== Relay Functions ==========
+
+// CreateRelay creates a new relay subscription
+func (db *DB) CreateRelay(relay *domain.Relay) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO relays(id, actor_uri, inbox_uri, follow_uri, name, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			relay.Id.String(),
+			relay.ActorURI,
+			relay.InboxURI,
+			relay.FollowURI,
+			relay.Name,
+			relay.Status,
+			relay.CreatedAt.Format(time.RFC3339))
+		return err
+	})
+}
+
+// ReadAllRelays returns all relay subscriptions
+func (db *DB) ReadAllRelays() (error, *[]domain.Relay) {
+	rows, err := db.db.Query(`SELECT id, actor_uri, inbox_uri, COALESCE(follow_uri, ''), name, status, created_at, accepted_at FROM relays ORDER BY created_at DESC`)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var relays []domain.Relay
+	for rows.Next() {
+		var relay domain.Relay
+		var idStr, createdAtStr string
+		var acceptedAtStr sql.NullString
+		if err := rows.Scan(&idStr, &relay.ActorURI, &relay.InboxURI, &relay.FollowURI, &relay.Name, &relay.Status, &createdAtStr, &acceptedAtStr); err != nil {
+			return err, nil
+		}
+		relay.Id, _ = uuid.Parse(idStr)
+		relay.CreatedAt, _ = parseTimestamp(createdAtStr)
+		if acceptedAtStr.Valid {
+			t, _ := parseTimestamp(acceptedAtStr.String)
+			relay.AcceptedAt = &t
+		}
+		relays = append(relays, relay)
+	}
+	return nil, &relays
+}
+
+// ReadActiveRelays returns all relay subscriptions with status='active'
+func (db *DB) ReadActiveRelays() (error, *[]domain.Relay) {
+	rows, err := db.db.Query(`SELECT id, actor_uri, inbox_uri, COALESCE(follow_uri, ''), name, status, created_at, accepted_at FROM relays WHERE status = 'active'`)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var relays []domain.Relay
+	for rows.Next() {
+		var relay domain.Relay
+		var idStr, createdAtStr string
+		var acceptedAtStr sql.NullString
+		if err := rows.Scan(&idStr, &relay.ActorURI, &relay.InboxURI, &relay.FollowURI, &relay.Name, &relay.Status, &createdAtStr, &acceptedAtStr); err != nil {
+			return err, nil
+		}
+		relay.Id, _ = uuid.Parse(idStr)
+		relay.CreatedAt, _ = parseTimestamp(createdAtStr)
+		if acceptedAtStr.Valid {
+			t, _ := parseTimestamp(acceptedAtStr.String)
+			relay.AcceptedAt = &t
+		}
+		relays = append(relays, relay)
+	}
+	return nil, &relays
+}
+
+// ReadRelayByActorURI returns a relay by its actor URI
+func (db *DB) ReadRelayByActorURI(actorURI string) (error, *domain.Relay) {
+	var relay domain.Relay
+	var idStr, createdAtStr string
+	var acceptedAtStr, followURI sql.NullString
+
+	err := db.db.QueryRow(`SELECT id, actor_uri, inbox_uri, follow_uri, name, status, created_at, accepted_at FROM relays WHERE actor_uri = ?`, actorURI).
+		Scan(&idStr, &relay.ActorURI, &relay.InboxURI, &followURI, &relay.Name, &relay.Status, &createdAtStr, &acceptedAtStr)
+	if err != nil {
+		return err, nil
+	}
+
+	relay.Id, _ = uuid.Parse(idStr)
+	relay.CreatedAt, _ = parseTimestamp(createdAtStr)
+	if acceptedAtStr.Valid {
+		t, _ := parseTimestamp(acceptedAtStr.String)
+		relay.AcceptedAt = &t
+	}
+	if followURI.Valid {
+		relay.FollowURI = followURI.String
+	}
+	return nil, &relay
+}
+
+// ReadRelayById returns a relay by its ID
+func (db *DB) ReadRelayById(id uuid.UUID) (error, *domain.Relay) {
+	var relay domain.Relay
+	var idStr, createdAtStr string
+	var acceptedAtStr, followURI sql.NullString
+
+	err := db.db.QueryRow(`SELECT id, actor_uri, inbox_uri, follow_uri, name, status, created_at, accepted_at FROM relays WHERE id = ?`, id.String()).
+		Scan(&idStr, &relay.ActorURI, &relay.InboxURI, &followURI, &relay.Name, &relay.Status, &createdAtStr, &acceptedAtStr)
+	if err != nil {
+		return err, nil
+	}
+
+	relay.Id, _ = uuid.Parse(idStr)
+	relay.CreatedAt, _ = parseTimestamp(createdAtStr)
+	if acceptedAtStr.Valid {
+		t, _ := parseTimestamp(acceptedAtStr.String)
+		relay.AcceptedAt = &t
+	}
+	if followURI.Valid {
+		relay.FollowURI = followURI.String
+	}
+	return nil, &relay
+}
+
+// UpdateRelayStatus updates a relay's status and optionally sets accepted_at
+func (db *DB) UpdateRelayStatus(id uuid.UUID, status string, acceptedAt *time.Time) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		if acceptedAt != nil {
+			_, err := tx.Exec(`UPDATE relays SET status = ?, accepted_at = ? WHERE id = ?`,
+				status, acceptedAt.Format(time.RFC3339), id.String())
+			return err
+		}
+		_, err := tx.Exec(`UPDATE relays SET status = ? WHERE id = ?`, status, id.String())
+		return err
+	})
+}
+
+// DeleteRelay deletes a relay subscription
+func (db *DB) DeleteRelay(id uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM relays WHERE id = ?`, id.String())
+		return err
+	})
 }

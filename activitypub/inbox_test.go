@@ -3430,11 +3430,11 @@ func TestHandleInboxWithDeps_UnsupportedType(t *testing.T) {
 	conf := &util.AppConfig{}
 	conf.Conf.SslDomain = "local.example.com"
 
-	// Unsupported activity type "Announce"
+	// Unsupported activity type "Question" (polls are not implemented)
 	body := []byte(`{
 		"@context": "https://www.w3.org/ns/activitystreams",
-		"id": "https://remote.example.com/activities/announce-123",
-		"type": "Announce",
+		"id": "https://remote.example.com/activities/question-123",
+		"type": "Question",
 		"actor": "https://remote.example.com/users/bob",
 		"object": "https://other.example.com/notes/456"
 	}`)
@@ -3542,5 +3542,586 @@ func TestHandleInboxWithDeps_ObjectURIExtraction(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ============ Relay Announce Tests ============
+
+func TestHandleAnnounceFromRelay(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Set up a relay
+	relay := &domain.Relay{
+		Id:       uuid.New(),
+		ActorURI: "https://relay.fedi.buzz/actor",
+		InboxURI: "https://relay.fedi.buzz/inbox",
+		Name:     "Test Relay",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	// Set up a local account
+	localAcct := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAcct)
+
+	// Create a mock HTTP client that returns a Note when fetching
+	mockClient := NewMockHTTPClient()
+
+	// Set up response for the Note object
+	noteJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://pixelfed.social/p/user/123",
+		"type": "Note",
+		"attributedTo": "https://pixelfed.social/users/photographer",
+		"content": "Check out this photo!",
+		"published": "2025-01-01T12:00:00Z"
+	}`
+	mockClient.Responses["https://pixelfed.social/p/user/123"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(noteJSON)),
+		Header:     make(http.Header),
+	}
+
+	// Set up response for actor fetch
+	actorJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://pixelfed.social/users/photographer",
+		"type": "Person",
+		"preferredUsername": "photographer",
+		"inbox": "https://pixelfed.social/users/photographer/inbox",
+		"outbox": "https://pixelfed.social/users/photographer/outbox",
+		"publicKey": {
+			"id": "https://pixelfed.social/users/photographer#main-key",
+			"owner": "https://pixelfed.social/users/photographer",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://pixelfed.social/users/photographer"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(actorJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Announce from relay
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://relay.fedi.buzz/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://relay.fedi.buzz/actor",
+		"object": "https://pixelfed.social/p/user/123"
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Verify activity was stored
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity, got %d", len(mockDB.Activities))
+	}
+
+	// Check that it was stored as a Create activity
+	for _, act := range mockDB.Activities {
+		if act.ActivityType != "Create" {
+			t.Errorf("Expected ActivityType 'Create', got '%s'", act.ActivityType)
+		}
+		if act.ObjectURI != "https://pixelfed.social/p/user/123" {
+			t.Errorf("Expected ObjectURI 'https://pixelfed.social/p/user/123', got '%s'", act.ObjectURI)
+		}
+		if act.ActorURI != "https://pixelfed.social/users/photographer" {
+			t.Errorf("Expected ActorURI from the Note's attributedTo, got '%s'", act.ActorURI)
+		}
+	}
+}
+
+func TestHandleAnnounceFromRelayWithEmbeddedObject(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Set up a relay
+	relay := &domain.Relay{
+		Id:       uuid.New(),
+		ActorURI: "https://relay.example.com/actor",
+		InboxURI: "https://relay.example.com/inbox",
+		Name:     "Test Relay",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	// Set up a local account
+	localAcct := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAcct)
+
+	mockClient := NewMockHTTPClient()
+
+	// Set up response for actor fetch
+	actorJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://mastodon.social/users/writer",
+		"type": "Person",
+		"preferredUsername": "writer",
+		"inbox": "https://mastodon.social/users/writer/inbox",
+		"outbox": "https://mastodon.social/users/writer/outbox",
+		"publicKey": {
+			"id": "https://mastodon.social/users/writer#main-key",
+			"owner": "https://mastodon.social/users/writer",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://mastodon.social/users/writer"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(actorJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Announce from relay with embedded object
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://relay.example.com/activities/announce-456",
+		"type": "Announce",
+		"actor": "https://relay.example.com/actor",
+		"object": {
+			"id": "https://mastodon.social/users/writer/statuses/123456",
+			"type": "Note",
+			"attributedTo": "https://mastodon.social/users/writer",
+			"content": "<p>Hello from the fediverse!</p>",
+			"published": "2025-01-01T12:00:00Z"
+		}
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Verify activity was stored
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity, got %d", len(mockDB.Activities))
+	}
+
+	// Check stored activity
+	for _, act := range mockDB.Activities {
+		if act.ActivityType != "Create" {
+			t.Errorf("Expected ActivityType 'Create', got '%s'", act.ActivityType)
+		}
+		if act.ObjectURI != "https://mastodon.social/users/writer/statuses/123456" {
+			t.Errorf("Expected ObjectURI from embedded object, got '%s'", act.ObjectURI)
+		}
+	}
+}
+
+func TestHandleAnnounceFromRelayDuplicateSkipped(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Set up a relay
+	relay := &domain.Relay{
+		Id:       uuid.New(),
+		ActorURI: "https://relay.example.com/actor",
+		InboxURI: "https://relay.example.com/inbox",
+		Name:     "Test Relay",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	// Pre-add an activity with the same object URI
+	existingActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://original.com/activities/create-123",
+		ActivityType: "Create",
+		ActorURI:     "https://mastodon.social/users/writer",
+		ObjectURI:    "https://mastodon.social/users/writer/statuses/existing",
+		RawJSON:      "{}",
+		Processed:    true,
+	}
+	mockDB.Activities[existingActivity.Id] = existingActivity
+	mockDB.ActivitiesByObj[existingActivity.ObjectURI] = existingActivity
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Announce for an object we already have
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://relay.example.com/activities/announce-789",
+		"type": "Announce",
+		"actor": "https://relay.example.com/actor",
+		"object": "https://mastodon.social/users/writer/statuses/existing"
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Should still only have the original activity (duplicate was skipped)
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (duplicate should be skipped), got %d", len(mockDB.Activities))
+	}
+}
+
+func TestHandleAnnounceFromRelayDuplicateByActivityURI(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// Set up a relay
+	relay := &domain.Relay{
+		Id:       uuid.New(),
+		ActorURI: "https://relay.example.com/actor",
+		InboxURI: "https://relay.example.com/inbox",
+		Name:     "Test Relay",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	// Pre-add an activity with the same announce URI (activity_uri)
+	// This simulates receiving the same relay announce twice
+	existingActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  "https://relay.example.com/activities/announce-duplicate",
+		ActivityType: "Create",
+		ActorURI:     "https://mastodon.social/users/writer",
+		ObjectURI:    "https://mastodon.social/users/writer/statuses/456",
+		RawJSON:      "{}",
+		Processed:    true,
+	}
+	mockDB.CreateActivity(existingActivity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	// Announce with same ID (re-delivery or duplicate)
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://relay.example.com/activities/announce-duplicate",
+		"type": "Announce",
+		"actor": "https://relay.example.com/actor",
+		"object": "https://mastodon.social/users/writer/statuses/different-object"
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Should still only have the original activity (duplicate was skipped by activity_uri)
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (duplicate by activity_uri should be skipped), got %d", len(mockDB.Activities))
+	}
+}
+
+func TestHandleAnnounceNotFromRelay(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	// No relay set up - this will be a regular boost
+
+	// Set up local account
+	localAcct := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAcct)
+
+	// Set up a note to boost
+	note := &domain.Note{
+		Id:        uuid.New(),
+		Message:   "Original post",
+		CreatedBy: "alice",
+		ObjectURI: "https://example.com/notes/123",
+	}
+	mockDB.Notes[note.Id] = note
+	mockDB.NotesByURI[note.ObjectURI] = note
+
+	// Set up the remote actor who is boosting
+	remoteActor := &domain.RemoteAccount{
+		Id:        uuid.New(),
+		Username:  "bob",
+		Domain:    "remote.example.com",
+		ActorURI:  "https://remote.example.com/users/bob",
+		InboxURI:  "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.RemoteAccounts[remoteActor.Id] = remoteActor
+	mockDB.RemoteByActor[remoteActor.ActorURI] = remoteActor
+
+	// Set up mock HTTP client with actor response
+	mockClient := NewMockHTTPClient()
+	actorJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/users/bob",
+		"type": "Person",
+		"preferredUsername": "bob",
+		"inbox": "https://remote.example.com/users/bob/inbox",
+		"outbox": "https://remote.example.com/users/bob/outbox",
+		"publicKey": {
+			"id": "https://remote.example.com/users/bob#main-key",
+			"owner": "https://remote.example.com/users/bob",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://remote.example.com/users/bob"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(actorJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Announce from a regular user (not a relay)
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/boost-1",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://example.com/notes/123"
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Should have created a boost record (not a Create activity)
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected 1 boost, got %d", len(mockDB.Boosts))
+	}
+
+	// No activities should be created for regular boosts
+	if len(mockDB.Activities) != 0 {
+		t.Errorf("Expected 0 activities (regular boost, not relay), got %d", len(mockDB.Activities))
+	}
+}
+
+func TestExtractDomainFromURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		uri      string
+		expected string
+	}{
+		{
+			name:     "HTTPS with path",
+			uri:      "https://relay.fedi.buzz/tag/music",
+			expected: "relay.fedi.buzz",
+		},
+		{
+			name:     "HTTPS without path",
+			uri:      "https://example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "HTTP with path",
+			uri:      "http://example.org/users/alice",
+			expected: "example.org",
+		},
+		{
+			name:     "With port",
+			uri:      "https://example.com:8443/path",
+			expected: "example.com:8443",
+		},
+		{
+			name:     "Empty string",
+			uri:      "",
+			expected: "",
+		},
+		{
+			name:     "Invalid scheme",
+			uri:      "ftp://example.com/file",
+			expected: "",
+		},
+		{
+			name:     "No scheme",
+			uri:      "example.com/path",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractDomainFromURI(tt.uri)
+			if result != tt.expected {
+				t.Errorf("extractDomainFromURI(%q) = %q, want %q", tt.uri, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsActorFromAnyRelay(t *testing.T) {
+	// Setup mock database with relays
+	mockDB := NewMockDatabase()
+
+	// Add an active relay for relay.fedi.buzz/tag/music
+	relayID := uuid.New()
+	relay := &domain.Relay{
+		Id:       relayID,
+		ActorURI: "https://relay.fedi.buzz/tag/music",
+		InboxURI: "https://relay.fedi.buzz/tag/music/inbox",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	tests := []struct {
+		name     string
+		actorURI string
+		expected bool
+	}{
+		{
+			name:     "Exact match of subscribed relay",
+			actorURI: "https://relay.fedi.buzz/tag/music",
+			expected: true,
+		},
+		{
+			name:     "Different tag from same relay domain",
+			actorURI: "https://relay.fedi.buzz/tag/prints",
+			expected: true,
+		},
+		{
+			name:     "Another tag from same relay domain",
+			actorURI: "https://relay.fedi.buzz/tag/photography",
+			expected: true,
+		},
+		{
+			name:     "Different domain",
+			actorURI: "https://mastodon.social/users/alice",
+			expected: false,
+		},
+		{
+			name:     "Similar domain but not the same",
+			actorURI: "https://fedi.buzz/actor",
+			expected: false,
+		},
+		{
+			name:     "Subdomain of relay domain",
+			actorURI: "https://sub.relay.fedi.buzz/tag/art",
+			expected: false,
+		},
+		{
+			name:     "Invalid URI",
+			actorURI: "not-a-uri",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isActorFromAnyRelay(tt.actorURI, mockDB)
+			if result != tt.expected {
+				t.Errorf("isActorFromAnyRelay(%q) = %v, want %v", tt.actorURI, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHandleAnnounceFromRelayDifferentTag(t *testing.T) {
+	// Test that Announces from a different tag on the same relay domain are handled as relay content
+	// This tests the scenario where we subscribe to /tag/music but receive content from /tag/prints
+
+	mockDB := NewMockDatabase()
+	mockClient := NewMockHTTPClient()
+
+	// Add local account
+	localAccountID := uuid.New()
+	localAccount := &domain.Account{
+		Id:       localAccountID,
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Add an active relay subscription for /tag/music
+	relayID := uuid.New()
+	relay := &domain.Relay{
+		Id:       relayID,
+		ActorURI: "https://relay.fedi.buzz/tag/music",
+		InboxURI: "https://relay.fedi.buzz/tag/music/inbox",
+		Status:   "active",
+	}
+	mockDB.CreateRelay(relay)
+
+	// Mock HTTP response for fetching the original author
+	authorJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://mastodon.world/users/artist",
+		"type": "Person",
+		"preferredUsername": "artist",
+		"inbox": "https://mastodon.world/users/artist/inbox",
+		"publicKey": {
+			"id": "https://mastodon.world/users/artist#main-key",
+			"owner": "https://mastodon.world/users/artist",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
+		}
+	}`
+
+	mockClient.Responses["https://mastodon.world/users/artist"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(authorJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Announce from /tag/prints (different tag, same relay domain)
+	// This is the key scenario: we're subscribed to /tag/music but relay sends from /tag/prints
+	announceBody := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://relay.fedi.buzz/activities/announce-123",
+		"type": "Announce",
+		"actor": "https://relay.fedi.buzz/tag/prints",
+		"object": {
+			"id": "https://mastodon.world/users/artist/statuses/123456",
+			"type": "Note",
+			"attributedTo": "https://mastodon.world/users/artist",
+			"content": "<p>Check out my latest art!</p>"
+		},
+		"published": "2024-01-15T10:30:00Z"
+	}`
+
+	err := handleAnnounceActivityWithDeps([]byte(announceBody), "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Should have created an activity (relay-forwarded content)
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (relay-forwarded), got %d", len(mockDB.Activities))
+	}
+
+	// Verify the activity was stored correctly
+	for _, activity := range mockDB.Activities {
+		if activity.ActivityType != "Create" {
+			t.Errorf("Expected activity type 'Create', got %q", activity.ActivityType)
+		}
+		if activity.ActorURI != "https://mastodon.world/users/artist" {
+			t.Errorf("Expected actor 'https://mastodon.world/users/artist', got %q", activity.ActorURI)
+		}
+		if activity.ObjectURI != "https://mastodon.world/users/artist/statuses/123456" {
+			t.Errorf("Expected object URI 'https://mastodon.world/users/artist/statuses/123456', got %q", activity.ObjectURI)
+		}
+	}
+
+	// Should not create a boost record (this is relay content, not a boost)
+	if len(mockDB.Boosts) != 0 {
+		t.Errorf("Expected 0 boosts (relay content, not boost), got %d", len(mockDB.Boosts))
 	}
 }

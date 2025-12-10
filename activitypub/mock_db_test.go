@@ -24,12 +24,15 @@ type MockDatabase struct {
 	FollowsByURI    map[string]*domain.Follow
 	Activities      map[uuid.UUID]*domain.Activity
 	ActivitiesByObj map[string]*domain.Activity
+	ActivitiesByURI map[string]*domain.Activity // Index by ActivityURI
 	DeliveryQueue   map[uuid.UUID]*domain.DeliveryQueueItem
 	Notes           map[uuid.UUID]*domain.Note
 	NotesByURI      map[string]*domain.Note
 	Likes           map[uuid.UUID]*domain.Like
 	LikesByURI      map[string]*domain.Like
 	Boosts          map[uuid.UUID]*domain.Boost
+	Relays          map[uuid.UUID]*domain.Relay
+	RelaysByURI     map[string]*domain.Relay
 
 	// Error injection for testing error handling
 	ForceError error
@@ -52,12 +55,15 @@ func NewMockDatabase() *MockDatabase {
 		FollowsByURI:    make(map[string]*domain.Follow),
 		Activities:      make(map[uuid.UUID]*domain.Activity),
 		ActivitiesByObj: make(map[string]*domain.Activity),
+		ActivitiesByURI: make(map[string]*domain.Activity),
 		DeliveryQueue:   make(map[uuid.UUID]*domain.DeliveryQueueItem),
 		Notes:           make(map[uuid.UUID]*domain.Note),
 		NotesByURI:      make(map[string]*domain.Note),
 		Likes:           make(map[uuid.UUID]*domain.Like),
 		LikesByURI:      make(map[string]*domain.Like),
 		Boosts:          make(map[uuid.UUID]*domain.Boost),
+		Relays:          make(map[uuid.UUID]*domain.Relay),
+		RelaysByURI:     make(map[string]*domain.Relay),
 	}
 }
 
@@ -327,6 +333,9 @@ func (m *MockDatabase) CreateActivity(activity *domain.Activity) error {
 		return m.ForceError
 	}
 	m.Activities[activity.Id] = activity
+	if activity.ActivityURI != "" {
+		m.ActivitiesByURI[activity.ActivityURI] = activity
+	}
 	if activity.ObjectURI != "" {
 		// Only set if not already present (first activity with this ObjectURI wins)
 		// This matches real DB behavior where ReadActivityByObjectURI returns the first match
@@ -350,6 +359,19 @@ func (m *MockDatabase) UpdateActivity(activity *domain.Activity) error {
 	return nil
 }
 
+func (m *MockDatabase) ReadActivityByURI(uri string) (error, *domain.Activity) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return m.ForceError, nil
+	}
+	activity, ok := m.ActivitiesByURI[uri]
+	if !ok {
+		return nil, nil
+	}
+	return nil, activity
+}
+
 func (m *MockDatabase) ReadActivityByObjectURI(objectURI string) (error, *domain.Activity) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -371,6 +393,7 @@ func (m *MockDatabase) DeleteActivity(id uuid.UUID) error {
 	}
 	if activity, ok := m.Activities[id]; ok {
 		delete(m.ActivitiesByObj, activity.ObjectURI)
+		delete(m.ActivitiesByURI, activity.ActivityURI)
 	}
 	delete(m.Activities, id)
 	return nil
@@ -637,6 +660,64 @@ func (m *MockDatabase) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
 		if note.BoostCount > 0 {
 			note.BoostCount--
 		}
+	}
+	return nil
+}
+
+// Relay operations
+
+func (m *MockDatabase) CreateRelay(relay *domain.Relay) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.Relays[relay.Id] = relay
+	m.RelaysByURI[relay.ActorURI] = relay
+	return nil
+}
+
+func (m *MockDatabase) ReadActiveRelays() (error, *[]domain.Relay) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError, nil
+	}
+	relays := make([]domain.Relay, 0)
+	for _, r := range m.Relays {
+		if r.Status == "active" {
+			relays = append(relays, *r)
+		}
+	}
+	return nil, &relays
+}
+
+func (m *MockDatabase) ReadRelayByActorURI(actorURI string) (error, *domain.Relay) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError, nil
+	}
+	if relay, ok := m.RelaysByURI[actorURI]; ok {
+		return nil, relay
+	}
+	return sql.ErrNoRows, nil
+}
+
+func (m *MockDatabase) UpdateRelayStatus(id uuid.UUID, status string, acceptedAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	return nil
+}
+
+func (m *MockDatabase) DeleteRelay(id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
 	}
 	return nil
 }

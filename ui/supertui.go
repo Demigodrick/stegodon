@@ -22,6 +22,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/hometimeline"
 	"github.com/deemkeen/stegodon/ui/localusers"
 	"github.com/deemkeen/stegodon/ui/myposts"
+	"github.com/deemkeen/stegodon/ui/relay"
 	"github.com/deemkeen/stegodon/ui/threadview"
 	"github.com/deemkeen/stegodon/ui/writenote"
 	"github.com/deemkeen/stegodon/util"
@@ -41,6 +42,7 @@ var (
 type MainModel struct {
 	width              int
 	height             int
+	config             *util.AppConfig
 	headerModel        header.Model
 	account            domain.Account
 	state              common.SessionState
@@ -53,6 +55,7 @@ type MainModel struct {
 	homeTimelineModel  hometimeline.Model
 	localUsersModel    localusers.Model
 	adminModel         admin.Model
+	relayModel         relay.Model
 	deleteAccountModel deleteaccount.Model
 	threadViewModel    threadview.Model
 }
@@ -78,6 +81,12 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	width = common.DefaultWindowWidth(width)
 	height = common.DefaultWindowHeight(height)
 
+	// Load config for relay management
+	config, err := util.ReadConf()
+	if err != nil {
+		log.Printf("Failed to read config: %v", err)
+	}
+
 	noteModel := writenote.InitialNote(width, acc.Id)
 	headerModel := header.Model{Width: width, Acc: &acc}
 	myPostsModel := myposts.NewPager(acc.Id, width, height)
@@ -87,10 +96,12 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	homeTimelineModel := hometimeline.InitialModel(acc.Id, width, height)
 	localUsersModel := localusers.InitialModel(acc.Id, width, height)
 	adminModel := admin.InitialModel(acc.Id, width, height)
+	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
 	deleteAccountModel := deleteaccount.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height)
 
 	m := MainModel{state: common.CreateUserView}
+	m.config = config
 	m.newUserModel = createuser.InitialModel()
 	m.createModel = noteModel
 	m.myPostsModel = myPostsModel
@@ -100,6 +111,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.homeTimelineModel = homeTimelineModel
 	m.localUsersModel = localUsersModel
 	m.adminModel = adminModel
+	m.relayModel = relayModel
 	m.deleteAccountModel = deleteAccountModel
 	m.threadViewModel = threadViewModel
 	m.headerModel = headerModel
@@ -251,7 +263,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			// Cycle through main views (excluding create user)
-			// Order: write -> home -> my posts -> follow -> followers -> following -> users -> admin -> delete
+			// Order: write -> home -> my posts -> follow -> followers -> following -> users -> admin -> relay -> delete
 			if m.state == common.CreateUserView {
 				return m, nil
 			}
@@ -276,6 +288,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = common.DeleteAccountView
 				}
 			case common.AdminPanelView:
+				m.state = common.RelayManagementView
+			case common.RelayManagementView:
 				m.state = common.DeleteAccountView
 			case common.DeleteAccountView:
 				m.state = common.CreateNoteView
@@ -319,9 +333,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = common.FollowingView
 			case common.AdminPanelView:
 				m.state = common.LocalUsersView
+			case common.RelayManagementView:
+				m.state = common.AdminPanelView
 			case common.DeleteAccountView:
 				if m.account.IsAdmin {
-					m.state = common.AdminPanelView
+					m.state = common.RelayManagementView
 				} else {
 					m.state = common.LocalUsersView
 				}
@@ -414,10 +430,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// Only route to admin/thread models when active (leak prevention)
+		// Only route to admin/relay/thread models when active (leak prevention)
 		switch m.state {
 		case common.AdminPanelView:
 			m.adminModel, cmd = m.adminModel.Update(msg)
+			cmds = append(cmds, cmd)
+		case common.RelayManagementView:
+			m.relayModel, cmd = m.relayModel.Update(msg)
 			cmds = append(cmds, cmd)
 		case common.ThreadView:
 			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
@@ -446,6 +465,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.localUsersModel, cmd = m.localUsersModel.Update(msg)
 		case common.AdminPanelView:
 			m.adminModel, cmd = m.adminModel.Update(msg)
+		case common.RelayManagementView:
+			m.relayModel, cmd = m.relayModel.Update(msg)
 		case common.DeleteAccountView:
 			m.deleteAccountModel, cmd = m.deleteAccountModel.Update(msg)
 		case common.ThreadView:
@@ -572,6 +593,14 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.adminModel.View())
 
+	relayStyleStr := lipgloss.NewStyle().
+		MaxHeight(availableHeight).
+		Height(availableHeight).
+		Width(rightPanelWidth).
+		MaxWidth(rightPanelWidth).
+		Margin(1).
+		Render(m.relayModel.View())
+
 	deleteAccountStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
 		Height(availableHeight).
@@ -629,6 +658,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(adminStyleStr))
+		case common.RelayManagementView:
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(relayStyleStr))
 		case common.DeleteAccountView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -656,6 +689,8 @@ func (m MainModel) View() string {
 			viewCommands = "↑/↓ • enter: toggle follow"
 		case common.AdminPanelView:
 			viewCommands = "↑/↓ • m: mute • k: kick"
+		case common.RelayManagementView:
+			viewCommands = "↑/↓ • a: add • d: delete • r: retry"
 		case common.DeleteAccountView:
 			viewCommands = "y: confirm • n/esc: cancel"
 		case common.ThreadView:
@@ -714,6 +749,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "users"
 	case common.AdminPanelView:
 		return "admin"
+	case common.RelayManagementView:
+		return "relays"
 	case common.DeleteAccountView:
 		return "delete"
 	case common.ThreadView:
@@ -741,6 +778,8 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 		return m.localUsersModel.Init()
 	case common.AdminPanelView:
 		return m.adminModel.Init()
+	case common.RelayManagementView:
+		return m.relayModel.Init()
 	case common.ThreadView:
 		// Thread view activation message
 		return func() tea.Msg { return common.ActivateViewMsg{} }

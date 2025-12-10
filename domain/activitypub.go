@@ -83,3 +83,15 @@ type NoteMention struct {
 	MentionedDomain   string // The domain part (@username@domain -> domain)
 	CreatedAt         time.Time
 }
+
+// Relay represents an ActivityPub relay subscription
+type Relay struct {
+	Id         uuid.UUID
+	ActorURI   string     // The relay's actor URI (e.g., https://relay.example.com/actor)
+	InboxURI   string     // The relay's inbox URI for delivering activities
+	FollowURI  string     // The URI of our Follow activity (needed for Undo)
+	Name       string     // Display name from relay actor profile
+	Status     string     // pending, active, failed
+	CreatedAt  time.Time
+	AcceptedAt *time.Time // When the relay accepted our Follow request
+}

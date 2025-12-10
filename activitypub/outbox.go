@@ -311,6 +311,15 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		}
 	}
 
+	// Get active relays and add their inboxes
+	err, relays := database.ReadActiveRelays()
+	if err == nil && relays != nil {
+		for _, relay := range *relays {
+			inboxes[relay.InboxURI] = true
+			log.Printf("Outbox: Will also deliver to relay %s", relay.ActorURI)
+		}
+	}
+
 	if len(inboxes) == 0 {
 		log.Printf("Outbox: No inboxes to deliver to")
 		return nil
@@ -544,6 +553,15 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		}
 	}
 
+	// Get active relays and add their inboxes
+	err, relays := database.ReadActiveRelays()
+	if err == nil && relays != nil {
+		for _, relay := range *relays {
+			inboxes[relay.InboxURI] = true
+			log.Printf("Outbox: Will also deliver Update to relay %s", relay.ActorURI)
+		}
+	}
+
 	if len(inboxes) == 0 {
 		log.Printf("Outbox: No inboxes to deliver Update to")
 		return nil
@@ -597,33 +615,47 @@ func SendDeleteWithDeps(noteId uuid.UUID, localAccount *domain.Account, conf *ut
 		"object": noteURI,
 	}
 
-	// Get all followers and queue delivery to their inboxes
+	// Collect inboxes to deliver to
+	inboxes := make(map[string]bool)
+
+	// Get all followers
 	err, followers := database.ReadFollowersByAccountId(localAccount.Id)
 	if err != nil {
 		log.Printf("Outbox: Failed to get followers for Delete: %v", err)
+	} else if followers != nil {
+		for _, follower := range *followers {
+			// Skip local followers - they don't need federation delivery
+			if follower.IsLocal {
+				continue
+			}
+			err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
+			if err != nil {
+				log.Printf("Outbox: Failed to get remote actor %s: %v", follower.AccountId, err)
+				continue
+			}
+			inboxes[remoteActor.InboxURI] = true
+		}
+	}
+
+	// Get active relays and add their inboxes
+	err, relays := database.ReadActiveRelays()
+	if err == nil && relays != nil {
+		for _, relay := range *relays {
+			inboxes[relay.InboxURI] = true
+			log.Printf("Outbox: Will also deliver Delete to relay %s", relay.ActorURI)
+		}
+	}
+
+	if len(inboxes) == 0 {
+		log.Printf("Outbox: No inboxes to deliver Delete to")
 		return nil
 	}
 
-	if followers == nil || len(*followers) == 0 {
-		log.Printf("Outbox: No followers to deliver Delete to")
-		return nil
-	}
-
-	// Queue delivery to each follower's inbox
-	for _, follower := range *followers {
-		// Skip local followers - they don't need federation delivery
-		if follower.IsLocal {
-			continue
-		}
-		err, remoteActor := database.ReadRemoteAccountById(follower.AccountId)
-		if err != nil {
-			log.Printf("Outbox: Failed to get remote actor %s: %v", follower.AccountId, err)
-			continue
-		}
-
+	// Queue delivery to each unique inbox
+	for inboxURI := range inboxes {
 		queueItem := &domain.DeliveryQueueItem{
 			Id:           uuid.New(),
-			InboxURI:     remoteActor.InboxURI,
+			InboxURI:     inboxURI,
 			ActivityJSON: mustMarshal(deleteActivity),
 			Attempts:     0,
 			NextRetryAt:  time.Now(),
@@ -631,11 +663,11 @@ func SendDeleteWithDeps(noteId uuid.UUID, localAccount *domain.Account, conf *ut
 		}
 
 		if err := database.EnqueueDelivery(queueItem); err != nil {
-			log.Printf("Outbox: Failed to queue Delete delivery to %s: %v", remoteActor.InboxURI, err)
+			log.Printf("Outbox: Failed to queue Delete delivery to %s: %v", inboxURI, err)
 		}
 	}
 
-	log.Printf("Outbox: Queued Delete activity for note %s to %d followers", noteId, len(*followers))
+	log.Printf("Outbox: Queued Delete activity for note %s to %d inboxes", noteId, len(inboxes))
 	return nil
 }
 
@@ -827,6 +859,106 @@ func SendUndoLikeWithDeps(localAccount *domain.Account, noteURI string, likeURI 
 
 	log.Printf("Outbox: Sending Undo Like from %s for note %s to %s@%s", localAccount.Username, noteURI, remoteActor.Username, remoteActor.Domain)
 	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
+}
+
+// SendRelayFollow subscribes to a relay by sending a Follow activity.
+// This is the production wrapper that uses the default HTTP client and database.
+func SendRelayFollow(localAccount *domain.Account, relayActorURI string, conf *util.AppConfig) error {
+	return SendRelayFollowWithDeps(localAccount, relayActorURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendRelayFollowWithDeps subscribes to a relay by sending a Follow activity.
+// This version accepts dependencies for testing.
+func SendRelayFollowWithDeps(localAccount *domain.Account, relayActorURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
+	// Fetch the relay actor to get inbox and validate it's a relay
+	relayActor, err := FetchRemoteActorWithDeps(relayActorURI, client, database)
+	if err != nil {
+		return fmt.Errorf("failed to fetch relay actor: %w", err)
+	}
+
+	// Check if already subscribed
+	err, existingRelay := database.ReadRelayByActorURI(relayActorURI)
+	if err == nil && existingRelay != nil {
+		if existingRelay.Status == "active" {
+			return fmt.Errorf("already subscribed to relay %s", relayActorURI)
+		}
+		if existingRelay.Status == "pending" {
+			return fmt.Errorf("subscription to relay %s is pending", relayActorURI)
+		}
+		// If status is "failed", we allow retry by deleting and recreating
+		if err := database.DeleteRelay(existingRelay.Id); err != nil {
+			log.Printf("Outbox: Failed to delete old relay record: %v", err)
+		}
+	}
+
+	// Create follow activity
+	followID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	// Relay Follow uses the relay's actor URI as both actor and object
+	// According to relay protocol, we Follow the relay actor
+	follow := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       followID,
+		"type":     "Follow",
+		"actor":    actorURI,
+		"object":   relayActorURI,
+	}
+
+	// Store relay record as pending (include follow URI for later Undo)
+	relay := &domain.Relay{
+		Id:        uuid.New(),
+		ActorURI:  relayActorURI,
+		InboxURI:  relayActor.InboxURI,
+		FollowURI: followID,
+		Name:      relayActor.DisplayName,
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	if err := database.CreateRelay(relay); err != nil {
+		return fmt.Errorf("failed to store relay: %w", err)
+	}
+
+	// Send Follow activity to relay
+	log.Printf("Outbox: Sending Follow to relay %s from %s", relayActorURI, localAccount.Username)
+	return SendActivityWithDeps(follow, relayActor.InboxURI, localAccount, conf, client)
+}
+
+// SendRelayUnfollow unsubscribes from a relay by sending an Undo Follow activity.
+// This is the production wrapper that uses the default HTTP client.
+func SendRelayUnfollow(localAccount *domain.Account, relay *domain.Relay, conf *util.AppConfig) error {
+	return SendRelayUnfollowWithDeps(localAccount, relay, conf, defaultHTTPClient)
+}
+
+// SendRelayUnfollowWithDeps unsubscribes from a relay by sending an Undo Follow activity.
+// This version accepts dependencies for testing.
+func SendRelayUnfollowWithDeps(localAccount *domain.Account, relay *domain.Relay, conf *util.AppConfig, client HTTPClient) error {
+	undoID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	// Use the stored Follow URI if available, otherwise construct one
+	followID := relay.FollowURI
+	if followID == "" {
+		// Fallback for relays created before we stored the follow URI
+		followID = fmt.Sprintf("https://%s/relay-follows/%s", conf.Conf.SslDomain, relay.Id.String())
+	}
+
+	undo := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]any{
+			"id":     followID,
+			"type":   "Follow",
+			"actor":  actorURI,
+			"object": relay.ActorURI,
+		},
+	}
+
+	log.Printf("Outbox: Sending Undo Follow (unsubscribe) to relay %s from %s", relay.ActorURI, localAccount.Username)
+	return SendActivityWithDeps(undo, relay.InboxURI, localAccount, conf, client)
 }
 
 // mustMarshal marshals v to JSON, panicking on error

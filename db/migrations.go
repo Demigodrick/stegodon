@@ -154,6 +154,22 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_note_mentions_actor_uri ON note_mentions(mentioned_actor_uri);
 	`
 
+	// Relays table for ActivityPub relay subscriptions
+	sqlCreateRelaysTable = `CREATE TABLE IF NOT EXISTS relays (
+		id TEXT NOT NULL PRIMARY KEY,
+		actor_uri TEXT UNIQUE NOT NULL,
+		inbox_uri TEXT NOT NULL,
+		follow_uri TEXT,
+		name TEXT,
+		status TEXT DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		accepted_at TIMESTAMP
+	)`
+
+	sqlCreateRelaysIndices = `
+		CREATE INDEX IF NOT EXISTS idx_relays_status ON relays(status);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -208,6 +224,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateNoteMentionsTable, "note_mentions"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateRelaysTable, "relays"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -236,6 +255,9 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateNoteMentionsIndices); err != nil {
 			log.Printf("Warning: Failed to create note_mentions indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateRelaysIndices); err != nil {
+			log.Printf("Warning: Failed to create relays indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)
@@ -317,6 +339,9 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 	// Add unique index for remote post likes (account_id + object_uri)
 	// This allows one like per account per remote post (identified by object_uri)
 	tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_account_object_uri ON likes(account_id, object_uri) WHERE object_uri IS NOT NULL AND object_uri != ''")
+
+	// Add follow_uri column to relays table for proper Undo Follow
+	tx.Exec("ALTER TABLE relays ADD COLUMN follow_uri TEXT")
 
 	log.Println("Extended existing tables with new columns")
 }

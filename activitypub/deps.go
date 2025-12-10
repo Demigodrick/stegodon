@@ -35,6 +35,7 @@ type Database interface {
 	// Activity operations
 	CreateActivity(activity *domain.Activity) error
 	UpdateActivity(activity *domain.Activity) error
+	ReadActivityByURI(uri string) (error, *domain.Activity)
 	ReadActivityByObjectURI(objectURI string) (error, *domain.Activity)
 	DeleteActivity(id uuid.UUID) error
 
@@ -68,6 +69,13 @@ type Database interface {
 	ReadPendingDeliveries(limit int) (error, *[]domain.DeliveryQueueItem)
 	UpdateDeliveryAttempt(id uuid.UUID, attempts int, nextRetry time.Time) error
 	DeleteDelivery(id uuid.UUID) error
+
+	// Relay operations
+	CreateRelay(relay *domain.Relay) error
+	ReadActiveRelays() (error, *[]domain.Relay)
+	ReadRelayByActorURI(actorURI string) (error, *domain.Relay)
+	UpdateRelayStatus(id uuid.UUID, status string, acceptedAt *time.Time) error
+	DeleteRelay(id uuid.UUID) error
 }
 
 // HTTPClient defines the HTTP client operations required by the ActivityPub package.
