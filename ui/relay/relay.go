@@ -75,6 +75,17 @@ type relayRetryMsg struct {
 	err error
 }
 
+type relayPausedMsg struct {
+	id     uuid.UUID
+	paused bool
+	err    error
+}
+
+type relayContentDeletedMsg struct {
+	count int64
+	err   error
+}
+
 // Commands
 
 func loadRelays() tea.Cmd {
@@ -145,6 +156,32 @@ func retryRelay(adminAcct *domain.Account, relay *domain.Relay, config *util.App
 	}
 }
 
+func toggleRelayPause(relayId uuid.UUID, paused bool) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err := database.UpdateRelayPaused(relayId, paused)
+		if err != nil {
+			log.Printf("Relay panel: Failed to update relay pause status: %v", err)
+			return relayPausedMsg{id: relayId, paused: paused, err: err}
+		}
+		log.Printf("Relay panel: Set relay %s paused=%v", relayId, paused)
+		return relayPausedMsg{id: relayId, paused: paused, err: nil}
+	}
+}
+
+func deleteRelayContent() tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		count, err := database.DeleteRelayActivities()
+		if err != nil {
+			log.Printf("Relay panel: Failed to delete relay content: %v", err)
+			return relayContentDeletedMsg{count: 0, err: err}
+		}
+		log.Printf("Relay panel: Deleted %d relay activities", count)
+		return relayContentDeletedMsg{count: count, err: nil}
+	}
+}
+
 // normalizeRelayURL converts a relay URL to a full actor URI
 func normalizeRelayURL(input string) string {
 	input = strings.TrimSpace(input)
@@ -205,6 +242,30 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.Error = ""
 		}
 		return m, loadRelays()
+
+	case relayPausedMsg:
+		if msg.err != nil {
+			m.Error = msg.err.Error()
+			m.Status = ""
+		} else {
+			if msg.paused {
+				m.Status = "Relay paused"
+			} else {
+				m.Status = "Relay resumed"
+			}
+			m.Error = ""
+		}
+		return m, loadRelays()
+
+	case relayContentDeletedMsg:
+		if msg.err != nil {
+			m.Error = msg.err.Error()
+			m.Status = ""
+		} else {
+			m.Status = fmt.Sprintf("Deleted %d relay activities", msg.count)
+			m.Error = ""
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		// In adding mode, handle input
@@ -275,6 +336,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.Error = "Only failed relays can be retried"
 				}
 			}
+		case "p":
+			// Pause/resume selected relay
+			if len(m.Relays) > 0 && m.Selected < len(m.Relays) {
+				selectedRelay := m.Relays[m.Selected]
+				if selectedRelay.Status == "active" {
+					newPaused := !selectedRelay.Paused
+					if newPaused {
+						m.Status = "Pausing relay..."
+					} else {
+						m.Status = "Resuming relay..."
+					}
+					return m, toggleRelayPause(selectedRelay.Id, newPaused)
+				} else {
+					m.Error = "Only active relays can be paused/resumed"
+				}
+			}
+		case "x":
+			// Delete all relay content from timeline
+			m.Status = "Deleting relay content..."
+			return m, deleteRelayContent()
 		}
 	}
 
@@ -327,7 +408,11 @@ func (m Model) View() string {
 			var statusBadge string
 			switch relay.Status {
 			case "active":
-				statusBadge = common.ListBadgeStyle.Render("[active]")
+				if relay.Paused {
+					statusBadge = common.ListBadgeMutedStyle.Render("[paused]")
+				} else {
+					statusBadge = common.ListBadgeStyle.Render("[active]")
+				}
 			case "pending":
 				statusBadge = common.ListBadgeMutedStyle.Render("[pending]")
 			case "failed":
@@ -370,7 +455,7 @@ func (m Model) View() string {
 
 	// Footer with available keys
 	s.WriteString("\n")
-	s.WriteString(common.HelpStyle.Render("keys: a add | d delete | r retry"))
+	s.WriteString(common.HelpStyle.Render("keys: a add | d delete | p pause/resume | r retry | x clear content"))
 
 	return s.String()
 }

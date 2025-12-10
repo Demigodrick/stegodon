@@ -73,6 +73,7 @@ type Database interface {
 	// Relay operations
 	CreateRelay(relay *domain.Relay) error
 	ReadActiveRelays() (error, *[]domain.Relay)
+	ReadActiveUnpausedRelays() (error, *[]domain.Relay)
 	ReadRelayByActorURI(actorURI string) (error, *domain.Relay)
 	UpdateRelayStatus(id uuid.UUID, status string, acceptedAt *time.Time) error
 	DeleteRelay(id uuid.UUID) error

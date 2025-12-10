@@ -692,6 +692,21 @@ func (m *MockDatabase) ReadActiveRelays() (error, *[]domain.Relay) {
 	return nil, &relays
 }
 
+func (m *MockDatabase) ReadActiveUnpausedRelays() (error, *[]domain.Relay) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError, nil
+	}
+	relays := make([]domain.Relay, 0)
+	for _, r := range m.Relays {
+		if r.Status == "active" && !r.Paused {
+			relays = append(relays, *r)
+		}
+	}
+	return nil, &relays
+}
+
 func (m *MockDatabase) ReadRelayByActorURI(actorURI string) (error, *domain.Relay) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

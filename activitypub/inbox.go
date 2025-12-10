@@ -166,6 +166,18 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 	// For Announce activities, defer storage to the handler (relay vs regular boost have different storage needs)
 	// Set FromRelay if the signer is different from the activity actor (relay forwarding)
 	isFromRelay := signerActorURI != activity.Actor
+
+	// If this is relay content, check if the specific relay is paused
+	if isFromRelay {
+		relay := findRelayByActorDomain(signerActorURI, database)
+		if relay != nil && relay.Paused {
+			// This specific relay is paused - log but don't save
+			log.Printf("Inbox: Relay content from %s skipped (relay %s is paused)", activity.Actor, relay.ActorURI)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+	}
+
 	var activityRecord *domain.Activity
 	if activity.Type != "Announce" {
 		activityRecord = &domain.Activity{
@@ -907,29 +919,37 @@ func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string
 // This handles cases where a relay like relay.fedi.buzz sends Announces from different tag actors
 // (e.g., /tag/prints) when we subscribed to /tag/music - they're all from the same relay domain.
 func isActorFromAnyRelay(actorURI string, database Database) bool {
+	relay := findRelayByActorDomain(actorURI, database)
+	return relay != nil
+}
+
+// findRelayByActorDomain finds a relay subscription that matches the actor's domain.
+// Returns nil if no matching relay is found.
+func findRelayByActorDomain(actorURI string, database Database) *domain.Relay {
 	// Extract domain from the actor URI
 	actorDomain := extractDomainFromURI(actorURI)
 	if actorDomain == "" {
-		return false
+		return nil
 	}
 
 	// Get all active relays
 	err, relays := database.ReadActiveRelays()
 	if err != nil || relays == nil {
 		log.Printf("Inbox: Error reading relays for domain check: %v", err)
-		return false
+		return nil
 	}
 
 	// Check if the actor's domain matches any relay's domain
-	for _, relay := range *relays {
+	for i := range *relays {
+		relay := &(*relays)[i]
 		relayDomain := extractDomainFromURI(relay.ActorURI)
 		if relayDomain != "" && relayDomain == actorDomain {
 			log.Printf("Inbox: Actor %s is from relay domain %s (matched relay: %s)", actorURI, actorDomain, relay.ActorURI)
-			return true
+			return relay
 		}
 	}
 
-	return false
+	return nil
 }
 
 // extractDomainFromURI extracts the domain (host) from a URI

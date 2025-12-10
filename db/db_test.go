@@ -137,6 +137,7 @@ func setupTestDB(t *testing.T) *DB {
 		follow_uri TEXT,
 		name TEXT,
 		status TEXT DEFAULT 'pending',
+		paused INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		accepted_at TIMESTAMP
 	)`)

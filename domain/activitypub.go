@@ -93,6 +93,7 @@ type Relay struct {
 	FollowURI  string // The URI of our Follow activity (needed for Undo)
 	Name       string // Display name from relay actor profile
 	Status     string // pending, active, failed
+	Paused     bool   // If true, incoming notes are logged but not saved
 	CreatedAt  time.Time
 	AcceptedAt *time.Time // When the relay accepted our Follow request
 }

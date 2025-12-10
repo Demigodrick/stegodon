@@ -206,6 +206,10 @@ func (w *DBWrapper) ReadActiveRelays() (error, *[]domain.Relay) {
 	return w.db.ReadActiveRelays()
 }
 
+func (w *DBWrapper) ReadActiveUnpausedRelays() (error, *[]domain.Relay) {
+	return w.db.ReadActiveUnpausedRelays()
+}
+
 func (w *DBWrapper) ReadRelayByActorURI(actorURI string) (error, *domain.Relay) {
 	return w.db.ReadRelayByActorURI(actorURI)
 }
