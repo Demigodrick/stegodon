@@ -1672,7 +1672,7 @@ func TestHandleCreateActivityWithDeps_Success(t *testing.T) {
 		}
 	}`)
 
-	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
 	if err != nil {
 		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
 	}
@@ -1718,7 +1718,7 @@ func TestHandleCreateActivityWithDeps_NotFollowing(t *testing.T) {
 		}
 	}`)
 
-	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
 	if err == nil {
 		t.Fatal("Expected error for Create from non-followed actor")
 	}
@@ -1726,6 +1726,56 @@ func TestHandleCreateActivityWithDeps_NotFollowing(t *testing.T) {
 	if !strings.Contains(err.Error(), "not following") {
 		t.Errorf("Expected 'not following' error, got: %v", err)
 	}
+}
+
+// TestHandleCreateActivityWithDeps_RelayBypassesFollowCheck tests that relay content is accepted without follow relationship
+func TestHandleCreateActivityWithDeps_RelayBypassesFollowCheck(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// No follow relationship - but this is relay content
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/create-456",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/789",
+			"type": "Note",
+			"content": "Hello from relay!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	// isFromRelay=true should bypass the follow check
+	err := handleCreateActivityWithDeps(createBody, "alice", true, deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps with isFromRelay=true should succeed, got: %v", err)
+	}
+
+	// The activity was accepted (no error), validation passed
+	// Note: The actual activity storage happens in HandleInboxWithDeps, not in handleCreateActivityWithDeps
 }
 
 // TestHandleCreateActivityWithDeps_ReplyIncrementsCounts tests that replies increment reply count
@@ -1781,7 +1831,7 @@ func TestHandleCreateActivityWithDeps_ReplyIncrementsCounts(t *testing.T) {
 		}
 	}`)
 
-	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
 	if err != nil {
 		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
 	}
@@ -1861,7 +1911,7 @@ func TestHandleCreateActivityWithDeps_DuplicateSkipsReplyCount(t *testing.T) {
 		}
 	}`)
 
-	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
 	if err != nil {
 		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
 	}
@@ -1923,7 +1973,7 @@ func TestHandleCreateActivityWithDeps_NoReplyNoIncrement(t *testing.T) {
 		}
 	}`)
 
-	err := handleCreateActivityWithDeps(createBody, "alice", deps)
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
 	if err != nil {
 		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
 	}

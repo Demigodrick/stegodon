@@ -208,7 +208,7 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			return
 		}
 	case "Create":
-		if err := handleCreateActivityWithDeps(body, username, deps); err != nil {
+		if err := handleCreateActivityWithDeps(body, username, isFromRelay, deps); err != nil {
 			log.Printf("Inbox: Failed to handle Create: %v", err)
 			http.Error(w, "Failed to process Create", http.StatusInternalServerError)
 			return
@@ -438,17 +438,17 @@ func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domai
 }
 
 // handleCreateActivity processes a Create activity (incoming post/note)
-func handleCreateActivity(body []byte, username string) error {
+func handleCreateActivity(body []byte, username string, isFromRelay bool) error {
 	deps := &InboxDeps{
 		Database:   NewDBWrapper(),
 		HTTPClient: defaultHTTPClient,
 	}
-	return handleCreateActivityWithDeps(body, username, deps)
+	return handleCreateActivityWithDeps(body, username, isFromRelay, deps)
 }
 
 // handleCreateActivityWithDeps processes a Create activity (incoming post/note).
 // This version accepts dependencies for testing.
-func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps) error {
+func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool, deps *InboxDeps) error {
 	var create struct {
 		ID     string `json:"id"`
 		Type   string `json:"type"`
@@ -502,25 +502,15 @@ func handleCreateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 	}
 	log.Printf("Inbox: Remote actor: %s@%s (ID: %s)", remoteActor.Username, remoteActor.Domain, remoteActor.Id)
 
-	// Check if this is relay-forwarded content (from an active relay)
-	// YUKIMOCHI relays forward raw Create activities, not wrapped in Announce
-	isFromRelay := false
-	err, relays := database.ReadActiveRelays()
-	if err == nil && relays != nil && len(*relays) > 0 {
-		// Check if we have any active relay subscriptions
-		// For relay content, we accept the Create without checking follow status
-		isFromRelay = true
-		log.Printf("Inbox: Accepting relay-forwarded Create from %s", create.Actor)
-	}
-
-	// Check if we follow this actor (skip for relay content)
+	// Check if we follow this actor (skip for relay content - isFromRelay is set when signer != actor)
 	err, follow := database.ReadFollowByAccountIds(localAccount.Id, remoteActor.Id)
 	isFollowing := err == nil && follow != nil
 
 	if isFollowing {
 		log.Printf("Inbox: Accepted post from followed user %s@%s (follow accepted: %v)", remoteActor.Username, remoteActor.Domain, follow.Accepted)
 	} else if isFromRelay {
-		// Relay-forwarded content - already logged above
+		// Relay-forwarded content (signer was different from activity actor)
+		log.Printf("Inbox: Accepting relay-forwarded Create from %s", create.Actor)
 	} else {
 		// Not following - only accept if this is a reply to one of our posts
 		isReplyToOurPost := false
