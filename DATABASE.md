@@ -72,6 +72,7 @@ erDiagram
         INTEGER processed
         TIMESTAMP created_at
         INTEGER local
+        INTEGER from_relay
         INTEGER reply_count
         INTEGER like_count
         INTEGER boost_count
@@ -125,6 +126,18 @@ erDiagram
         TIMESTAMP created_at
     }
 
+    relays {
+        TEXT id PK
+        TEXT actor_uri UK
+        TEXT inbox_uri
+        TEXT follow_uri
+        TEXT name
+        TEXT status
+        INTEGER paused
+        TIMESTAMP created_at
+        TIMESTAMP accepted_at
+    }
+
     accounts ||--o{ notes : "creates"
     accounts ||--o{ follows : "follower"
     accounts ||--o{ likes : "likes"
@@ -153,7 +166,7 @@ Follow relationships between accounts. Can represent local-to-local, local-to-re
 Cached ActivityPub actors from other servers. Includes public keys for signature verification and inbox URIs for delivery. Cached data has a 24-hour TTL before refresh.
 
 ### activities
-Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for debugging and replay. Includes denormalized engagement counters for remote posts displayed in timelines.
+Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for debugging and replay. The `from_relay` flag indicates content forwarded via relay subscriptions. Includes denormalized engagement counters for remote posts displayed in timelines.
 
 ### likes
 Like/favorite relationships between accounts and notes. For local notes, `note_id` references the note directly. For remote/federated posts, `object_uri` stores the ActivityPub object URI and `note_id` contains a deterministic placeholder UUID derived from the object URI (to satisfy the unique constraint).
@@ -172,6 +185,19 @@ Junction table linking notes to their hashtags (many-to-many relationship).
 
 ### note_mentions
 Stores @username@domain mentions found in notes. Used for notification features and tracking who is mentioned in posts. Mentions are parsed from both local notes and incoming federated activities.
+
+### relays
+ActivityPub relay subscriptions for receiving federated content from relay servers. Supports both FediBuzz-style (hashtag-based, Announce-wrapped) and YUKIMOCHI-style (raw Create forwarding) relays.
+
+| Column | Description |
+|--------|-------------|
+| `actor_uri` | The relay's actor URI (e.g., `https://relay.fedi.buzz/tag/music`) |
+| `inbox_uri` | The relay's inbox URI for delivering Follow/Undo activities |
+| `follow_uri` | The URI of our Follow activity (needed for Undo) |
+| `name` | Display name from relay actor profile |
+| `status` | Subscription status: `pending`, `active`, or `failed` |
+| `paused` | If true, incoming content from this relay is logged but not saved |
+| `accepted_at` | When the relay accepted our Follow request |
 
 ## Indexes
 
@@ -202,6 +228,7 @@ Stores @username@domain mentions found in notes. Used for notification features 
 | note_hashtags | idx_note_hashtags_hashtag_id | hashtag_id |
 | note_mentions | idx_note_mentions_note_id | note_id |
 | note_mentions | idx_note_mentions_actor_uri | mentioned_actor_uri |
+| relays | idx_relays_status | status |
 
 ## Denormalized Counters
 

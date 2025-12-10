@@ -1,4 +1,4 @@
-# 🦣 stegodon
+# stegodon
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/deemkeen/stegodon)](https://github.com/deemkeen/stegodon/releases) [![Go Version](https://img.shields.io/github/go-mod/go-version/deemkeen/stegodon)](https://github.com/deemkeen/stegodon/blob/main/go.mod) [![License](https://img.shields.io/github/license/deemkeen/stegodon)](https://github.com/deemkeen/stegodon/blob/main/LICENSE) [![Docker Build](https://github.com/deemkeen/stegodon/actions/workflows/docker.yml/badge.svg)](https://github.com/deemkeen/stegodon/actions/workflows/docker.yml) [![Release](https://github.com/deemkeen/stegodon/actions/workflows/release.yml/badge.svg)](https://github.com/deemkeen/stegodon/actions/workflows/release.yml)
 
@@ -14,6 +14,7 @@ Built with Go and [Charm Tools](https://github.com/charmbracelet).
 
 - **SSH-First TUI** - Connect via SSH, authenticate with your public key, create notes in a beautiful terminal interface
 - **ActivityPub Federation** - Follow/unfollow users, federate posts to Mastodon/Pleroma with HTTP signatures
+- **Relay Support** - Subscribe to ActivityPub relays (FediBuzz, YUKIMOCHI) to discover content beyond direct follows
 - **Threading & Replies** - Reply to posts, view threaded conversations with recursive reply counts
 - **Mentions** - Tag users with `@username@domain`, autocomplete suggestions, highlighted in TUI/web
 - **Hashtags** - Use `#tags` in your posts, highlighted in TUI and stored for discovery
@@ -55,10 +56,11 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
 
 - **Tab** - Cycle through views
 - **Shift+Tab** - Cycle through views in reverse order
-- **↑/↓** or **j/k** - Navigate lists
+- **Up/Down** or **j/k** - Navigate lists
 - **Enter** - Open thread view for posts with replies
 - **Esc** - Return from thread view
 - **r** - Reply to selected post
+- **l** - Like/unlike selected post (federated)
 - **o** - Toggle URL display for selected post (home timeline)
   - Press once: Show clickable URL
   - Press again or navigate: Show post content
@@ -74,7 +76,7 @@ Environment variables override embedded defaults:
 
 ```bash
 # Basic settings
-STEGODON_HOST=0.0.0.0          # Server IP (you can use 127.0.0.1 to prevent remote connections)
+STEGODON_HOST=0.0.0.0             # Server IP (use 127.0.0.1 to prevent remote connections)
 STEGODON_SSHPORT=23232            # SSH port
 STEGODON_HTTPPORT=9999            # HTTP port
 
@@ -97,9 +99,9 @@ STEGODON_WITH_PPROF=true          # Enable pprof profiler on localhost:6060
 ```
 
 **File locations:**
-- Config: `./config.yaml` → `~/.config/stegodon/config.yaml` → embedded defaults
-- Database: `./database.db` → `~/.config/stegodon/database.db`
-- SSH key: `./.ssh/stegodonhostkey` → `~/.config/stegodon/.ssh/stegodonhostkey`
+- Config: `./config.yaml` -> `~/.config/stegodon/config.yaml` -> embedded defaults
+- Database: `./database.db` -> `~/.config/stegodon/database.db`
+- SSH key: `./.ssh/stegodonhostkey` -> `~/.config/stegodon/.ssh/stegodonhostkey`
 
 **Viewing logs (Linux with journald):**
 ```bash
@@ -137,6 +139,21 @@ curl http://localhost:6060/debug/pprof/goroutine?debug=1 | grep "goroutine profi
 
 **Your profile:** `https://yourdomain.com/users/<username>`
 
+## Relay Subscriptions
+
+Relays let you discover content from across the Fediverse without following individual users. Admin users can manage relays from the admin panel.
+
+**Supported relays:**
+- **FediBuzz** - Hashtag-based (e.g., `relay.fedi.buzz/tag/music`)
+- **YUKIMOCHI** - Full firehose (e.g., `relay.toot.yukimochi.jp`)
+
+**Relay controls:**
+- `a` - Add relay (enter URL or domain)
+- `d` - Unsubscribe from relay
+- `p` - Pause/resume relay (paused relays log but don't save content)
+- `r` - Retry failed subscription
+- `x` - Delete all relay content from timeline
+
 ## RSS Feeds
 
 - Personal: `http://localhost:9999/feed?username=<user>`
@@ -149,7 +166,7 @@ Browse posts through a terminal-themed web interface:
 
 - **Homepage:** `http://localhost:9999/` - View all posts from all users
 - **User profile:** `http://localhost:9999/users/<username>` - View posts by a specific user
-- **Single post:** `http://localhost:9999/posts/<uuid>` - View individual post
+- **Single post:** `http://localhost:9999/posts/<uuid>` - View individual post with thread context
 
 The web UI features:
 - Terminal-style aesthetic matching the SSH TUI
@@ -171,7 +188,7 @@ go build
 
 **Requirements:**
 - Go 1.25+
-- Terminal with 24-bit color, 115×28 minimum
+- Terminal with 24-bit color, 115x28 minimum
 - OSC 8 support for clickable links (optional: Ghostty, iTerm2, Kitty)
 
 ## Tech Stack
@@ -181,6 +198,12 @@ go build
 - **Web:** [gin](https://github.com/gin-gonic/gin)
 - **Database:** SQLite with WAL mode
 - **Federation:** Custom ActivityPub implementation with HTTP signatures
+
+## Documentation
+
+- [DATABASE.md](DATABASE.md) - Database schema and tables
+- [FEDERATION.md](FEDERATION.md) - ActivityPub federation details
+- [DOCKER.md](DOCKER.md) - Docker deployment guide
 
 ## License
 

@@ -1,25 +1,22 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Project Overview
 
-**stegodon** is a ssh-first fediverse multi-user blog written in Go using [Charm Tools](https://github.com/charmbracelet). Users connect via SSH and create notes in a terminal interface. Notes can be subscribed to via RSS and federate via ActivityPub to the Fediverse (Mastodon, Pleroma, etc.) and optionally viewed in a web browser.
+**stegodon** is an SSH-first fediverse multi-user blog written in Go using [Charm Tools](https://github.com/charmbracelet). Users connect via SSH and create notes in a terminal interface. Notes can be subscribed to via RSS and federate via ActivityPub to the Fediverse (Mastodon, Pleroma, etc.) and optionally viewed in a web browser.
 
 ## Build and Run Commands
 
 ```bash
-# Install dependencies
-go get -d
+# Build and run
+go build && ./stegodon
 
-# Build the application
-go build
+# Run tests
+go test ./...
 
-# Run the application
-./stegodon
-
-# Run directly without building
-go run main.go
+# Development workflow (always run after changes)
+go clean && go test ./... && go build
 
 # Run with ActivityPub enabled
 STEGODON_WITH_AP=true STEGODON_SSLDOMAIN=yourdomain.com ./stegodon
@@ -31,406 +28,236 @@ STEGODON_SINGLE=true ./stegodon
 STEGODON_CLOSED=true ./stegodon
 ```
 
-## Development Workflow
-
-**IMPORTANT**: After making any changes to the project, always run:
-
-```bash
-go clean && go test ./... && go build
-```
-
-This ensures:
-1. `go clean` - Removes build artifacts and cached files
-2. `go test ./...` - Runs all 200+ unit tests to verify nothing broke
-3. `go build` - Compiles the application only if tests pass
-
-The test suite covers critical functionality:
-- **domain**: 100% coverage (data structures)
-- **ui/createuser**: 86.6% coverage (username selection)
-- **ui/hometimeline**: 81.6% coverage (home timeline view)
-- **ui/myposts**: 71.3% coverage (user's notes list)
-- **activitypub**: 67.3% coverage (inbox/outbox, actors, signatures)
-- **util**: 57.2% coverage (crypto, config, helpers)
-- **ui/threadview**: 56.6% coverage (thread/conversation view)
-- **db**: 36.4% coverage (database operations, reply counting)
-- **ui/writenote**: 37.3% coverage (note creation)
-- **web**: 17.4% coverage (RSS, WebFinger, UI handlers)
-
 ## Configuration
 
-Configuration is managed via environment variables:
+Environment variables:
 - `STEGODON_HOST` - Server IP (default: 127.0.0.1)
-- `STEGODON_SSHPORT` - SSH login port (default: 23232)
+- `STEGODON_SSHPORT` - SSH port (default: 23232)
 - `STEGODON_HTTPPORT` - HTTP port (default: 9999)
-- `STEGODON_SSLDOMAIN` - **Required for ActivityPub** - Your public domain (default: example.com)
-- `STEGODON_WITH_AP` - Enable ActivityPub functionality (default: false)
-- `STEGODON_SINGLE` - Enable single-user mode (default: false)
-- `STEGODON_CLOSED` - Close registration for new users (default: false)
-- `STEGODON_NODE_DESCRIPTION` - Custom description for NodeInfo (default: "A SSH-first federated microblog")
-- `STEGODON_WITH_JOURNALD` - **Linux only** - Enable journald logging for systemd integration (default: false)
-- `STEGODON_WITH_PPROF` - Enable pprof profiling server on localhost:6060 (default: false)
+- `STEGODON_SSLDOMAIN` - Public domain for ActivityPub (default: example.com)
+- `STEGODON_WITH_AP` - Enable ActivityPub (default: false)
+- `STEGODON_SINGLE` - Single-user mode (default: false)
+- `STEGODON_CLOSED` - Close registration (default: false)
+- `STEGODON_NODE_DESCRIPTION` - NodeInfo description
+- `STEGODON_WITH_JOURNALD` - Linux journald logging (default: false)
+- `STEGODON_WITH_PPROF` - Enable pprof on localhost:6060 (default: false)
 
-**File Locations** (as of single-binary distribution):
-- Configuration file: Checked in order:
-  1. `./config.yaml` (local directory, for backwards compatibility)
-  2. `~/.config/stegodon/config.yaml` (user config directory)
-  3. Embedded defaults (if neither file exists, a default config.yaml is created in ~/.config/stegodon/)
-- Database: `~/.config/stegodon/database.db` (or `./database.db` if it exists locally)
-- SSH host key: `~/.config/stegodon/.ssh/stegodonhostkey` (or `./.ssh/stegodonhostkey` if it exists locally)
-- Templates and version: Embedded in the binary
-
-**For ActivityPub to work**, you must:
-1. Set `STEGODON_WITH_AP=true`
-2. Set `STEGODON_SSLDOMAIN` to your actual domain
-3. Have your domain publicly accessible with proper DNS
-4. Proxy the HTTP port (9999) through a reverse proxy with TLS
-
-**For single-user mode**:
-- Set `STEGODON_SINGLE=true` to restrict registration to only one user
-- When enabled, only the first user can register
-- Additional SSH connection attempts are rejected with the message: "This blog is in single-user mode, but you can host your own stegodon!"
-- Useful for personal blogs where you want to prevent other users from registering
-
-**For closed registration**:
-- Set `STEGODON_CLOSED=true` to completely close registration
-- When enabled, no new users can register (regardless of current user count)
-- SSH connection attempts from new users are rejected with the message: "Registration is closed. Please contact the administrator."
-- Existing users can continue to log in normally
-- Useful for invite-only or maintenance periods
-
-**For NodeInfo customization**:
-- Set `STEGODON_NODE_DESCRIPTION` to customize the instance description shown in NodeInfo
-- This description is visible in fediverse server lists and discovery tools
-- Example: `STEGODON_NODE_DESCRIPTION="My personal microblog server"`
-- If not set, defaults to: "A SSH-first federated microblog"
-- NodeInfo is available at `/.well-known/nodeinfo` and `/nodeinfo/2.0` (when `STEGODON_WITH_AP=true`)
-
-**For journald/systemd logging (Linux only)**:
-- Set `STEGODON_WITH_JOURNALD=true` to send logs to systemd's journald
-- When enabled, all application logs (including Gin HTTP and Wish SSH logs) are sent to journald with syslog identifier "stegodon"
-- View logs with: `journalctl -t stegodon -f` (follow in real-time) or `journalctl -t stegodon --since "1 hour ago"`
-- When running as a systemd service, you can also use: `journalctl -u stegodon.service -f`
-- Useful when running as a systemd service for centralized logging and filtering
-- On non-Linux systems (macOS, Windows, BSD), this flag shows a warning and falls back to standard logging
-- Example systemd service:
-  ```ini
-  [Unit]
-  Description=Stegodon SSH Blog
-  After=network.target
-
-  [Service]
-  Type=simple
-  User=stegodon
-  WorkingDirectory=/opt/stegodon
-  Environment="STEGODON_WITH_JOURNALD=true"
-  Environment="STEGODON_WITH_AP=true"
-  Environment="STEGODON_SSLDOMAIN=yourdomain.com"
-  ExecStart=/opt/stegodon/stegodon
-  Restart=on-failure
-
-  [Install]
-  WantedBy=multi-user.target
-  ```
-
-**For pprof profiling (performance debugging)**:
-- Set `STEGODON_WITH_PPROF=true` to enable the pprof HTTP server
-- Server listens on `localhost:6060` (not exposed externally)
-- Access profiling web interface at `http://localhost:6060/debug/pprof/`
-- Useful commands:
-  - CPU profile: `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`
-  - Heap profile: `go tool pprof http://localhost:6060/debug/pprof/heap`
-  - Goroutine count: `curl http://localhost:6060/debug/pprof/goroutine?debug=1 | grep "goroutine profile"`
-- **Security**: Only enable on localhost, never expose publicly
-- Useful for debugging performance issues, memory leaks, and goroutine leaks
+File locations:
+- Config: `~/.config/stegodon/config.yaml` (or `./config.yaml`)
+- Database: `~/.config/stegodon/database.db` (or `./database.db`)
+- SSH key: `~/.config/stegodon/.ssh/stegodonhostkey`
 
 ## Architecture
 
-### Application Flow
+### Dual Server Model
 
-1. **Dual Server Model**: The application runs two concurrent servers:
-   - **SSH Server** (port 23232): Handles TUI client connections
-   - **HTTP Server** (port 9999): Serves RSS feeds and ActivityPub endpoints
+The application runs two concurrent servers:
+- **SSH Server** (port 23232): TUI client connections via [wish](https://github.com/charmbracelet/wish)
+- **HTTP Server** (port 9999): RSS feeds, web UI, and ActivityPub endpoints via [gin](https://github.com/gin-gonic/gin)
 
-2. **Authentication Flow** (`middleware/auth.go`):
-   - Users authenticate via SSH public key
-   - Existing users with muted status are rejected
-   - In closed mode (`STEGODON_CLOSED=true`), all new registrations are blocked
-   - In single-user mode (`STEGODON_SINGLE=true`), new registrations are blocked if one user already exists
-   - On first connection, a random username is generated
-   - On first login, users are prompted to choose their username (`ui/createuser/`)
-   - Public keys are hashed and stored in SQLite for user identification
-   - Each account gets an RSA keypair for ActivityPub functionality
+### TUI Architecture
 
-3. **TUI Architecture** (`ui/supertui.go`):
-   - Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern
-   - **Multi-view navigation system**:
-     - `createuser.Model`: First-time username selection
-     - `writenote.Model`: Note creation interface (with reply mode)
-     - `myposts.Model`: User's own notes with edit/delete
-     - `hometimeline.Model`: Combined local + federated timeline
-     - `threadview.Model`: Thread/conversation view with nested replies
-     - `followuser.Model`: Follow remote ActivityPub users
-     - `followers.Model`: View followers list
-     - `following.Model`: View following list
-     - `localusers.Model`: Browse local users
-   - **Navigation**: Tab cycles forward, Shift+Tab cycles backward
-   - **Thread navigation**: Enter on post with replies opens thread view, Esc returns
-   - State machine driven by `common.SessionState` enum
+Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern. Main orchestrator in `ui/supertui.go`.
 
-4. **Database Layer** (`db/db.go`):
-   - SQLite database (`database.db`) with WAL mode enabled
-   - **Singleton pattern** with connection pooling (max 25 connections)
-   - **Core tables**: `accounts`, `notes`, `hashtags`, `note_hashtags`
-   - **ActivityPub tables**: `follows`, `remote_accounts`, `activities`, `likes`, `delivery_queue`
-   - **Denormalized counters**: `reply_count`, `like_count`, `boost_count` on notes and activities
-   - Extended accounts with: `display_name`, `summary`, `avatar_url`, RSA keypairs
-   - Extended notes with: `visibility`, `in_reply_to_uri`, `object_uri`, `federated`, `sensitive`, `content_warning`
-   - Transactions use retry logic to handle SQLite busy states
-   - Recursive reply count updates walk the ancestor chain for accurate totals
+**Views:**
+- `createuser` - First-time username selection
+- `writenote` - Note creation (with reply mode)
+- `myposts` - User's own notes with edit/delete
+- `hometimeline` - Combined local + federated timeline
+- `threadview` - Thread/conversation view
+- `followuser` - Follow remote users
+- `followers` / `following` - Relationship lists
+- `localusers` - Browse local users
+- `relay` - Manage ActivityPub relay subscriptions (admin)
+- `admin` - Admin panel
+- `deleteaccount` - Account deletion
 
-5. **Web Layer** (`web/router.go`):
-   - Gin framework handles HTTP routing
-   - **RSS feed endpoints**:
-     - `/feed` - All user notes
-     - `/feed?username=<user>` - User-specific feed
-     - `/feed/:id` - Single note by UUID
-   - **ActivityPub endpoints** (enabled via `STEGODON_WITH_AP=true`):
-     - `/users/:actor` - Actor profile (application/activity+json)
-     - `/.well-known/webfinger` - WebFinger discovery (application/json)
-     - `/users/:actor/inbox` - Receive activities (Follow, Undo, Create, Like)
-     - `/users/:actor/outbox` - Activity stream (placeholder)
-     - `/users/:actor/followers` - Followers collection (placeholder)
-     - `/users/:actor/following` - Following collection (placeholder)
+**Navigation:** Tab cycles forward, Shift+Tab backward. Enter opens threads, Esc returns.
 
-6. **ActivityPub Layer** (`activitypub/`):
-   - **HTTP Signatures** (`httpsig.go`): RSA-SHA256 signing and verification
-   - **Actor Discovery** (`actors.go`): Fetch and cache remote actors, WebFinger resolution
-   - **Inbox Handler** (`inbox.go`): Process Follow, Undo, Create, Like activities
-   - **Outbox Handler** (`outbox.go`): Send Accept, Create, Follow activities
-   - **Delivery Queue** (`delivery.go`): Background worker with exponential backoff (1m → 24h)
+### Database Layer
 
-### Key Data Flow
+SQLite with WAL mode. Singleton pattern with connection pooling (max 25 connections).
 
-**Creating a Note:**
-1. User types in `writenote` TUI component
-2. On submit, note is saved via `db.CreateNote()` with user UUID and timestamp
-3. `UpdateNoteList` message triggers `listnotes` model refresh
-4. Note immediately appears in list panel
+**Core tables:** `accounts`, `notes`, `hashtags`, `note_hashtags`
 
-**RSS Feed Generation:**
-1. HTTP request to `/feed` or `/feed?username=X`
-2. `web/rss.go` queries notes from database
-3. Notes formatted as RSS 2.0 XML using `gorilla/feeds` library
-4. Response served with `application/xml` content-type
+**ActivityPub tables:** `follows`, `remote_accounts`, `activities`, `likes`, `boosts`, `delivery_queue`, `note_mentions`, `relays`
 
-**SSH Connection:**
-1. `wish` server accepts connection with public key auth
-2. `AuthMiddleware` creates/retrieves account from public key hash
-3. `MainTui` middleware initializes bubbletea program with user's account
-4. TUI renders based on `FirstTimeLogin` flag
+**Denormalized counters:** `reply_count`, `like_count`, `boost_count` on notes and activities for performance.
 
-**ActivityPub Federation (Note Publishing):**
-1. User posts note via TUI (Ctrl+S in writenote view)
-2. Note saved to database with `db.CreateNote()`
-3. Background goroutine triggers `activitypub.SendCreate()`
-4. Create activity generated with note content and addressing
-5. Activity queued to `delivery_queue` for each follower's inbox
-6. Delivery worker processes queue every 10s with retry logic
-7. HTTP POST sent to remote inboxes with signed requests
+### ActivityPub Layer
 
-**ActivityPub Federation (Following Users):**
-1. User enters `user@domain.com` in follow view
-2. WebFinger resolves to ActivityPub actor URI
-3. `activitypub.SendFollow()` sends Follow activity to remote inbox
-4. Remote server sends Accept activity back
-5. Follow relationship stored in `follows` table
-6. Remote actor cached in `remote_accounts` table (24h TTL)
+Located in `activitypub/`:
+- `httpsig.go` - RSA-SHA256 HTTP signature signing/verification
+- `actors.go` - Remote actor fetching and caching (24h TTL)
+- `inbox.go` - Incoming activity processing
+- `outbox.go` - Outgoing activity sending
+- `delivery.go` - Background queue worker with exponential backoff
+- `deps.go` - Database and HTTP client interfaces
+- `db_wrapper.go` - Production database adapter
 
-**ActivityPub Federation (Receiving Posts):**
-1. Remote server POSTs Create activity to `/users/:actor/inbox`
-2. HTTP signature verified against remote actor's public key
-3. Activity parsed and stored in `activities` table
-4. Federated timeline view displays recent Create activities
-5. Posts shown with actor name, content, and relative timestamp
+### Web Layer
 
-### Directory Structure
+Located in `web/`:
+- `router.go` - Gin HTTP routing
+- `rss.go` - RSS feed generation
+- `handlers.go` - Web UI handlers
+- `activitypub.go` - ActivityPub endpoint handlers
 
-- `db/` - Database layer with SQLite operations
-  - `db.go` - Core database operations
-  - `migrations.go` - ActivityPub table creation, schema extensions, reply count backfill
-- `domain/` - Domain models (Account, Note, RemoteAccount, Follow, Activity, Like, DeliveryQueueItem, HomePost)
-- `activitypub/` - ActivityPub federation protocol
-  - `actors.go` - Remote actor fetching and caching
-  - `httpsig.go` - HTTP signature signing and verification
-  - `inbox.go` - Incoming activity processing (with duplicate detection)
-  - `outbox.go` - Outgoing activity sending
-  - `delivery.go` - Background delivery queue worker
-- `middleware/` - SSH middleware (auth, TUI handler)
-- `ui/` - TUI components:
-  - `common/` - Shared styles, commands, session states, layout helpers
-  - `createuser/` - Username selection screen
-  - `writenote/` - Note creation textarea (with reply mode)
-  - `myposts/` - User's own notes with edit/delete
-  - `hometimeline/` - Combined local + federated timeline
-  - `threadview/` - Thread/conversation view with nested replies
-  - `followuser/` - Follow remote users interface
-  - `followers/` - Followers list display
-  - `following/` - Following list display
-  - `localusers/` - Browse local users
-  - `header/` - Top navigation bar
-  - `admin/` - Admin panel
-  - `deleteaccount/` - Account deletion
-  - `supertui.go` - Main TUI orchestrator with multi-view navigation
-- `util/` - Utilities (config, crypto, helpers, hashtag highlighting)
-- `web/` - HTTP server (RSS, ActivityPub, routing, web UI)
+## Directory Structure
 
-## Development Notes
+```
+stegodon/
+├── activitypub/     # ActivityPub federation protocol
+├── db/              # Database layer (SQLite operations, migrations)
+├── domain/          # Domain models (Account, Note, Activity, Relay, etc.)
+├── middleware/      # SSH middleware (auth, TUI handler)
+├── remote/          # Remote utilities
+├── ui/              # TUI components
+│   ├── common/      # Shared styles, commands, session states
+│   ├── createuser/  # Username selection
+│   ├── writenote/   # Note creation
+│   ├── myposts/     # User's notes
+│   ├── hometimeline/# Combined timeline
+│   ├── threadview/  # Thread display
+│   ├── followuser/  # Follow interface
+│   ├── followers/   # Followers list
+│   ├── following/   # Following list
+│   ├── localusers/  # Local user browser
+│   ├── relay/       # Relay management (admin)
+│   ├── admin/       # Admin panel
+│   ├── header/      # Navigation bar
+│   └── deleteaccount/
+├── util/            # Utilities (config, crypto, helpers)
+├── web/             # HTTP server (RSS, ActivityPub, web UI)
+│   ├── templates/   # HTML templates (embedded)
+│   └── static/      # Static assets (embedded)
+└── main.go          # Entry point
+```
 
-- Go version: 1.25+
-- **Test suite**: 200+ passing unit tests covering critical functionality
-- **Single Binary Distribution**: All static assets (config, templates, version) are embedded in the binary
-- SSH host key is auto-generated on first run by the Wish SSH library
-- User data stored in `~/.config/stegodon/` (config, database, SSH key)
-- Terminal requirements: 24-bit color support, minimum 115 cols x 28 rows
-- Public keys are hashed with SHA256 before storage for privacy
+## Key Patterns
 
-## Recent Updates (2025)
+### Auto-Refresh View Pattern
 
-The project has been fully updated with ActivityPub federation support:
-- **SSH Migration**: Migrated from `gliderlabs/ssh` to `charmbracelet/ssh` (required by newer wish versions)
-- **Charm Tools**: Updated to latest stable releases (bubbletea v1.3.10, bubbles v0.21.0, lipgloss v1.1.0, wish v1.4.7)
-- **Single Binary Distribution** (November 2025):
-  - Embedded all static assets (config.yaml, HTML templates, version.txt) using Go's `embed` package
-  - User data centralized in `~/.config/stegodon/` directory
-  - Backwards compatible: checks local directory first for existing installations
-  - Default config auto-created on first run if missing
-- **ActivityPub Implementation**: Full Fediverse integration (6 phases over 8 weeks)
-  - Phase 1: Database foundation with 5 new tables
-  - Phase 2: HTTP signatures and actor discovery
-  - Phase 3: Core protocol (inbox/outbox/delivery queue)
-  - Phase 4: TUI integration (follow users, federated notes)
-  - Phase 5: Federated timeline and followers list
-  - Phase 6: Polish and configuration fixes
-- **Database Optimization**: WAL mode with connection pooling for concurrent access
-- **Navigation Enhancement**: Tab + Shift+Tab
-- **Memory Leak Fix** (December 2025): Fixed ticker chain accumulation in timeline views
-- **Threading & Reply Counts** (December 2025):
-  - Recursive reply count calculation (total nested replies, not just direct)
-  - Denormalized counters on notes and activities tables
-  - Duplicate detection for federated posts (local posts coming back via federation)
-  - Thread view with parent and nested replies
-  - Hashtag support with `#tag` highlighting and storage
-- **Test Suite Expansion** (December 2025):
-  - Added comprehensive tests for threadview, hometimeline, myposts
-  - Reply counting and duplicate detection tests
-  - Coverage increased from ~155 to 200+ tests
+Timeline views that auto-refresh must track active state to prevent goroutine leaks:
 
-## Architecture Patterns
+```go
+type Model struct {
+    isActive bool
+}
 
-### Auto-Refresh View Pattern (Memory Leak Prevention)
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+    switch msg := msg.(type) {
+    case common.ActivateViewMsg:
+        m.isActive = true
+        return m, tea.Batch(loadData(), tickRefresh())
+    case common.DeactivateViewMsg:
+        m.isActive = false
+        return m, nil
+    case refreshTickMsg:
+        if m.isActive {
+            return m, tea.Batch(loadData(), tickRefresh())
+        }
+        return m, nil  // Stop ticker chain
+    }
+}
+```
 
-Timeline views and any other views that auto-refresh must use the active state pattern to prevent goroutine leaks. Without this pattern, each time a user navigates to and from a view, a new ticker chain is created that never stops, leading to unbounded goroutine and memory growth.
+### Dependency Injection for Testing
 
-**Implementation Requirements:**
+ActivityPub handlers use interfaces for testability:
 
-1. **Add `isActive bool` field** to the model struct
-   ```go
-   type Model struct {
-       // ... other fields ...
-       isActive bool // Track if this view is currently visible
-   }
-   ```
+```go
+type Database interface {
+    ReadAccByUsername(username string) (error, *domain.Account)
+    // ... other methods
+}
 
-2. **Initialize as false** in InitialModel()
-   ```go
-   func InitialModel(...) Model {
-       return Model{
-           // ... other fields ...
-           isActive: false, // Start inactive
-       }
-   }
-   ```
+type HTTPClient interface {
+    Do(req *http.Request) (*http.Response, error)
+}
 
-3. **Set true in Init()** when view is first shown
-   ```go
-   func (m Model) Init() tea.Cmd {
-       m.isActive = true // Mark as active
-       return tea.Batch(loadData(), tickRefresh())
-   }
-   ```
-
-4. **Handle lifecycle messages** in Update()
-   ```go
-   func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-       switch msg := msg.(type) {
-       case common.ActivateViewMsg:
-           m.isActive = true
-           return m, tea.Batch(loadData(), tickRefresh())
-
-       case common.DeactivateViewMsg:
-           m.isActive = false
-           return m, nil
-
-       case refreshTickMsg:
-           // Only schedule next tick if view is still active
-           if m.isActive {
-               return m, tea.Batch(loadData(), tickRefresh())
-           }
-           // View is inactive, stop the ticker chain
-           return m, nil
-       }
-   }
-   ```
-
-5. **Send activation/deactivation messages** from supertui.go
-   - Send `DeactivateViewMsg` when navigating away from the view
-   - Send `ActivateViewMsg` when navigating to the view (in getViewInitCmd)
-
-This pattern prevents ticker chains from accumulating when users navigate between views.
-
-**Current Implementations:**
-- `ui/hometimeline/hometimeline.go` (combined home timeline)
-
-**Lifecycle Message Types** (defined in `ui/common/commands.go`):
-- `ActivateViewMsg` - Sent when a view becomes active/visible
-- `DeactivateViewMsg` - Sent when a view becomes inactive/hidden
+// Production: DBWrapper wraps real database
+// Testing: MockDatabase with configurable behavior
+```
 
 ## ActivityPub Features
 
 **Implemented:**
-- ✅ Follow/unfollow remote users via WebFinger (user@domain format)
-- ✅ Accept incoming follow requests automatically
-- ✅ Federate posted notes to all followers
-- ✅ Receive and display posts from followed accounts
-- ✅ HTTP signature authentication (RSA-SHA256)
-- ✅ Reliable delivery with exponential backoff retry
-- ✅ Actor caching with 24-hour TTL
-- ✅ Multi-view TUI navigation
-- ✅ Federated timeline display
-- ✅ Followers list view
-- ✅ Replies and threading (inReplyTo support, thread view, reply compose mode)
-- ✅ Recursive reply counts (total nested sub-replies)
-- ✅ Duplicate detection (local posts federated back are not double-counted)
-- ✅ Content warnings (sensitive flag and content_warning field)
-- ✅ Hashtag parsing and storage
+- Follow/unfollow remote users (WebFinger discovery)
+- Auto-accept incoming follows
+- Federate notes to followers
+- Receive posts from followed accounts
+- HTTP signature authentication
+- Delivery queue with exponential backoff
+- Actor caching (24h TTL)
+- Replies and threading (inReplyTo)
+- Recursive reply counts
+- Like/unlike posts
+- Content warnings
+- Hashtag parsing
+- Relay subscriptions (FediBuzz, YUKIMOCHI)
+- Relay pause/resume and content deletion
 
 **Protocol Support:**
-- Follow/Accept/Undo activities (full support)
-- Create activities (send and receive, with inReplyTo)
-- Update activities (send and receive for notes and actors)
-- Delete activities (send and receive for notes and actors)
-- Like activities (receive only, display pending)
-- WebFinger discovery
-- NodeInfo 2.0
-- Actor profiles (JSON-LD)
+- Follow/Accept/Undo activities
+- Create/Update/Delete activities
+- Like activities
+- Announce activities (relay content)
+- WebFinger, NodeInfo 2.0
 
-**Not Yet Implemented:**
-- Likes/favorites sending
-- Boosts/announces
-- Media attachments
-- Mentions parsing
-- Search
-- Notifications
-- Block/mute functionality
-- Account migrations
-- Object integrity proofs (FEP-8b32)
+## Relay Support
+
+Two relay types supported:
+
+**FediBuzz** (hashtag-based):
+- Subscribe to `https://relay.fedi.buzz/tag/music`
+- Content wrapped in Announce activities
+
+**YUKIMOCHI** (firehose):
+- Subscribe to `https://relay.toot.yukimochi.jp`
+- Raw Create activities forwarded
+- Uses shared inbox (`/inbox`)
+- Follow object: `https://www.w3.org/ns/activitystreams#Public`
+
+**Relay features:**
+- Pause/resume individual relays (paused relays log but don't save content)
+- Delete all relay content from timeline
+- Signature verification against relay's key (signer differs from actor)
+
+**Relay management keys (admin panel):**
+- `a` - Add relay
+- `d` - Delete/unsubscribe
+- `p` - Pause/resume
+- `r` - Retry failed
+- `x` - Clear all relay content
+
+## Test Coverage
+
+Run tests: `go test ./...`
+Run with coverage: `go test ./... -cover`
+
+Key coverage areas:
+- `domain` - 100% (data structures)
+- `createuser` - 87% (username selection)
+- `hometimeline` - 78% (timeline view)
+- `myposts` - 67% (user notes)
+- `util` - 63% (crypto, config)
+- `activitypub` - 60% (federation)
+- `threadview` - 51% (thread display)
+- `db` - 38% (database ops)
+- `writenote` - 37% (note creation)
+
+## Development Notes
+
+- Go 1.25+
+- Single binary distribution (assets embedded via `embed` package)
+- SSH host key auto-generated on first run
+- Terminal: 24-bit color, minimum 115x28
+- Public keys SHA256-hashed before storage
+
+## Documentation
+
+- [DATABASE.md](DATABASE.md) - Schema and tables
+- [FEDERATION.md](FEDERATION.md) - ActivityPub details
+- [DOCKER.md](DOCKER.md) - Docker deployment
+- [README.md](README.md) - User documentation
