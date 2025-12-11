@@ -757,8 +757,13 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 		return fmt.Errorf("Announce activity has invalid object format")
 	}
 
-	// If this is from a relay, handle it as relay-forwarded content
+	// If this is from a relay, check if paused before storing
 	if isFromRelay {
+		relay := findRelayByActorDomain(announceActivity.Actor, deps.Database)
+		if relay != nil && relay.Paused {
+			log.Printf("Inbox: Relay Announce from %s skipped (relay %s is paused)", announceActivity.Actor, relay.ActorURI)
+			return nil
+		}
 		return handleRelayAnnounce(announceActivity.ID, objectURI, embeddedObject, deps)
 	}
 
