@@ -396,8 +396,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.headerModel = header.Model{Width: m.width, Acc: &m.account}
-				// Update deleteAccountModel with the new account info
+				// Update deleteAccountModel and relayModel with the new account info
 				m.deleteAccountModel.Account = &m.account
+				m.relayModel.AdminAcct = &m.account
 				return m, updateUserModelCmd(&m.account)
 			}
 		}
