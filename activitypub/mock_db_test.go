@@ -737,5 +737,16 @@ func (m *MockDatabase) DeleteRelay(id uuid.UUID) error {
 	return nil
 }
 
+// CreateNotification creates a notification (no-op for mock)
+func (m *MockDatabase) CreateNotification(notification *domain.Notification) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	// No-op for now, can be extended if needed for testing
+	return nil
+}
+
 // Ensure MockDatabase implements Database interface
 var _ Database = (*MockDatabase)(nil)

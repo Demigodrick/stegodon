@@ -12,8 +12,9 @@ import (
 )
 
 type Model struct {
-	Width int
-	Acc   *domain.Account
+	Width       int
+	Acc         *domain.Account
+	UnreadCount int
 }
 
 func (m Model) Init() tea.Cmd {
@@ -25,14 +26,22 @@ func (m Model) Update(tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	return GetHeaderStyle(m.Acc, m.Width)
+	return GetHeaderStyle(m.Acc, m.Width, m.UnreadCount)
 }
 
-func GetHeaderStyle(acc *domain.Account, width int) string {
+func GetHeaderStyle(acc *domain.Account, width int, unreadCount int) string {
 	// Single-line header with manual spacing
 	elephant := "🦣"
 
 	leftText := fmt.Sprintf("%s %s", elephant, acc.Username)
+
+	// Add notification badge if there are unread notifications
+	if unreadCount > 0 {
+		badge := fmt.Sprintf(" [%d]", unreadCount)
+		leftText += lipgloss.NewStyle().
+			Foreground(lipgloss.Color(common.COLOR_WARNING)).
+			Render(badge)
+	}
 	centerText := fmt.Sprintf("stegodon v%s", util.GetVersion())
 	rightText := fmt.Sprintf("joined: %s", acc.CreatedAt.Format("2006-01-02"))
 

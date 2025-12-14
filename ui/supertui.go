@@ -22,6 +22,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/hometimeline"
 	"github.com/deemkeen/stegodon/ui/localusers"
 	"github.com/deemkeen/stegodon/ui/myposts"
+	"github.com/deemkeen/stegodon/ui/notifications"
 	"github.com/deemkeen/stegodon/ui/relay"
 	"github.com/deemkeen/stegodon/ui/threadview"
 	"github.com/deemkeen/stegodon/ui/writenote"
@@ -58,6 +59,7 @@ type MainModel struct {
 	relayModel         relay.Model
 	deleteAccountModel deleteaccount.Model
 	threadViewModel    threadview.Model
+	notificationsModel notifications.Model
 }
 
 type userUpdateErrorMsg struct {
@@ -105,6 +107,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
 	deleteAccountModel := deleteaccount.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height, localDomain)
+	notificationsModel := notifications.InitialModel(acc.Id, width, height)
 
 	m := MainModel{state: common.CreateUserView}
 	m.config = config
@@ -120,6 +123,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.relayModel = relayModel
 	m.deleteAccountModel = deleteAccountModel
 	m.threadViewModel = threadViewModel
+	m.notificationsModel = notificationsModel
 	m.headerModel = headerModel
 	m.account = acc
 	m.width = width
@@ -271,6 +275,18 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "n":
+			// Navigate to notifications (global shortcut, works from any view)
+			if m.state != common.CreateUserView && m.state != common.NotificationsView {
+				oldState := m.state
+				m.state = common.NotificationsView
+				// Deactivate old view
+				if deactivateCmd := deactivateOldView(oldState); deactivateCmd != nil {
+					cmds = append(cmds, deactivateCmd)
+				}
+				// Activate notifications view
+				cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
+			}
 		case "tab":
 			// Cycle through main views (excluding create user)
 			// Order: write -> home -> my posts -> [follow] -> followers -> following -> users -> [admin -> relay] -> delete
@@ -311,6 +327,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case common.RelayManagementView:
 				m.state = common.DeleteAccountView
 			case common.DeleteAccountView:
+				m.state = common.NotificationsView
+			case common.NotificationsView:
 				m.state = common.CreateNoteView
 			}
 			// Handle focus changes for writenote textarea
@@ -338,6 +356,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			oldState := m.state
 			switch m.state {
 			case common.CreateNoteView:
+				m.state = common.NotificationsView
+			case common.NotificationsView:
 				m.state = common.DeleteAccountView
 			case common.HomeTimelineView:
 				m.state = common.CreateNoteView
@@ -502,6 +522,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteAccountModel, cmd = m.deleteAccountModel.Update(msg)
 		case common.ThreadView:
 			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		case common.NotificationsView:
+			m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		}
 		cmds = append(cmds, cmd)
 	}
@@ -648,10 +670,20 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.threadViewModel.View())
 
+	notificationsStyleStr := lipgloss.NewStyle().
+		MaxHeight(availableHeight).
+		Height(availableHeight).
+		Width(rightPanelWidth).
+		MaxWidth(rightPanelWidth).
+		Margin(1).
+		Render(m.notificationsModel.View())
+
 	if m.state == common.CreateUserView {
 		s = m.newUserModel.ViewWithWidth(m.width, m.height)
 		return s
 	} else {
+		// Update header with current unread notification count
+		m.headerModel.UnreadCount = m.notificationsModel.UnreadCount
 		navContainer := lipgloss.NewStyle().Render(m.headerModel.View())
 		s += navContainer + "\n"
 
@@ -701,6 +733,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(threadViewStyleStr))
+		case common.NotificationsView:
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(notificationsStyleStr))
 		}
 
 		// Help text
@@ -726,6 +762,8 @@ func (m MainModel) View() string {
 			viewCommands = "y: confirm • n/esc: cancel"
 		case common.ThreadView:
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • esc: back"
+		case common.NotificationsView:
+			viewCommands = "j/k: nav • enter: view • a: mark all read"
 		default:
 			viewCommands = " "
 		}
@@ -786,6 +824,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "delete"
 	case common.ThreadView:
 		return "thread"
+	case common.NotificationsView:
+		return "notifications"
 	default:
 		return "create user"
 	}
@@ -815,6 +855,9 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 	case common.ThreadView:
 		// Thread view activation message
 		return func() tea.Msg { return common.ActivateViewMsg{} }
+	case common.NotificationsView:
+		// Notifications view activation message
+		return func() tea.Msg { return common.ActivateViewMsg{} }
 	default:
 		return nil
 	}
@@ -822,7 +865,7 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 
 // deactivateOldView sends deactivation message if leaving a timeline view
 func deactivateOldView(oldState common.SessionState) tea.Cmd {
-	if oldState == common.HomeTimelineView {
+	if oldState == common.HomeTimelineView || oldState == common.NotificationsView {
 		return func() tea.Msg { return common.DeactivateViewMsg{} }
 	}
 	return nil
