@@ -138,11 +138,26 @@ erDiagram
         TIMESTAMP accepted_at
     }
 
+    notifications {
+        TEXT id PK
+        TEXT account_id FK
+        TEXT notification_type
+        TEXT actor_id
+        TEXT actor_username
+        TEXT actor_domain
+        TEXT note_id
+        TEXT note_uri
+        TEXT note_preview
+        INTEGER read
+        TIMESTAMP created_at
+    }
+
     accounts ||--o{ notes : "creates"
     accounts ||--o{ follows : "follower"
     accounts ||--o{ likes : "likes"
     accounts ||--o{ boosts : "boosts"
     accounts ||--o{ delivery_queue : "owns"
+    accounts ||--o{ notifications : "receives"
     notes ||--o{ likes : "receives"
     notes ||--o{ boosts : "receives"
     notes ||--o{ note_hashtags : "has"
@@ -199,6 +214,23 @@ ActivityPub relay subscriptions for receiving federated content from relay serve
 | `paused` | If true, incoming content from this relay is logged but not saved |
 | `accepted_at` | When the relay accepted our Follow request |
 
+### notifications
+User notifications for social interactions. Notifications appear in real-time in the TUI with a badge counter in the header. Uses an inbox-zero pattern where notifications are deleted on acknowledgment.
+
+| Column | Description |
+|--------|-------------|
+| `id` | Unique notification identifier (UUID) |
+| `account_id` | The user receiving the notification |
+| `notification_type` | Type: `like`, `follow`, `mention`, or `reply` |
+| `actor_id` | UUID of the account that triggered the notification |
+| `actor_username` | Username of the actor (without domain for local users) |
+| `actor_domain` | Domain of the actor (empty for local users) |
+| `note_id` | Related note UUID (for like, mention, reply types) |
+| `note_uri` | ActivityPub URI of the related note |
+| `note_preview` | Text preview of the note content |
+| `read` | Whether the notification has been read (0 or 1) |
+| `created_at` | When the notification was created |
+
 ## Indexes
 
 | Table | Index | Columns |
@@ -232,6 +264,9 @@ ActivityPub relay subscriptions for receiving federated content from relay serve
 | note_mentions | idx_note_mentions_note_id | note_id |
 | note_mentions | idx_note_mentions_actor_uri | mentioned_actor_uri |
 | relays | idx_relays_status | status |
+| notifications | idx_notifications_account_id | account_id |
+| notifications | idx_notifications_created_at | created_at DESC |
+| notifications | idx_notifications_account_read | account_id, read |
 
 ## Denormalized Counters
 

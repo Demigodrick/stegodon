@@ -79,11 +79,12 @@ Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern. 
 - `followuser` - Follow remote users
 - `followers` / `following` - Relationship lists
 - `localusers` - Browse local users
+- `notifications` - View and manage notifications
 - `relay` - Manage ActivityPub relay subscriptions (admin)
 - `admin` - Admin panel
 - `deleteaccount` - Account deletion
 
-**Navigation:** Tab cycles forward, Shift+Tab backward. Enter opens threads, Esc returns.
+**Navigation:** Tab cycles forward, Shift+Tab backward. Press 'n' for notifications. Enter opens threads, Esc returns.
 
 ### Database Layer
 
