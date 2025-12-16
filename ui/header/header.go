@@ -51,7 +51,7 @@ func GetHeaderStyle(acc *domain.Account, width int, unreadCount int) string {
 
 	// Calculate spacing to distribute evenly
 	totalTextLen := leftLen + centerLen + rightLen
-	totalSpacing := max(
+	totalSpacing := maxInt(
 		// Subtract padding for the 2 spaces on each side of header content
 		width-totalTextLen-common.HeaderTotalPadding, 2)
 
@@ -95,4 +95,11 @@ func GetHeaderStyle(acc *domain.Account, width int, unreadCount int) string {
 		Foreground(lipgloss.Color(common.COLOR_WHITE)).
 		Bold(true).
 		Render(header)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
