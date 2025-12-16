@@ -139,6 +139,25 @@ When a relay forwards content, the HTTP signature is from the relay, not the ori
 3. Identifies relay-forwarded content when signer differs from activity actor
 4. Marks such activities with `from_relay=true` in the database
 
+## Notifications
+
+Stegodon includes a real-time notifications system accessible via the TUI (press `n` key). Notifications are generated for the following events:
+
+### Notification Types
+
+- **Like** - When another user (local or remote) likes your post
+- **Follow** - When another user (local or remote) follows you
+- **Mention** - When you are mentioned in a post (`@username` or `@username@domain`)
+- **Reply** - When another user replies to your post
+
+### Notification Behavior
+
+- Notifications appear in real-time with a badge count in the header (e.g., `🦣 username [3]`)
+- Badge updates every 30 seconds even when not viewing the notifications screen
+- Press `n` to view notifications, `Enter` to acknowledge and delete individual notifications
+- Press `a` to delete all notifications at once
+- Notifications use an inbox-zero pattern (deleted on acknowledgment, not marked as read)
+
 ## Notable Behaviors
 
 - All incoming Follow requests are auto-accepted
@@ -154,7 +173,6 @@ When a relay forwards content, the HTTP signature is from the relay, not the ori
 - `Announce` (boost/reblog) sending
 - Direct messages
 - Media attachments
-- Notifications for mentions
 - ActivityPub C2S (Client-to-Server)
 - Object integrity proofs (FEP-8b32)
 - Account migrations

@@ -22,6 +22,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/hometimeline"
 	"github.com/deemkeen/stegodon/ui/localusers"
 	"github.com/deemkeen/stegodon/ui/myposts"
+	"github.com/deemkeen/stegodon/ui/notifications"
 	"github.com/deemkeen/stegodon/ui/relay"
 	"github.com/deemkeen/stegodon/ui/threadview"
 	"github.com/deemkeen/stegodon/ui/writenote"
@@ -58,6 +59,7 @@ type MainModel struct {
 	relayModel         relay.Model
 	deleteAccountModel deleteaccount.Model
 	threadViewModel    threadview.Model
+	notificationsModel notifications.Model
 }
 
 type userUpdateErrorMsg struct {
@@ -105,6 +107,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
 	deleteAccountModel := deleteaccount.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height, localDomain)
+	notificationsModel := notifications.InitialModel(acc.Id, width, height)
 
 	m := MainModel{state: common.CreateUserView}
 	m.config = config
@@ -120,6 +123,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.relayModel = relayModel
 	m.deleteAccountModel = deleteAccountModel
 	m.threadViewModel = threadViewModel
+	m.notificationsModel = notificationsModel
 	m.headerModel = headerModel
 	m.account = acc
 	m.width = width
@@ -134,6 +138,7 @@ func (m MainModel) Init() tea.Cmd {
 	cmds = append(cmds, m.myPostsModel.Init())
 
 	// Load home timeline on startup (shown in right panel)
+	// Also activates notifications model to start badge refresh
 	cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
 
 	if m.account.FirstTimeLogin == domain.TRUE {
@@ -271,6 +276,22 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "n":
+			// Navigate to notifications (global shortcut, works from any view)
+			if m.state != common.CreateUserView && m.state != common.NotificationsView {
+				oldState := m.state
+				m.state = common.NotificationsView
+
+				// Manage home timeline activation
+				oldTimelineVisible := (oldState == common.CreateNoteView || oldState == common.HomeTimelineView)
+				// Notifications view doesn't show timeline
+				if oldTimelineVisible {
+					// Timeline becoming hidden, deactivate it
+					cmds = append(cmds, func() tea.Msg { return common.DeactivateViewMsg{} })
+				}
+
+				// Note: No need to activate notifications - it's always active
+			}
 		case "tab":
 			// Cycle through main views (excluding create user)
 			// Order: write -> home -> my posts -> [follow] -> followers -> following -> users -> [admin -> relay] -> delete
@@ -311,6 +332,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case common.RelayManagementView:
 				m.state = common.DeleteAccountView
 			case common.DeleteAccountView:
+				m.state = common.NotificationsView
+			case common.NotificationsView:
 				m.state = common.CreateNoteView
 			}
 			// Handle focus changes for writenote textarea
@@ -320,10 +343,22 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == common.CreateNoteView {
 				m.createModel.Focus()
 			}
-			// Deactivate old timeline views to stop their tickers
-			if deactivateCmd := deactivateOldView(oldState); deactivateCmd != nil {
-				cmds = append(cmds, deactivateCmd)
+			// Manage home timeline activation based on visibility
+			// Home timeline is visible when in CreateNoteView or HomeTimelineView
+			oldTimelineVisible := (oldState == common.CreateNoteView || oldState == common.HomeTimelineView)
+			newTimelineVisible := (m.state == common.CreateNoteView || m.state == common.HomeTimelineView)
+
+			if oldTimelineVisible && !newTimelineVisible {
+				// Timeline becoming hidden, deactivate it
+				cmds = append(cmds, func() tea.Msg { return common.DeactivateViewMsg{} })
+			} else if !oldTimelineVisible && newTimelineVisible {
+				// Timeline becoming visible, activate it
+				cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
 			}
+
+			// Note: Notifications model is never deactivated because the badge
+			// in the header needs to show real-time unread count
+
 			// Reload data when switching to certain views
 			if oldState != m.state {
 				cmd = getViewInitCmd(m.state, &m)
@@ -338,6 +373,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			oldState := m.state
 			switch m.state {
 			case common.CreateNoteView:
+				m.state = common.NotificationsView
+			case common.NotificationsView:
 				m.state = common.DeleteAccountView
 			case common.HomeTimelineView:
 				m.state = common.CreateNoteView
@@ -377,10 +414,22 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == common.CreateNoteView {
 				m.createModel.Focus()
 			}
-			// Deactivate old timeline views to stop their tickers
-			if deactivateCmd := deactivateOldView(oldState); deactivateCmd != nil {
-				cmds = append(cmds, deactivateCmd)
+			// Manage home timeline activation based on visibility
+			// Home timeline is visible when in CreateNoteView or HomeTimelineView
+			oldTimelineVisible := (oldState == common.CreateNoteView || oldState == common.HomeTimelineView)
+			newTimelineVisible := (m.state == common.CreateNoteView || m.state == common.HomeTimelineView)
+
+			if oldTimelineVisible && !newTimelineVisible {
+				// Timeline becoming hidden, deactivate it
+				cmds = append(cmds, func() tea.Msg { return common.DeactivateViewMsg{} })
+			} else if !oldTimelineVisible && newTimelineVisible {
+				// Timeline becoming visible, activate it
+				cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
 			}
+
+			// Note: Notifications model is never deactivated because the badge
+			// in the header needs to show real-time unread count
+
 			// Reload data when switching to certain views
 			if oldState != m.state {
 				cmd = getViewInitCmd(m.state, &m)
@@ -418,10 +467,12 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// This is more efficient than routing ALL messages to ALL models
 	switch msg.(type) {
 	case common.ActivateViewMsg, common.DeactivateViewMsg:
-		// Activation/deactivation messages go to home timeline and myposts models
+		// Activation/deactivation messages go to home timeline, myposts, and notifications models
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 	case common.EditNoteMsg, common.DeleteNoteMsg, common.SessionState:
 		// Note-related messages go to note models
@@ -456,9 +507,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localUsersModel, cmd = m.localUsersModel.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// Always route to home timeline - it has internal isActive state
-		// that controls whether it processes messages (prevents ticker leaks)
+		// Always route to home timeline and notifications - they have internal isActive state
+		// that controls whether they process messages (prevents ticker leaks)
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
+		cmds = append(cmds, cmd)
+		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 
 		// Only route to admin/relay/thread models when active (leak prevention)
@@ -502,6 +555,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteAccountModel, cmd = m.deleteAccountModel.Update(msg)
 		case common.ThreadView:
 			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		case common.NotificationsView:
+			m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		}
 		cmds = append(cmds, cmd)
 	}
@@ -648,10 +703,20 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.threadViewModel.View())
 
+	notificationsStyleStr := lipgloss.NewStyle().
+		MaxHeight(availableHeight).
+		Height(availableHeight).
+		Width(rightPanelWidth).
+		MaxWidth(rightPanelWidth).
+		Margin(1).
+		Render(m.notificationsModel.View())
+
 	if m.state == common.CreateUserView {
 		s = m.newUserModel.ViewWithWidth(m.width, m.height)
 		return s
 	} else {
+		// Update header with current unread notification count
+		m.headerModel.UnreadCount = m.notificationsModel.UnreadCount
 		navContainer := lipgloss.NewStyle().Render(m.headerModel.View())
 		s += navContainer + "\n"
 
@@ -701,6 +766,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(threadViewStyleStr))
+		case common.NotificationsView:
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(notificationsStyleStr))
 		}
 
 		// Help text
@@ -726,6 +795,8 @@ func (m MainModel) View() string {
 			viewCommands = "y: confirm • n/esc: cancel"
 		case common.ThreadView:
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • esc: back"
+		case common.NotificationsView:
+			viewCommands = "j/k: nav • enter: delete • a: delete all"
 		default:
 			viewCommands = " "
 		}
@@ -786,6 +857,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "delete"
 	case common.ThreadView:
 		return "thread"
+	case common.NotificationsView:
+		return "notifications"
 	default:
 		return "create user"
 	}
@@ -815,17 +888,12 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 	case common.ThreadView:
 		// Thread view activation message
 		return func() tea.Msg { return common.ActivateViewMsg{} }
+	case common.NotificationsView:
+		// Notifications view activation message
+		return func() tea.Msg { return common.ActivateViewMsg{} }
 	default:
 		return nil
 	}
-}
-
-// deactivateOldView sends deactivation message if leaving a timeline view
-func deactivateOldView(oldState common.SessionState) tea.Cmd {
-	if oldState == common.HomeTimelineView {
-		return func() tea.Msg { return common.DeactivateViewMsg{} }
-	}
-	return nil
 }
 
 // likeNoteCmd handles liking/unliking a note
@@ -984,6 +1052,35 @@ func likeNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal 
 				if err := database.IncrementLikeCountByNoteId(actualNoteID); err != nil {
 					log.Printf("Failed to increment like count: %v", err)
 				}
+
+				// Create notification for local note author
+				err, note := database.ReadNoteId(actualNoteID)
+				if err == nil && note != nil {
+					err, noteAuthor := database.ReadAccByUsername(note.CreatedBy)
+					if err == nil && noteAuthor != nil && noteAuthor.Id != accountId {
+						// Only notify if liker is not the author
+						preview := note.Message
+						if len(preview) > 100 {
+							preview = preview[:100] + "..."
+						}
+						notification := &domain.Notification{
+							Id:               uuid.New(),
+							AccountId:        noteAuthor.Id,
+							NotificationType: domain.NotificationLike,
+							ActorId:          accountId,
+							ActorUsername:    account.Username,
+							ActorDomain:      "", // Empty for local users
+							NoteId:           note.Id,
+							NoteURI:          note.ObjectURI,
+							NotePreview:      preview,
+							Read:             false,
+							CreatedAt:        time.Now(),
+						}
+						if err := database.CreateNotification(notification); err != nil {
+							log.Printf("Failed to create like notification: %v", err)
+						}
+					}
+				}
 			}
 
 			log.Printf("Liked post %s", actualNoteURI)
@@ -1013,3 +1110,4 @@ func likeNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal 
 		return common.UpdateNoteList
 	}
 }
+

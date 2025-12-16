@@ -56,8 +56,9 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
 
 - **Tab** - Cycle through views
 - **Shift+Tab** - Cycle through views in reverse order
+- **n** - Jump to notifications view
 - **Up/Down** or **j/k** - Navigate lists
-- **Enter** - Open thread view for posts with replies
+- **Enter** - Open thread view for posts with replies (or delete notification in notifications view)
 - **Esc** - Return from thread view
 - **r** - Reply to selected post
 - **l** - Like/unlike selected post (federated)
@@ -67,6 +68,7 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
   - Cmd+click (Mac) or Ctrl+click (Linux) URL to open in local browser
 - **u** - Edit note (in my posts)
 - **d** - Delete note with confirmation
+- **a** - Delete all notifications (in notifications view)
 - **Ctrl+S** - Save/post note
 - **Ctrl+C** or **q** - Quit
 
