@@ -56,7 +56,7 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
 
 - **Tab** - Cycle through views
 - **Shift+Tab** - Cycle through views in reverse order
-- **n** - Jump to notifications view
+- **Ctrl+N** - Jump to notifications view
 - **Up/Down** or **j/k** - Navigate lists
 - **Enter** - Open thread view for posts with replies (or delete notification in notifications view)
 - **Esc** - Return from thread view

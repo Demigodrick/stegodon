@@ -276,10 +276,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "n":
-			// Navigate to notifications (global shortcut, works from any view except text input)
-			// Skip when in CreateNoteView (typing in textarea) or CreateUserView or already in NotificationsView
-			if m.state != common.CreateUserView && m.state != common.CreateNoteView && m.state != common.NotificationsView {
+		case "ctrl+n":
+			// Navigate to notifications (global shortcut, works from any view)
+			if m.state != common.NotificationsView {
 				oldState := m.state
 				m.state = common.NotificationsView
 
@@ -795,7 +794,7 @@ func (m MainModel) View() string {
 		case common.DeleteAccountView:
 			viewCommands = "y: confirm • n/esc: cancel"
 		case common.ThreadView:
-			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • esc: back"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: URL • esc: back"
 		case common.NotificationsView:
 			viewCommands = "j/k: nav • enter: delete • a: delete all"
 		default:

@@ -544,15 +544,14 @@ func TestNKeyNavigationToNotifications(t *testing.T) {
 	}
 
 	model := NewModel(account, 100, 30)
-	// Start from HomeTimelineView (not CreateNoteView, where 'n' is used for typing)
 	model.state = common.HomeTimelineView
 
-	// Press 'n' to go to notifications (timeline becomes hidden)
-	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	// Press 'ctrl+n' to go to notifications (timeline becomes hidden)
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	mainModel := updatedModel.(MainModel)
 
 	if mainModel.state != common.NotificationsView {
-		t.Errorf("Expected state NotificationsView after pressing 'n', got %v", mainModel.state)
+		t.Errorf("Expected state NotificationsView after pressing 'ctrl+n', got %v", mainModel.state)
 	}
 
 	// Timeline should have been deactivated since it's no longer visible

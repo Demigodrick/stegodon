@@ -159,10 +159,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.showingURL = false
 		case "o":
-			// Toggle between showing content and URL (only for posts with ObjectURI)
+			// Toggle between showing content and URL (only for posts with valid HTTP/HTTPS URLs)
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
 				selectedPost := m.Posts[m.Selected]
-				if selectedPost.ObjectURI != "" {
+				if util.IsURL(selectedPost.ObjectURI) {
 					m.showingURL = !m.showingURL
 				}
 			}
@@ -312,12 +312,7 @@ func (m Model) View() string {
 
 				// Toggle between content and URL
 				if m.showingURL && post.ObjectURI != "" {
-					linkText := "🔗 " + post.ObjectURI
-
-					truncatedLinkText := util.TruncateVisibleLength(linkText, common.MaxContentTruncateWidth)
-					osc8Link := fmt.Sprintf("\033[38;2;%s;4m\033]8;;%s\033\\%s\033]8;;\033\\\033[39;24m",
-						common.COLOR_LINK_RGB, post.ObjectURI, truncatedLinkText)
-
+					osc8Link := util.FormatClickableURL(post.ObjectURI, common.MaxContentTruncateWidth, "🔗 ")
 					hintText := "(Cmd+click to open, press 'o' to toggle back)"
 
 					contentStyleBg := lipgloss.NewStyle().

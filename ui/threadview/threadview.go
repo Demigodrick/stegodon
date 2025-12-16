@@ -96,6 +96,7 @@ type Model struct {
 	isActive     bool
 	loading      bool
 	errorMessage string
+	showingURL   bool   // Track if URL is displayed instead of content for selected post
 	// Fields to support reloading
 	parentNoteID    uuid.UUID // Local note ID (for local notes)
 	parentIsLocal   bool      // Whether the parent is a local note
@@ -545,11 +546,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.Selected--
 				m.Offset = m.Selected
 			}
+			m.showingURL = false // Reset URL view on navigation
 		case "down", "j":
 			if m.Selected < len(m.Replies)-1 {
 				m.Selected++
 				m.Offset = m.Selected
 			}
+			m.showingURL = false // Reset URL view on navigation
 		case "r":
 			// Reply to selected post
 			if m.Selected == -1 && m.ParentPost != nil && !m.ParentPost.IsDeleted {
@@ -668,6 +671,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 			}
+		case "o":
+			// Toggle between showing content and URL (only for posts with valid HTTP/HTTPS URLs)
+			if m.Selected == -1 && m.ParentPost != nil && util.IsURL(m.ParentPost.ObjectURI) {
+				// Toggle URL for parent post
+				m.showingURL = !m.showingURL
+			} else if m.Selected >= 0 && m.Selected < len(m.Replies) {
+				// Toggle URL for selected reply
+				reply := m.Replies[m.Selected]
+				if util.IsURL(reply.ObjectURI) {
+					m.showingURL = !m.showingURL
+				}
+			}
 		}
 	}
 	return m, nil
@@ -781,7 +796,21 @@ func (m Model) View() string {
 
 			timeFormatted := selectedBg.Render(selectedReplyTimeStyle.Render(timeStr))
 			authorFormatted := selectedBg.Render(selectedReplyAuthorStyle.Render(author))
-			contentFormatted := selectedBg.Render(selectedReplyContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+
+			var contentFormatted string
+			// Toggle between content and URL
+			if m.showingURL && post.ObjectURI != "" {
+				osc8Link := util.FormatClickableURL(post.ObjectURI, common.MaxContentTruncateWidth, "🔗 ")
+				hintText := "(Cmd+click to open, press 'o' to toggle back)"
+
+				contentStyleBg := lipgloss.NewStyle().
+					Background(lipgloss.Color(common.COLOR_ACCENT)).
+					Foreground(lipgloss.Color(common.COLOR_WHITE)).
+					Width(itemWidth)
+				contentFormatted = contentStyleBg.Render(osc8Link + "\n\n" + hintText)
+			} else {
+				contentFormatted = selectedBg.Render(selectedReplyContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+			}
 
 			// Build the post block
 			postBlock := timeFormatted + "\n" + authorFormatted + "\n" + contentFormatted

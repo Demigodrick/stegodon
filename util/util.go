@@ -275,6 +275,19 @@ func MarkdownLinksToTerminal(text string) string {
 	return result
 }
 
+// FormatClickableURL creates an OSC 8 hyperlink for a URL with optional prefix
+// The URL is truncated to maxWidth (visible characters only) and rendered as a clickable terminal link
+// Returns the formatted link string ready for display
+func FormatClickableURL(url string, maxWidth int, prefix string) string {
+	linkText := prefix + url
+	truncatedLinkText := TruncateVisibleLength(linkText, maxWidth)
+	// OSC 8 format with link color (RGB) and underline
+	// Format: COLOR_START + OSC8_START + TEXT + OSC8_END + COLOR_RESET
+	// Use \033[39;24m to reset only foreground color and underline, not background
+	return fmt.Sprintf("\033[38;2;"+ansiLinkRGB+";4m\033]8;;%s\033\\%s\033]8;;\033\\\033[39;24m",
+		url, truncatedLinkText)
+}
+
 // GetMarkdownLinkCount returns the number of valid markdown links in the text
 func GetMarkdownLinkCount(text string) int {
 	return len(markdownLinkRegex.FindAllString(text, -1))

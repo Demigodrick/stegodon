@@ -141,7 +141,7 @@ When a relay forwards content, the HTTP signature is from the relay, not the ori
 
 ## Notifications
 
-Stegodon includes a real-time notifications system accessible via the TUI (press `n` key). Notifications are generated for the following events:
+Stegodon includes a real-time notifications system accessible via the TUI (press `Ctrl+N`). Notifications are generated for the following events:
 
 ### Notification Types
 

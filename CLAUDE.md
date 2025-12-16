@@ -84,7 +84,7 @@ Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern. 
 - `admin` - Admin panel
 - `deleteaccount` - Account deletion
 
-**Navigation:** Tab cycles forward, Shift+Tab backward. Press 'n' for notifications. Enter opens threads, Esc returns.
+**Navigation:** Tab cycles forward, Shift+Tab backward. Press Ctrl+N for notifications. Enter opens threads, Esc returns.
 
 ### Database Layer
 
