@@ -361,3 +361,236 @@ func TestRateLimitMiddlewareRecovery(t *testing.T) {
 		t.Errorf("Request after waiting should succeed, got status %d", w3.Code)
 	}
 }
+
+func TestIsHTMLRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		accept   string
+		expected bool
+	}{
+		// Browser requests (should return true - redirect to /u/)
+		{
+			name:     "empty accept header",
+			accept:   "",
+			expected: true,
+		},
+		{
+			name:     "wildcard accept",
+			accept:   "*/*",
+			expected: true,
+		},
+		{
+			name:     "text/html",
+			accept:   "text/html",
+			expected: true,
+		},
+		{
+			name:     "browser typical header",
+			accept:   "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			expected: true,
+		},
+		{
+			name:     "text/html with charset",
+			accept:   "text/html; charset=utf-8",
+			expected: true,
+		},
+
+		// ActivityPub requests (should return false - serve JSON)
+		{
+			name:     "application/activity+json",
+			accept:   "application/activity+json",
+			expected: false,
+		},
+		{
+			name:     "application/ld+json",
+			accept:   "application/ld+json",
+			expected: false,
+		},
+		{
+			name:     "application/ld+json with profile",
+			accept:   `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`,
+			expected: false,
+		},
+		{
+			name:     "application/json",
+			accept:   "application/json",
+			expected: false,
+		},
+		{
+			name:     "Mastodon typical header",
+			accept:   "application/activity+json, application/ld+json",
+			expected: false,
+		},
+		{
+			name:     "mixed with activity+json priority",
+			accept:   "application/activity+json, text/html;q=0.9",
+			expected: false,
+		},
+
+		// Edge cases
+		{
+			name:     "unknown content type defaults to HTML",
+			accept:   "application/xml",
+			expected: true,
+		},
+		{
+			name:     "image type defaults to HTML",
+			accept:   "image/png",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsHTMLRequest(tt.accept)
+			if result != tt.expected {
+				t.Errorf("IsHTMLRequest(%q) = %v, expected %v", tt.accept, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestUsersActorContentNegotiation tests that /users/:actor redirects browsers to /u/:actor
+// but serves JSON to ActivityPub clients. This fixes Lemmy federation issue #36.
+func TestUsersActorContentNegotiation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		accept         string
+		expectedStatus int
+		expectRedirect bool
+		redirectTarget string
+	}{
+		// Browser requests should redirect to /u/
+		{
+			name:           "browser with text/html",
+			accept:         "text/html",
+			expectedStatus: http.StatusFound, // 302
+			expectRedirect: true,
+			redirectTarget: "/u/testuser",
+		},
+		{
+			name:           "browser with typical accept header",
+			accept:         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			expectedStatus: http.StatusFound,
+			expectRedirect: true,
+			redirectTarget: "/u/testuser",
+		},
+		{
+			name:           "browser with empty accept",
+			accept:         "",
+			expectedStatus: http.StatusFound,
+			expectRedirect: true,
+			redirectTarget: "/u/testuser",
+		},
+		{
+			name:           "browser with wildcard",
+			accept:         "*/*",
+			expectedStatus: http.StatusFound,
+			expectRedirect: true,
+			redirectTarget: "/u/testuser",
+		},
+		// ActivityPub requests should get JSON (mocked as OK here)
+		{
+			name:           "ActivityPub with activity+json",
+			accept:         "application/activity+json",
+			expectedStatus: http.StatusOK,
+			expectRedirect: false,
+		},
+		{
+			name:           "ActivityPub with ld+json",
+			accept:         "application/ld+json",
+			expectedStatus: http.StatusOK,
+			expectRedirect: false,
+		},
+		{
+			name:           "ActivityPub with json",
+			accept:         "application/json",
+			expectedStatus: http.StatusOK,
+			expectRedirect: false,
+		},
+		{
+			name:           "Mastodon typical header",
+			accept:         "application/activity+json, application/ld+json",
+			expectedStatus: http.StatusOK,
+			expectRedirect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+
+			// Mock the /users/:actor endpoint with content negotiation
+			router.GET("/users/:actor", func(c *gin.Context) {
+				actorName := c.Param("actor")
+				accept := c.GetHeader("Accept")
+
+				if IsHTMLRequest(accept) {
+					c.Redirect(302, "/u/"+actorName)
+					return
+				}
+
+				// Mock ActivityPub JSON response
+				c.Header("Content-Type", "application/activity+json")
+				c.JSON(http.StatusOK, gin.H{"type": "Person", "name": actorName})
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/users/testuser", nil)
+			if tt.accept != "" {
+				req.Header.Set("Accept", tt.accept)
+			}
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			if tt.expectRedirect {
+				location := w.Header().Get("Location")
+				if location != tt.redirectTarget {
+					t.Errorf("Expected redirect to %s, got %s", tt.redirectTarget, location)
+				}
+			}
+		})
+	}
+}
+
+// TestLemmyFederationFix specifically tests the Lemmy federation issue from GitHub #36
+// Lemmy uses the 'id' field (/users/username) instead of 'url' field (/u/username)
+func TestLemmyFederationFix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.GET("/users/:actor", func(c *gin.Context) {
+		actorName := c.Param("actor")
+		accept := c.GetHeader("Accept")
+
+		if IsHTMLRequest(accept) {
+			c.Redirect(302, "/u/"+actorName)
+			return
+		}
+
+		c.Header("Content-Type", "application/activity+json")
+		c.JSON(http.StatusOK, gin.H{"type": "Person"})
+	})
+
+	// Simulate a Lemmy user clicking a federated profile link
+	// Lemmy sends browser to /users/username with typical browser Accept header
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/users/demigodrick", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	router.ServeHTTP(w, req)
+
+	// Should redirect to the human-readable profile page
+	if w.Code != http.StatusFound {
+		t.Errorf("Expected 302 redirect, got %d", w.Code)
+	}
+
+	location := w.Header().Get("Location")
+	if location != "/u/demigodrick" {
+		t.Errorf("Expected redirect to /u/demigodrick, got %s", location)
+	}
+}

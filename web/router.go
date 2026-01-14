@@ -145,9 +145,18 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 		})
 
 		g.GET("/users/:actor", func(c *gin.Context) {
+			actorName := c.Param("actor")
+
+			// Content negotiation: redirect browsers to /u/, serve JSON for ActivityPub
+			// This fixes Lemmy federation which uses the 'id' field instead of 'url'
+			accept := c.GetHeader("Accept")
+			if IsHTMLRequest(accept) {
+				c.Redirect(302, "/u/"+actorName)
+				return
+			}
 
 			c.Header("Content-Type", "application/activity+json; charset=utf-8")
-			err, actor := GetActor(c.Param("actor"), conf)
+			err, actor := GetActor(actorName, conf)
 			if err != nil {
 				c.Render(404, render.String{Format: actor})
 			} else {
