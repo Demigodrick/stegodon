@@ -92,6 +92,7 @@ STEGODON_CLOSED=true              # Closed registration
 
 # Customization
 STEGODON_NODE_DESCRIPTION="My personal microblog server"  # NodeInfo description
+STEGODON_MAX_CHARS=200            # Default is 150, max length is capped to 300 characters
 
 # Logging (Linux only)
 STEGODON_WITH_JOURNALD=true       # Send logs to systemd journald
