@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,4 +93,37 @@ func MaxBytesMiddleware(maxBytes int64) gin.HandlerFunc {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 		c.Next()
 	}
+}
+
+// IsHTMLRequest determines if an Accept header indicates a browser/HTML request
+// rather than an ActivityPub client request.
+// ActivityPub clients typically send:
+//   - application/activity+json
+//   - application/ld+json; profile="https://www.w3.org/ns/activitystreams"
+//   - application/json
+//
+// Browsers typically send:
+//   - text/html
+//   - */* (default)
+//   - empty string
+func IsHTMLRequest(accept string) bool {
+	// Empty accept or wildcard = browser request
+	if accept == "" || accept == "*/*" {
+		return true
+	}
+
+	// Check for ActivityPub content types - if present, NOT an HTML request
+	if strings.Contains(accept, "application/activity+json") ||
+		strings.Contains(accept, "application/ld+json") ||
+		strings.Contains(accept, "application/json") {
+		return false
+	}
+
+	// Check for HTML content type
+	if strings.Contains(accept, "text/html") {
+		return true
+	}
+
+	// Default: treat as browser request for safety (redirect to human-readable page)
+	return true
 }

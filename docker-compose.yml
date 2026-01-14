@@ -23,6 +23,8 @@ services:
       # - STEGODON_SINGLE=true
       # Uncomment for closed registration
       # - STEGODON_CLOSED=true
+      # Uncomment to change the maximum amount of characters in a note.
+      # - STEGODON_MAX_CHARS = 200
 
     volumes:
       # Persist data directory
