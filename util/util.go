@@ -544,3 +544,10 @@ func MentionsToActivityPubHTML(text string, mentionURIs map[string]string) strin
 		return match
 	})
 }
+
+// ReplacePlaceholders replaces template placeholders in text with actual values
+// Currently supports: {{SSH_PORT}}
+func ReplacePlaceholders(text string, sshPort int) string {
+	text = strings.ReplaceAll(text, "{{SSH_PORT}}", fmt.Sprintf("%d", sshPort))
+	return text
+}

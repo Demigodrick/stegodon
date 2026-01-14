@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
+	"github.com/google/uuid"
 )
 
 // SQL for new ActivityPub tables
@@ -194,6 +196,22 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_notifications_account_read ON notifications(account_id, read);
 	`
 
+	// InfoBoxes table for customizable website information boxes
+	sqlCreateInfoBoxesTable = `CREATE TABLE IF NOT EXISTS info_boxes (
+		id TEXT NOT NULL PRIMARY KEY,
+		title TEXT NOT NULL,
+		content TEXT NOT NULL,
+		order_num INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+
+	sqlCreateInfoBoxesIndices = `
+		CREATE INDEX IF NOT EXISTS idx_info_boxes_order ON info_boxes(order_num);
+		CREATE INDEX IF NOT EXISTS idx_info_boxes_enabled ON info_boxes(enabled);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -255,6 +273,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateNotificationsTable, "notifications"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateInfoBoxesTable, "info_boxes"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -290,6 +311,9 @@ func (db *DB) RunMigrations() error {
 		if _, err := tx.Exec(sqlCreateNotificationsIndices); err != nil {
 			log.Printf("Warning: Failed to create notifications indices: %v", err)
 		}
+		if _, err := tx.Exec(sqlCreateInfoBoxesIndices); err != nil {
+			log.Printf("Warning: Failed to create info_boxes indices: %v", err)
+		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)
 		}
@@ -315,6 +339,11 @@ func (db *DB) RunMigrations() error {
 		// Fix orphaned Update activities (convert to Create so they show in timeline)
 		if err := db.fixOrphanedUpdateActivities(tx); err != nil {
 			log.Printf("Warning: Failed to fix orphaned Update activities: %v", err)
+		}
+
+		// Seed default info boxes if none exist
+		if err := db.seedDefaultInfoBoxes(tx); err != nil {
+			log.Printf("Warning: Failed to seed default info boxes: %v", err)
 		}
 
 		return nil
@@ -675,5 +704,74 @@ func (db *DB) MigratePerformanceIndexes() error {
 	}
 
 	log.Println("Performance indexes migration complete")
+	return nil
+}
+
+// seedDefaultInfoBoxes creates default info boxes on first run
+func (db *DB) seedDefaultInfoBoxes(tx *sql.Tx) error {
+	// Check if any info boxes already exist
+	var count int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM info_boxes`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check existing info boxes: %w", err)
+	}
+
+	if count > 0 {
+		log.Println("Info boxes already exist, skipping seed")
+		return nil
+	}
+
+	log.Println("Seeding default info boxes...")
+
+	// Default info boxes based on current template
+	defaultBoxes := []struct {
+		title    string
+		content  string
+		orderNum int
+	}{
+		{
+			title: "ssh-first fediverse blog",
+			content: `Connect via SSH to start posting:
+
+` + "```" + `
+ssh -p {{SSH_PORT}} YourIpOrDomain
+` + "```" + `
+
+On first connection, you'll be prompted to choose a username. After that, you can create posts, follow users, and explore the federated timeline.
+
+On federated services like Mastodon people now can follow you, when searching for:
+
+` + "```" + `
+@YourUser@YourSslDomain.com
+` + "```" + ``,
+			orderNum: 1,
+		},
+		{
+			title: "features",
+			content: `- Create and read posts
+- Follow local and remote users
+- ActivityPub federation
+- [RSS feeds](/feed)`,
+			orderNum: 2,
+		},
+		{
+			title: `<svg style="width: 1.2em; height: 1.2em; vertical-align: middle; margin-right: 8px;" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>github`,
+			content: `Source and Documentation available on [Github](https://github.com/deemkeen/stegodon)`,
+			orderNum: 3,
+		},
+	}
+
+	for _, box := range defaultBoxes {
+		id := uuid.New()
+		_, err := tx.Exec(`
+			INSERT INTO info_boxes (id, title, content, order_num, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`, id.String(), box.title, box.content, box.orderNum)
+		if err != nil {
+			return fmt.Errorf("failed to seed info box '%s': %w", box.title, err)
+		}
+	}
+
+	log.Printf("Seeded %d default info boxes", len(defaultBoxes))
 	return nil
 }

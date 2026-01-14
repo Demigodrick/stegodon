@@ -11,19 +11,29 @@ import (
 	"github.com/deemkeen/stegodon/domain"
 	"github.com/deemkeen/stegodon/util"
 	"github.com/gin-gonic/gin"
+	"github.com/gomarkdown/markdown"
+	"github.com/gomarkdown/markdown/html"
+	"github.com/gomarkdown/markdown/parser"
 	"github.com/google/uuid"
 )
 
 type IndexPageData struct {
-	Title    string
-	Host     string
-	SSHPort  int
-	Version  string
-	Posts    []PostView
-	HasPrev  bool
-	HasNext  bool
-	PrevPage int
-	NextPage int
+	Title     string
+	Host      string
+	SSHPort   int
+	Version   string
+	Posts     []PostView
+	HasPrev   bool
+	HasNext   bool
+	PrevPage  int
+	NextPage  int
+	InfoBoxes []InfoBoxView
+}
+
+type InfoBoxView struct {
+	Title       string
+	TitleHTML   template.HTML
+	ContentHTML template.HTML
 }
 
 type ProfilePageData struct {
@@ -38,6 +48,7 @@ type ProfilePageData struct {
 	HasNext    bool
 	PrevPage   int
 	NextPage   int
+	InfoBoxes  []InfoBoxView
 }
 
 type UserView struct {
@@ -57,6 +68,21 @@ type PostView struct {
 	ReplyCount   int    // Number of replies to this post
 	LikeCount    int    // Number of likes on this post
 	BoostCount   int    // Number of boosts on this post
+}
+
+// convertMarkdownToHTML converts markdown text to HTML
+func convertMarkdownToHTML(md string) string {
+	// Create markdown parser with extensions (including strikethrough)
+	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.NoEmptyLineBeforeBlock | parser.Strikethrough
+	p := parser.NewWithExtensions(extensions)
+	doc := p.Parse([]byte(md))
+
+	// Create HTML renderer with options
+	htmlFlags := html.CommonFlags | html.HrefTargetBlank
+	opts := html.RendererOptions{Flags: htmlFlags}
+	renderer := html.NewRenderer(opts)
+
+	return string(markdown.Render(doc, renderer))
 }
 
 func formatTimeAgo(t time.Time) string {
@@ -167,16 +193,36 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 		host = conf.Conf.SslDomain
 	}
 
+	// Load info boxes for the index page
+	var infoBoxViews []InfoBoxView
+	err, infoBoxes := database.ReadEnabledInfoBoxes()
+	if err == nil && infoBoxes != nil {
+		for _, box := range *infoBoxes {
+			// Replace placeholders first
+			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
+			
+			// Convert markdown to HTML
+			htmlContent := convertMarkdownToHTML(content)
+			
+			infoBoxViews = append(infoBoxViews, InfoBoxView{
+				Title:       box.Title,
+				TitleHTML:   template.HTML(box.Title), // Allow HTML in title (for SVG icons)
+				ContentHTML: template.HTML(htmlContent),
+			})
+		}
+	}
+
 	data := IndexPageData{
-		Title:    "Home",
-		Host:     host,
-		SSHPort:  conf.Conf.SshPort,
-		Version:  util.GetVersion(),
-		Posts:    posts,
-		HasPrev:  page > 1,
-		HasNext:  end < totalPosts,
-		PrevPage: page - 1,
-		NextPage: page + 1,
+		Title:     "Home",
+		Host:      host,
+		SSHPort:   conf.Conf.SshPort,
+		Version:   util.GetVersion(),
+		Posts:     posts,
+		HasPrev:   page > 1,
+		HasNext:   end < totalPosts,
+		PrevPage:  page - 1,
+		NextPage:  page + 1,
+		InfoBoxes: infoBoxViews,
 	}
 
 	c.HTML(200, "index.html", data)
@@ -271,6 +317,21 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 		host = conf.Conf.SslDomain
 	}
 
+	// Load info boxes
+	var infoBoxViews []InfoBoxView
+	err, infoBoxes := database.ReadEnabledInfoBoxes()
+	if err == nil && infoBoxes != nil {
+		for _, box := range *infoBoxes {
+			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
+			htmlContent := convertMarkdownToHTML(content)
+			infoBoxViews = append(infoBoxViews, InfoBoxView{
+				Title:       box.Title,
+				TitleHTML:   template.HTML(box.Title),
+				ContentHTML: template.HTML(htmlContent),
+			})
+		}
+	}
+
 	data := ProfilePageData{
 		Title:   fmt.Sprintf("@%s", username),
 		Host:    host,
@@ -288,6 +349,7 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 		HasNext:    end < totalPosts,
 		PrevPage:   page - 1,
 		NextPage:   page + 1,
+		InfoBoxes:  infoBoxViews,
 	}
 
 	c.HTML(200, "profile.html", data)
@@ -302,6 +364,7 @@ type SinglePostPageData struct {
 	User       UserView
 	ParentPost *PostView  // Parent post if this is a reply (nil if not a reply)
 	Replies    []PostView // Replies to this post
+	InfoBoxes  []InfoBoxView
 }
 
 type TagPageData struct {
@@ -316,6 +379,7 @@ type TagPageData struct {
 	HasNext    bool
 	PrevPage   int
 	NextPage   int
+	InfoBoxes  []InfoBoxView
 }
 
 func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
@@ -440,6 +504,21 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		}
 	}
 
+	// Load info boxes
+	var infoBoxViews []InfoBoxView
+	err, infoBoxes := database.ReadEnabledInfoBoxes()
+	if err == nil && infoBoxes != nil {
+		for _, box := range *infoBoxes {
+			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
+			htmlContent := convertMarkdownToHTML(content)
+			infoBoxViews = append(infoBoxViews, InfoBoxView{
+				Title:       box.Title,
+				TitleHTML:   template.HTML(box.Title),
+				ContentHTML: template.HTML(htmlContent),
+			})
+		}
+	}
+
 	data := SinglePostPageData{
 		Title:   fmt.Sprintf("@%s - %s", username, formatTimeAgo(note.CreatedAt)),
 		Host:    host,
@@ -454,6 +533,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		},
 		ParentPost: parentPost,
 		Replies:    replies,
+		InfoBoxes:  infoBoxViews,
 	}
 
 	c.HTML(200, "post.html", data)
@@ -530,6 +610,21 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 		end = totalPosts
 	}
 
+	// Load info boxes
+	var infoBoxViews []InfoBoxView
+	err, infoBoxes := database.ReadEnabledInfoBoxes()
+	if err == nil && infoBoxes != nil {
+		for _, box := range *infoBoxes {
+			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
+			htmlContent := convertMarkdownToHTML(content)
+			infoBoxViews = append(infoBoxViews, InfoBoxView{
+				Title:       box.Title,
+				TitleHTML:   template.HTML(box.Title),
+				ContentHTML: template.HTML(htmlContent),
+			})
+		}
+	}
+
 	data := TagPageData{
 		Title:      fmt.Sprintf("#%s", tag),
 		Host:       host,
@@ -542,6 +637,7 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 		HasNext:    end < totalPosts,
 		PrevPage:   page - 1,
 		NextPage:   page + 1,
+		InfoBoxes:  infoBoxViews,
 	}
 
 	c.HTML(200, "tag.html", data)

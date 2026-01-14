@@ -19,6 +19,7 @@ const (
 	FollowingView       // View who you're following
 	LocalUsersView      // Browse and follow local users
 	AdminPanelView      // Admin panel for user management (admin only)
+	InfoBoxesView       // Admin panel for managing info boxes (admin only)
 	RelayManagementView // Admin panel for relay management (admin only)
 	DeleteAccountView   // Delete account with confirmation
 	ThreadView          // View thread with parent and replies
