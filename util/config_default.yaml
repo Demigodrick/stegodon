@@ -6,6 +6,7 @@ conf:
   withAp: false # activitypub (experimental!)
   single: false # single-user mode (only one user can register)
   closed: false # closed registration (no new users can register)
+  maxChars: 150 # maximum characters allowed in a note (can be overridden by STEGODON_MAX_CHARS env var)
 
 # For local federation testing:
 # 1. Run: ./test-federation.sh

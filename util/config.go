@@ -27,6 +27,7 @@ type AppConfig struct {
 		NodeDescription string `yaml:"nodeDescription"`
 		WithJournald    bool   `yaml:"withJournald"`
 		WithPprof       bool   `yaml:"withPprof"`
+		MaxChars        int    `yaml:"maxChars"`
 	}
 }
 
@@ -75,6 +76,7 @@ func ReadConf() (*AppConfig, error) {
 	envNodeDescription := os.Getenv("STEGODON_NODE_DESCRIPTION")
 	envWithJournald := os.Getenv("STEGODON_WITH_JOURNALD")
 	envWithPprof := os.Getenv("STEGODON_WITH_PPROF")
+	envMaxChars := os.Getenv("STEGODON_MAX_CHARS")
 
 	if envHost != "" {
 		c.Conf.Host = envHost
@@ -122,6 +124,20 @@ func ReadConf() (*AppConfig, error) {
 
 	if envWithPprof == "true" {
 		c.Conf.WithPprof = true
+	}
+
+	if envMaxChars != "" {
+		v, err := strconv.Atoi(envMaxChars)
+		if err != nil {
+			log.Printf("Error parsing STEGODON_MAX_CHARS: %v", err)
+		} else {
+			c.Conf.MaxChars = v
+		}
+	}
+
+	// Set default value if not set in config or environment
+	if c.Conf.MaxChars == 0 {
+		c.Conf.MaxChars = 150
 	}
 
 	return c, nil
