@@ -27,14 +27,18 @@ Built with Go and [Charm Tools](https://github.com/charmbracelet).
 
 **Docker (Recommended):**
 ```bash
-# Download the docker-compose.yml file
-curl -O https://raw.githubusercontent.com/deemkeen/stegodon/main/docker-compose.yml
+# Create a directory for Stegodon
+sudo mkdir -p /srv/stegodon
+cd /srv/stegodon
 
-# Make your changes first to reflect your server.
-nano docker-compose.yaml
+# Download the docker-compose file
+curl -LO https://raw.githubusercontent.com/deemkeen/stegodon/main/docker-compose.yml
 
-# Run Stegodon
-docker-compose up -d
+# Edit the configuration to suit your server
+nano docker-compose.yml
+
+# Start Stegodon
+docker compose up -d
 ```
 
 **Binary:**
