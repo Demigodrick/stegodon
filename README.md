@@ -33,7 +33,6 @@ curl -O https://raw.githubusercontent.com/deemkeen/stegodon/main/docker-compose.
 # Make your changes first to reflect your server.
 nano docker-compose.yaml
 
-
 # Run Stegodon
 docker-compose up -d
 ```
