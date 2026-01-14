@@ -18,8 +18,12 @@ import (
 	"github.com/google/uuid"
 )
 
-const MaxLetters = 150
 const maxAutocompleteSuggestions = 5
+
+// maxLetters is the maximum number of visible characters allowed in a note
+// This value is loaded from configuration (with STEGODON_MAX_CHARS env var support)
+// and stored here for efficient access without repeated function calls
+var maxLetters int
 
 // MentionCandidate represents a user that can be mentioned
 type MentionCandidate struct {
@@ -73,6 +77,14 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 	ti.Cursor.SetMode(cursor.CursorBlink)
 	ti.Focus()
 
+	// Load configuration to get max characters setting
+	if conf, err := util.ReadConf(); err == nil {
+		maxLetters = conf.Conf.MaxChars
+	} else {
+		// Fallback to default if config can't be read
+		maxLetters = 150
+	}
+
 	// Get local domain for autocomplete
 	localDomain := "example.com"
 	if conf, err := util.ReadConf(); err == nil {
@@ -87,7 +99,7 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 		Err:                    nil,
 		Error:                  "",
 		userId:                 userId,
-		lettersLeft:            MaxLetters,
+		lettersLeft:            maxLetters,
 		width:                  width,
 		isEditing:              false,
 		editingNoteId:          uuid.Nil,
@@ -468,10 +480,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Validate that visible characters don't exceed 150
+			// Validate that visible characters don't exceed maxChars
 			visibleChars := util.CountVisibleChars(rawValue)
-			if visibleChars > MaxLetters {
-				m.Error = fmt.Sprintf("Note too long (%d visible characters, max %d)", visibleChars, MaxLetters)
+			if visibleChars > maxLetters {
+				m.Error = fmt.Sprintf("Note too long (%d visible characters, max %d)", visibleChars, maxLetters)
 				return m, nil
 			}
 
@@ -573,9 +585,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	m.Textarea, cmd = m.Textarea.Update(msg)
 
-	// Check if visible character count exceeds 150
+	// Check if visible character count exceeds maxChars
 	visibleChars := util.CountVisibleChars(m.Textarea.Value())
-	if visibleChars > MaxLetters {
+	if visibleChars > maxLetters {
 		// Revert the last change by not allowing more visible chars
 		// Note: This is a simple check, ideally we'd prevent the input
 		// For now, the character counter will show negative and save will fail
@@ -723,7 +735,7 @@ func (m *Model) insertAutocompleteSuggestion() {
 func (m Model) CharCount() int {
 	// Use CountVisibleChars to only count visible text, not markdown URLs
 	visibleChars := util.CountVisibleChars(m.Textarea.Value())
-	return MaxLetters - visibleChars
+	return maxLetters - visibleChars
 }
 
 func (m Model) View() string {

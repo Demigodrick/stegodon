@@ -27,6 +27,7 @@ type AppConfig struct {
 		NodeDescription string `yaml:"nodeDescription"`
 		WithJournald    bool   `yaml:"withJournald"`
 		WithPprof       bool   `yaml:"withPprof"`
+		MaxChars        int    `yaml:"maxChars"`
 	}
 }
 
@@ -75,6 +76,7 @@ func ReadConf() (*AppConfig, error) {
 	envNodeDescription := os.Getenv("STEGODON_NODE_DESCRIPTION")
 	envWithJournald := os.Getenv("STEGODON_WITH_JOURNALD")
 	envWithPprof := os.Getenv("STEGODON_WITH_PPROF")
+	envMaxChars := os.Getenv("STEGODON_MAX_CHARS")
 
 	if envHost != "" {
 		c.Conf.Host = envHost
@@ -122,6 +124,37 @@ func ReadConf() (*AppConfig, error) {
 
 	if envWithPprof == "true" {
 		c.Conf.WithPprof = true
+	}
+
+	if envMaxChars != "" {
+		v, err := strconv.Atoi(envMaxChars)
+		if err != nil {
+			log.Printf("Error parsing STEGODON_MAX_CHARS: %v", err)
+		} else {
+			// Apply maximum limit of 300 characters
+			if v > 300 {
+				log.Printf("STEGODON_MAX_CHARS value %d exceeds maximum of 300, capping at 300", v)
+				c.Conf.MaxChars = 300
+			// Catch less then 1 character in config.	
+			} else if v < 1 {
+				log.Printf("STEGODON_MAX_CHARS value %d is less than minimum of 1, setting to default 150", v)
+				c.Conf.MaxChars = 150
+			} else {
+				c.Conf.MaxChars = v
+			}
+		}
+	}
+
+	// Set default value if not set in config or environment
+	if c.Conf.MaxChars == 0 {
+		c.Conf.MaxChars = 150
+	} else if c.Conf.MaxChars > 300 {
+		// Apply maximum limit of 300 characters for config file values too
+		log.Printf("maxChars value %d in config exceeds maximum of 300, capping at 300", c.Conf.MaxChars)
+		c.Conf.MaxChars = 300
+	} else if c.Conf.MaxChars < 1 {
+		log.Printf("maxChars value %d in config is less than minimum of 1, setting to default 150", c.Conf.MaxChars)
+		c.Conf.MaxChars = 150
 	}
 
 	return c, nil

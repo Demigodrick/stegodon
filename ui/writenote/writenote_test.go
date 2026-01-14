@@ -170,9 +170,9 @@ func TestCharCountIsCorrect(t *testing.T) {
 	// Create a model
 	m := InitialNote(100, uuid.New())
 
-	// Initial count should be MaxLetters
-	if m.CharCount() != MaxLetters {
-		t.Errorf("Expected initial char count to be %d, got %d", MaxLetters, m.CharCount())
+	// Initial count should be maxLetters
+	if m.CharCount() != maxLetters {
+		t.Errorf("Expected initial char count to be %d, got %d", maxLetters, m.CharCount())
 	}
 
 	// Add some text
@@ -180,7 +180,7 @@ func TestCharCountIsCorrect(t *testing.T) {
 	m.Textarea.SetValue(testText)
 	m.lettersLeft = m.CharCount()
 
-	expectedLeft := MaxLetters - len(testText)
+	expectedLeft := maxLetters - len(testText)
 	if m.lettersLeft != expectedLeft {
 		t.Errorf("Expected %d characters left after typing '%s', got %d",
 			expectedLeft, testText, m.lettersLeft)
@@ -198,7 +198,7 @@ func TestCharCountWithMarkdownLinks(t *testing.T) {
 	m.lettersLeft = m.CharCount()
 
 	// Should only count "stegodon" (8 chars), not the URL
-	expectedLeft := MaxLetters - 8
+	expectedLeft := maxLetters - 8
 	if m.lettersLeft != expectedLeft {
 		t.Errorf("Expected %d characters left (only counting visible text), got %d",
 			expectedLeft, m.lettersLeft)
