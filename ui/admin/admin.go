@@ -440,9 +440,13 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.saveCurrentField()
 			return m, saveInfoBox(m.EditBox)
 		case "enter":
-			// Insert newline at cursor position
-			m.EditValue = m.EditValue[:m.CursorPos] + "\n" + m.EditValue[m.CursorPos:]
-			m.CursorPos++
+			// Only allow newlines in Content field (field 1)
+			if m.EditField == 1 {
+				// Insert newline at cursor position
+				m.EditValue = m.EditValue[:m.CursorPos] + "\n" + m.EditValue[m.CursorPos:]
+				m.CursorPos++
+			}
+			// For other fields, Enter does nothing (prevents newlines in title/order)
 		case "left", "ctrl+b":
 			// Move cursor left
 			if m.CursorPos > 0 {
