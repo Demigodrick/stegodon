@@ -301,6 +301,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Block tab navigation when in admin submenus (users/info boxes management)
 			if m.state == common.AdminPanelView && m.adminModel.CurrentView != 0 {
+				// Tab is blocked in submenus
 				return m, nil
 			}
 			oldState := m.state
@@ -372,6 +373,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cycle backwards through views
 			// AP-only views: follow remote user, relay management
 			if m.state == common.CreateUserView {
+				return m, nil
+			}
+			// Block shift+tab navigation when in admin submenus (users/info boxes management)
+			if m.state == common.AdminPanelView && m.adminModel.CurrentView != 0 {
+				// Shift+tab is blocked in submenus
 				return m, nil
 			}
 			oldState := m.state
@@ -801,11 +807,7 @@ func (m MainModel) View() string {
 				viewCommands = "↑/↓ • m: mute • K: kick • esc: back"
 			case 2: // InfoBoxesView
 				if m.adminModel.Editing {
-					if m.adminModel.IsEditingField {
-						viewCommands = "enter: newline • esc: finish field • ctrl+s: save"
-					} else {
-						viewCommands = "↑/↓: select field • enter: edit field • ctrl+s: save • esc: cancel"
-					}
+					viewCommands = "tab/shift+tab: switch • ctrl+s: save • esc: cancel"
 				} else {
 					viewCommands = "↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back"
 				}
