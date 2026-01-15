@@ -299,6 +299,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == common.CreateUserView {
 				return m, nil
 			}
+			// Block tab navigation when in admin submenus (users/info boxes management)
+			if m.state == common.AdminPanelView && m.adminModel.CurrentView != 0 {
+				return m, nil
+			}
 			oldState := m.state
 			switch m.state {
 			case common.CreateNoteView:
@@ -751,6 +755,7 @@ func (m MainModel) View() string {
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(localUsersStyleStr))
 		case common.AdminPanelView:
+			// Always show both panels (write note + admin)
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(adminStyleStr))
@@ -788,7 +793,25 @@ func (m MainModel) View() string {
 		case common.LocalUsersView:
 			viewCommands = "↑/↓ • enter: toggle follow"
 		case common.AdminPanelView:
-			viewCommands = "↑/↓ • m: mute • k: kick"
+			// Context-aware help based on admin view state
+			switch m.adminModel.CurrentView {
+			case 0: // MenuView
+				viewCommands = "↑/↓ • enter: select"
+			case 1: // UsersView
+				viewCommands = "↑/↓ • m: mute • K: kick • esc: back"
+			case 2: // InfoBoxesView
+				if m.adminModel.Editing {
+					if m.adminModel.IsEditingField {
+						viewCommands = "enter: newline • esc: finish field • ctrl+s: save"
+					} else {
+						viewCommands = "↑/↓: select field • enter: edit field • ctrl+s: save • esc: cancel"
+					}
+				} else {
+					viewCommands = "↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back"
+				}
+			default:
+				viewCommands = "↑/↓ • enter: select"
+			}
 		case common.RelayManagementView:
 			viewCommands = "↑/↓ • a: add • d: delete • r: retry"
 		case common.DeleteAccountView:
@@ -1110,4 +1133,3 @@ func likeNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal 
 		return common.UpdateNoteList
 	}
 }
-

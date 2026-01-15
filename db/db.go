@@ -3514,3 +3514,147 @@ func (db *DB) DeleteAllNotifications(accountId uuid.UUID) error {
 		return err
 	})
 }
+
+// ============================================================================
+// Info Boxes
+// ============================================================================
+
+const (
+	sqlSelectAllInfoBoxes    = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes ORDER BY order_num ASC`
+	sqlSelectEnabledInfoBoxes = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes WHERE enabled = 1 ORDER BY order_num ASC`
+	sqlSelectInfoBoxById     = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes WHERE id = ?`
+	sqlInsertInfoBox         = `INSERT INTO info_boxes(id, title, content, order_num, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	sqlUpdateInfoBox         = `UPDATE info_boxes SET title = ?, content = ?, order_num = ?, enabled = ?, updated_at = ? WHERE id = ?`
+	sqlDeleteInfoBox         = `DELETE FROM info_boxes WHERE id = ?`
+	sqlToggleInfoBoxEnabled  = `UPDATE info_boxes SET enabled = NOT enabled, updated_at = ? WHERE id = ?`
+)
+
+// ReadAllInfoBoxes returns all info boxes ordered by order_num
+func (db *DB) ReadAllInfoBoxes() (error, *[]domain.InfoBox) {
+	rows, err := db.db.Query(sqlSelectAllInfoBoxes)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var boxes []domain.InfoBox
+	for rows.Next() {
+		var box domain.InfoBox
+		var idStr, createdAtStr, updatedAtStr string
+		var enabled int
+		if err := rows.Scan(&idStr, &box.Title, &box.Content, &box.OrderNum, &enabled, &createdAtStr, &updatedAtStr); err != nil {
+			return err, &boxes
+		}
+		box.Id, _ = uuid.Parse(idStr)
+		box.Enabled = enabled == 1
+		box.CreatedAt, _ = parseTimestamp(createdAtStr)
+		box.UpdatedAt, _ = parseTimestamp(updatedAtStr)
+		boxes = append(boxes, box)
+	}
+	if err = rows.Err(); err != nil {
+		return err, &boxes
+	}
+	return nil, &boxes
+}
+
+// ReadEnabledInfoBoxes returns only enabled info boxes ordered by order_num
+func (db *DB) ReadEnabledInfoBoxes() (error, *[]domain.InfoBox) {
+	rows, err := db.db.Query(sqlSelectEnabledInfoBoxes)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var boxes []domain.InfoBox
+	for rows.Next() {
+		var box domain.InfoBox
+		var idStr, createdAtStr, updatedAtStr string
+		var enabled int
+		if err := rows.Scan(&idStr, &box.Title, &box.Content, &box.OrderNum, &enabled, &createdAtStr, &updatedAtStr); err != nil {
+			return err, &boxes
+		}
+		box.Id, _ = uuid.Parse(idStr)
+		box.Enabled = enabled == 1
+		box.CreatedAt, _ = parseTimestamp(createdAtStr)
+		box.UpdatedAt, _ = parseTimestamp(updatedAtStr)
+		boxes = append(boxes, box)
+	}
+	if err = rows.Err(); err != nil {
+		return err, &boxes
+	}
+	return nil, &boxes
+}
+
+// ReadInfoBoxById returns a single info box by ID
+func (db *DB) ReadInfoBoxById(id uuid.UUID) (error, *domain.InfoBox) {
+	row := db.db.QueryRow(sqlSelectInfoBoxById, id.String())
+	var box domain.InfoBox
+	var idStr, createdAtStr, updatedAtStr string
+	var enabled int
+	err := row.Scan(&idStr, &box.Title, &box.Content, &box.OrderNum, &enabled, &createdAtStr, &updatedAtStr)
+	if err == sql.ErrNoRows {
+		return err, nil
+	}
+	if err != nil {
+		return err, nil
+	}
+	box.Id, _ = uuid.Parse(idStr)
+	box.Enabled = enabled == 1
+	box.CreatedAt, _ = parseTimestamp(createdAtStr)
+	box.UpdatedAt, _ = parseTimestamp(updatedAtStr)
+	return nil, &box
+}
+
+// CreateInfoBox creates a new info box
+func (db *DB) CreateInfoBox(box *domain.InfoBox) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		enabledInt := 0
+		if box.Enabled {
+			enabledInt = 1
+		}
+		_, err := tx.Exec(sqlInsertInfoBox,
+			box.Id.String(),
+			box.Title,
+			box.Content,
+			box.OrderNum,
+			enabledInt,
+			box.CreatedAt.Format(time.RFC3339),
+			box.UpdatedAt.Format(time.RFC3339))
+		return err
+	})
+}
+
+// UpdateInfoBox updates an existing info box
+func (db *DB) UpdateInfoBox(box *domain.InfoBox) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		enabledInt := 0
+		if box.Enabled {
+			enabledInt = 1
+		}
+		box.UpdatedAt = time.Now()
+		_, err := tx.Exec(sqlUpdateInfoBox,
+			box.Title,
+			box.Content,
+			box.OrderNum,
+			enabledInt,
+			box.UpdatedAt.Format(time.RFC3339),
+			box.Id.String())
+		return err
+	})
+}
+
+// DeleteInfoBox deletes an info box
+func (db *DB) DeleteInfoBox(id uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlDeleteInfoBox, id.String())
+		return err
+	})
+}
+
+// ToggleInfoBoxEnabled toggles the enabled status of an info box
+func (db *DB) ToggleInfoBoxEnabled(id uuid.UUID) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlToggleInfoBoxEnabled, time.Now().Format(time.RFC3339), id.String())
+		return err
+	})
+}

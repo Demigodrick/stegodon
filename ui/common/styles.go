@@ -90,6 +90,10 @@ var (
 	// ListBadgeMutedStyle is for muted user badge
 	ListBadgeMutedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(COLOR_ERROR))
+
+	// ListBadgeEnabledStyle is for enabled/active status badges
+	ListBadgeEnabledStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(COLOR_SUCCESS))
 )
 
 const (
