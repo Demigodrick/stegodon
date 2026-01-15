@@ -74,6 +74,7 @@ func InitialNote(contentWidth int, userId uuid.UUID) Model {
 	ti.CharLimit = common.MaxNoteDBLength // Set to DB limit, we'll validate visible chars separately
 	ti.ShowLineNumbers = false
 	ti.SetWidth(common.TextInputDefaultWidth)
+	ti.SetHeight(10) // Double the default height
 	ti.Cursor.SetMode(cursor.CursorBlink)
 	ti.Focus()
 
@@ -197,6 +198,7 @@ func createNoteModelCmd(note *domain.SaveNote) tea.Cmd {
 								ActorId:          replier.Id,
 								ActorUsername:    replier.Username,
 								ActorDomain:      "", // Empty for local users
+								NoteId:           noteId,
 								NotePreview:      preview,
 								Read:             false,
 								CreatedAt:        time.Now(),
@@ -235,6 +237,7 @@ func createNoteModelCmd(note *domain.SaveNote) tea.Cmd {
 									ActorId:          author.Id,
 									ActorUsername:    author.Username,
 									ActorDomain:      "", // Empty for local users
+									NoteId:           noteId,
 									NotePreview:      preview,
 									Read:             false,
 									CreatedAt:        time.Now(),
