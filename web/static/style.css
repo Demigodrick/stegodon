@@ -162,6 +162,88 @@ body {
   font-style: italic;
 }
 
+/* Blockquote support for markdown */
+.info-box-content blockquote {
+  border-left: 4px solid #00ff7f;
+  margin: 12px 0;
+  padding: 8px 0 8px 12px;
+  background: #0a0a0a;
+  color: #ccc;
+  font-style: italic;
+}
+
+.info-box-content blockquote p {
+  margin: 4px 0;
+}
+
+/* Heading support */
+.info-box-content h1,
+.info-box-content h2,
+.info-box-content h3,
+.info-box-content h4,
+.info-box-content h5,
+.info-box-content h6 {
+  color: #00ff7f;
+  margin: 12px 0 8px 0;
+  font-weight: bold;
+}
+
+.info-box-content h1 { font-size: 1.5em; }
+.info-box-content h2 { font-size: 1.3em; }
+.info-box-content h3 { font-size: 1.1em; }
+.info-box-content h4 { font-size: 1em; }
+.info-box-content h5 { font-size: 0.9em; }
+.info-box-content h6 { font-size: 0.85em; }
+
+/* Horizontal rule */
+.info-box-content hr {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 15px 0;
+}
+
+/* Ordered lists */
+.info-box-content ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  list-style-type: decimal;
+  list-style-position: outside;
+}
+
+.info-box-content ol li {
+  margin: 4px 0;
+  padding-left: 0.5em;
+  color: #e5e5e5;
+}
+
+.info-box-content ol li::before {
+  content: none;
+}
+
+/* Tables */
+.info-box-content table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  width: 100%;
+}
+
+.info-box-content th,
+.info-box-content td {
+  border: 1px solid #333;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.info-box-content th {
+  background: #181818;
+  color: #00ff7f;
+  font-weight: bold;
+}
+
+.info-box-content td {
+  background: #0a0a0a;
+}
+
 .main-content {
   margin-left: 350px;
   flex: 1;
