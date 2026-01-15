@@ -514,6 +514,8 @@ func (m *Model) loadFieldValue() {
 	case 2:
 		m.EditValue = fmt.Sprintf("%d", m.EditBox.OrderNum)
 	}
+	// Reset cursor to end of value when loading a field
+	m.CursorPos = len(m.EditValue)
 }
 
 func (m Model) View() string {
