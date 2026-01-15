@@ -33,13 +33,17 @@ type Model struct {
 	Offset   int
 	
 	// Info boxes management
-	InfoBoxes   []domain.InfoBox
-	BoxSelected int
-	BoxOffset   int
-	Editing     bool
-	EditBox     *domain.InfoBox
-	EditField   int
-	EditValue   string
+	InfoBoxes      []domain.InfoBox
+	BoxSelected    int
+	BoxOffset      int
+	Editing        bool
+	EditBox        *domain.InfoBox
+	EditField      int
+	EditValue      string
+	IsEditingField bool      // True when actively typing in a field
+	CursorPos      int       // Cursor position in the edit value
+	ConfirmDelete  bool      // True when confirming deletion
+	DeleteBoxId    uuid.UUID // ID of box to delete
 	
 	Width  int
 	Height int
@@ -323,6 +327,23 @@ func (m Model) handleUsersKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// Handle delete confirmation
+	if m.ConfirmDelete {
+		switch msg.String() {
+		case "y", "Y":
+			// Confirm deletion
+			m.ConfirmDelete = false
+			return m, deleteInfoBox(m.DeleteBoxId)
+		case "n", "N", "esc":
+			// Cancel deletion
+			m.ConfirmDelete = false
+			m.DeleteBoxId = uuid.Nil
+			m.Status = "Deletion cancelled"
+		}
+		return m, nil
+	}
+
+	// Normal navigation
 	switch msg.String() {
 	case "esc":
 		// Go back to menu
@@ -352,7 +373,7 @@ func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		m.EditField = 0
 		m.EditValue = ""
-	case "e":
+	case "enter", "e":
 		if len(m.InfoBoxes) > 0 && m.BoxSelected < len(m.InfoBoxes) {
 			box := m.InfoBoxes[m.BoxSelected]
 			m.Editing = true
@@ -362,7 +383,9 @@ func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	case "d":
 		if len(m.InfoBoxes) > 0 && m.BoxSelected < len(m.InfoBoxes) {
-			return m, deleteInfoBox(m.InfoBoxes[m.BoxSelected].Id)
+			// Show confirmation prompt
+			m.ConfirmDelete = true
+			m.DeleteBoxId = m.InfoBoxes[m.BoxSelected].Id
 		}
 	case "t":
 		if len(m.InfoBoxes) > 0 && m.BoxSelected < len(m.InfoBoxes) {
@@ -373,41 +396,90 @@ func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.Editing = false
-		m.EditBox = nil
-		m.Status = "Edit cancelled"
-		return m, nil
-	case "tab":
-		m.saveCurrentField()
-		m.EditField++
-		if m.EditField > 2 {
-			m.EditField = 0
-		}
-		m.loadFieldValue()
-		return m, nil
-	case "enter":
-		if m.EditField == 2 {
+	// Two-state editing: field selection vs active typing
+	
+	if !m.IsEditingField {
+		// Field selection mode - navigate with arrows, enter to edit
+		switch msg.String() {
+		case "esc":
+			m.Editing = false
+			m.EditBox = nil
+			m.Status = "Edit cancelled"
+			return m, nil
+		case "up", "k":
+			if m.EditField > 0 {
+				m.saveCurrentField()
+				m.EditField--
+				m.loadFieldValue()
+			}
+		case "down", "j":
+			if m.EditField < 2 {
+				m.saveCurrentField()
+				m.EditField++
+				m.loadFieldValue()
+			}
+		case "enter":
+			// Start editing the selected field
+			m.IsEditingField = true
+			m.loadFieldValue()
+			m.CursorPos = len(m.EditValue) // Start cursor at end
+		case "ctrl+s":
+			// Save from field selection mode
 			m.saveCurrentField()
 			return m, saveInfoBox(m.EditBox)
-		} else {
+		}
+	} else {
+		// Active typing mode with cursor movement
+		switch msg.String() {
+		case "esc":
+			// Stop editing this field, return to selection
 			m.saveCurrentField()
-			m.EditField++
-			m.loadFieldValue()
+			m.IsEditingField = false
+		case "ctrl+s":
+			// Save and exit
+			m.saveCurrentField()
+			return m, saveInfoBox(m.EditBox)
+		case "enter":
+			// Insert newline at cursor position
+			m.EditValue = m.EditValue[:m.CursorPos] + "\n" + m.EditValue[m.CursorPos:]
+			m.CursorPos++
+		case "left", "ctrl+b":
+			// Move cursor left
+			if m.CursorPos > 0 {
+				m.CursorPos--
+			}
+		case "right", "ctrl+f":
+			// Move cursor right
+			if m.CursorPos < len(m.EditValue) {
+				m.CursorPos++
+			}
+		case "home", "ctrl+a":
+			// Move to start
+			m.CursorPos = 0
+		case "end", "ctrl+e":
+			// Move to end
+			m.CursorPos = len(m.EditValue)
+		case "backspace":
+			// Delete character before cursor
+			if m.CursorPos > 0 {
+				m.EditValue = m.EditValue[:m.CursorPos-1] + m.EditValue[m.CursorPos:]
+				m.CursorPos--
+			}
+		case "delete", "ctrl+d":
+			// Delete character at cursor
+			if m.CursorPos < len(m.EditValue) {
+				m.EditValue = m.EditValue[:m.CursorPos] + m.EditValue[m.CursorPos+1:]
+			}
+		default:
+			// Insert character at cursor position
+			if len(msg.String()) == 1 {
+				m.EditValue = m.EditValue[:m.CursorPos] + msg.String() + m.EditValue[m.CursorPos:]
+				m.CursorPos++
+			}
 		}
-		return m, nil
-	case "backspace":
-		if len(m.EditValue) > 0 {
-			m.EditValue = m.EditValue[:len(m.EditValue)-1]
-		}
-		return m, nil
-	default:
-		if len(msg.String()) == 1 {
-			m.EditValue += msg.String()
-		}
-		return m, nil
 	}
+	
+	return m, nil
 }
 
 func (m *Model) saveCurrentField() {
@@ -578,7 +650,7 @@ func (m Model) renderInfoBoxesView() string {
 
 		status := ""
 		if box.Enabled {
-			status = common.ListBadgeStyle.Render(" [ON]")
+			status = common.ListBadgeEnabledStyle.Render(" [ON]")
 		} else {
 			status = common.ListBadgeMutedStyle.Render(" [OFF]")
 		}
@@ -602,7 +674,13 @@ func (m Model) renderInfoBoxesView() string {
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • n: add • e: edit • d: delete • t: toggle • esc: back"))
+	
+	// Show confirmation prompt if deleting
+	if m.ConfirmDelete {
+		s.WriteString(common.ListErrorStyle.Render("Delete this info box? (y/n)"))
+	} else {
+		s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • n: add • enter: edit • d: delete • t: toggle • esc: back"))
+	}
 
 	return s.String()
 }
@@ -619,7 +697,12 @@ func (m Model) renderEditView() string {
 
 	fieldNames := []string{"Title", "Content (Markdown)", "Order Number"}
 	for i, name := range fieldNames {
-		if i == m.EditField {
+		if i == m.EditField && m.IsEditingField {
+			// Show cursor at position when actively editing
+			displayValue := m.EditValue[:m.CursorPos] + "_" + m.EditValue[m.CursorPos:]
+			s.WriteString(common.ListItemSelectedStyle.Render(fmt.Sprintf("▶ %s: %s", name, displayValue)))
+		} else if i == m.EditField {
+			// Field selected but not editing - show underscore at end
 			s.WriteString(common.ListItemSelectedStyle.Render(fmt.Sprintf("▶ %s: %s_", name, m.EditValue)))
 		} else {
 			var value string
@@ -640,7 +723,11 @@ func (m Model) renderEditView() string {
 	}
 
 	s.WriteString("\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: tab: next field • enter: save • esc: cancel"))
+	if m.IsEditingField {
+		s.WriteString(common.ListBadgeStyle.Render("Keys: ←/→: move cursor • home/end: jump • backspace/delete: remove • enter: newline • esc: finish • ctrl+s: save"))
+	} else {
+		s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: select field • enter: edit field • ctrl+s: save • esc: cancel"))
+	}
 	s.WriteString("\n\n")
 	s.WriteString(common.ListBadgeStyle.Render("Note: Content supports Markdown. Use {{SSH_PORT}} for port substitution."))
 

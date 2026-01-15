@@ -303,6 +303,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == common.CreateUserView {
 				return m, nil
 			}
+			// Block tab navigation when in admin submenus (users/info boxes management)
+			if m.state == common.AdminPanelView && m.adminModel.CurrentView != 0 {
+				return m, nil
+			}
 			oldState := m.state
 			switch m.state {
 			case common.CreateNoteView:
@@ -768,9 +772,16 @@ func (m MainModel) View() string {
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(localUsersStyleStr))
 		case common.AdminPanelView:
-			s += lipgloss.JoinHorizontal(lipgloss.Top,
-				modelStyle.Render(createStyleStr),
-				focusedModelStyle.Render(adminStyleStr))
+			// Hide left panel when in admin submenus
+			if m.adminModel.CurrentView == 0 {
+				// Main menu - show both panels
+				s += lipgloss.JoinHorizontal(lipgloss.Top,
+					modelStyle.Render(createStyleStr),
+					focusedModelStyle.Render(adminStyleStr))
+			} else {
+				// Submenu - only show admin panel (full width)
+				s += focusedModelStyle.Render(adminStyleStr)
+			}
 		case common.InfoBoxesView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -817,9 +828,13 @@ func (m MainModel) View() string {
 				viewCommands = "↑/↓ • m: mute • K: kick • esc: back"
 			case 2: // InfoBoxesView
 				if m.adminModel.Editing {
-					viewCommands = "tab: next field • enter: save • esc: cancel"
+					if m.adminModel.IsEditingField {
+						viewCommands = "enter: newline • esc: finish field • ctrl+s: save"
+					} else {
+						viewCommands = "↑/↓: select field • enter: edit field • ctrl+s: save • esc: cancel"
+					}
 				} else {
-					viewCommands = "↑/↓ • n: add • e: edit • d: delete • t: toggle • esc: back"
+					viewCommands = "↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back"
 				}
 			default:
 				viewCommands = "↑/↓ • enter: select"
