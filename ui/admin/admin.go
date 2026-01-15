@@ -699,7 +699,14 @@ func (m Model) renderEditView() string {
 	for i, name := range fieldNames {
 		if i == m.EditField && m.IsEditingField {
 			// Show cursor at position when actively editing
-			displayValue := m.EditValue[:m.CursorPos] + "_" + m.EditValue[m.CursorPos:]
+			var displayValue string
+			if len(m.EditValue) == 0 {
+				displayValue = "_"
+			} else if m.CursorPos >= len(m.EditValue) {
+				displayValue = m.EditValue + "_"
+			} else {
+				displayValue = m.EditValue[:m.CursorPos] + "_" + m.EditValue[m.CursorPos:]
+			}
 			s.WriteString(common.ListItemSelectedStyle.Render(fmt.Sprintf("▶ %s: %s", name, displayValue)))
 		} else if i == m.EditField {
 			// Field selected but not editing - show underscore at end
