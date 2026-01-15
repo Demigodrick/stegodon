@@ -104,6 +104,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.Offset = m.Selected - itemsPerPage + 1
 				}
 			}
+		case "v":
+			// View notification source (the post/reply)
+			if m.Selected < len(m.Notifications) {
+				notif := m.Notifications[m.Selected]
+				// Only view if notification has an associated note (either URI or ID)
+				if notif.NotificationType != domain.NotificationFollow && (notif.NoteURI != "" || notif.NoteId != uuid.Nil) {
+					// Prepare note details for thread view
+					author := notif.ActorUsername
+					if notif.ActorDomain != "" {
+						author = fmt.Sprintf("%s@%s", notif.ActorUsername, notif.ActorDomain)
+					}
+					content := notif.NotePreview
+					if content == "" {
+						content = "[No preview available]"
+					}
+					
+					// Send ViewThreadMsg to navigate to the post
+					return m, func() tea.Msg {
+						return common.ViewThreadMsg{
+							NoteURI:   notif.NoteURI,
+							NoteID:    notif.NoteId,
+							IsLocal:   notif.NoteId != uuid.Nil && notif.ActorDomain == "",
+							Author:    author,
+							Content:   content,
+							CreatedAt: notif.CreatedAt,
+						}
+					}
+				}
+			}
 		case "enter":
 			// Delete notification (mark as read by removing it)
 			if m.Selected < len(m.Notifications) {

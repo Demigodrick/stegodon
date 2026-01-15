@@ -821,7 +821,7 @@ func (m MainModel) View() string {
 		case common.ThreadView:
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: URL • esc: back"
 		case common.NotificationsView:
-			viewCommands = "j/k: nav • enter: delete • a: delete all"
+			viewCommands = "j/k: nav • v: view post • enter: delete • a: delete all"
 		default:
 			viewCommands = " "
 		}
