@@ -755,16 +755,10 @@ func (m MainModel) View() string {
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(localUsersStyleStr))
 		case common.AdminPanelView:
-			// Hide left panel when in admin submenus
-			if m.adminModel.CurrentView == 0 {
-				// Main menu - show both panels
-				s += lipgloss.JoinHorizontal(lipgloss.Top,
-					modelStyle.Render(createStyleStr),
-					focusedModelStyle.Render(adminStyleStr))
-			} else {
-				// Submenu - only show admin panel (full width)
-				s += focusedModelStyle.Render(adminStyleStr)
-			}
+			// Always show both panels (write note + admin)
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(adminStyleStr))
 		case common.RelayManagementView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
