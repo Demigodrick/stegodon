@@ -31,9 +31,8 @@ type IndexPageData struct {
 }
 
 type InfoBoxView struct {
-	Title       string
-	TitleHTML   template.HTML
-	ContentHTML template.HTML
+	Title       string        // Plain text title (auto-escaped by template)
+	ContentHTML template.HTML // Sanitized HTML content from markdown
 }
 
 type ProfilePageData struct {
@@ -205,8 +204,7 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 			htmlContent := convertMarkdownToHTML(content)
 			
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title,
-				TitleHTML:   template.HTML(box.Title), // Allow HTML in title (for SVG icons)
+				Title:       box.Title, // Plain text, will be auto-escaped in template
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -325,8 +323,7 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title,
-				TitleHTML:   template.HTML(box.Title),
+				Title:       box.Title, // Plain text, will be auto-escaped in template
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -512,8 +509,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title,
-				TitleHTML:   template.HTML(box.Title),
+				Title:       box.Title, // Plain text, will be auto-escaped in template
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -618,8 +614,7 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title,
-				TitleHTML:   template.HTML(box.Title),
+				Title:       box.Title, // Plain text, will be auto-escaped in template
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
