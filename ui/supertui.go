@@ -20,7 +20,6 @@ import (
 	"github.com/deemkeen/stegodon/ui/followuser"
 	"github.com/deemkeen/stegodon/ui/header"
 	"github.com/deemkeen/stegodon/ui/hometimeline"
-	"github.com/deemkeen/stegodon/ui/infoboxes"
 	"github.com/deemkeen/stegodon/ui/localusers"
 	"github.com/deemkeen/stegodon/ui/myposts"
 	"github.com/deemkeen/stegodon/ui/notifications"
@@ -57,7 +56,6 @@ type MainModel struct {
 	homeTimelineModel  hometimeline.Model
 	localUsersModel    localusers.Model
 	adminModel         admin.Model
-	infoBoxesModel     infoboxes.Model
 	relayModel         relay.Model
 	deleteAccountModel deleteaccount.Model
 	threadViewModel    threadview.Model
@@ -106,7 +104,6 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	homeTimelineModel := hometimeline.InitialModel(acc.Id, width, height, localDomain)
 	localUsersModel := localusers.InitialModel(acc.Id, width, height)
 	adminModel := admin.InitialModel(acc.Id, width, height)
-	infoBoxesModel := infoboxes.InitialModel(width, height)
 	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
 	deleteAccountModel := deleteaccount.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height, localDomain)
@@ -123,7 +120,6 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.homeTimelineModel = homeTimelineModel
 	m.localUsersModel = localUsersModel
 	m.adminModel = adminModel
-	m.infoBoxesModel = infoBoxesModel
 	m.relayModel = relayModel
 	m.deleteAccountModel = deleteAccountModel
 	m.threadViewModel = threadViewModel
@@ -522,13 +518,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// Only route to admin/infoboxes/relay/thread models when active (leak prevention)
+		// Only route to admin/relay/thread models when active (leak prevention)
 		switch m.state {
 		case common.AdminPanelView:
 			m.adminModel, cmd = m.adminModel.Update(msg)
-			cmds = append(cmds, cmd)
-		case common.InfoBoxesView:
-			m.infoBoxesModel, cmd = m.infoBoxesModel.Update(msg)
 			cmds = append(cmds, cmd)
 		case common.RelayManagementView:
 			m.relayModel, cmd = m.relayModel.Update(msg)
@@ -560,8 +553,6 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.localUsersModel, cmd = m.localUsersModel.Update(msg)
 		case common.AdminPanelView:
 			m.adminModel, cmd = m.adminModel.Update(msg)
-		case common.InfoBoxesView:
-			m.infoBoxesModel, cmd = m.infoBoxesModel.Update(msg)
 		case common.RelayManagementView:
 			m.relayModel, cmd = m.relayModel.Update(msg)
 		case common.DeleteAccountView:
@@ -692,14 +683,6 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.adminModel.View())
 
-	infoBoxesStyleStr := lipgloss.NewStyle().
-		MaxHeight(availableHeight).
-		Height(availableHeight).
-		Width(rightPanelWidth).
-		MaxWidth(rightPanelWidth).
-		Margin(1).
-		Render(m.infoBoxesModel.View())
-
 	relayStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
 		Height(availableHeight).
@@ -782,10 +765,6 @@ func (m MainModel) View() string {
 				// Submenu - only show admin panel (full width)
 				s += focusedModelStyle.Render(adminStyleStr)
 			}
-		case common.InfoBoxesView:
-			s += lipgloss.JoinHorizontal(lipgloss.Top,
-				modelStyle.Render(createStyleStr),
-				focusedModelStyle.Render(infoBoxesStyleStr))
 		case common.RelayManagementView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -839,8 +818,6 @@ func (m MainModel) View() string {
 			default:
 				viewCommands = "↑/↓ • enter: select"
 			}
-		case common.InfoBoxesView:
-			viewCommands = "↑/↓ • n: new • e: edit • d: delete • u/d: reorder • t: toggle"
 		case common.RelayManagementView:
 			viewCommands = "↑/↓ • a: add • d: delete • r: retry"
 		case common.DeleteAccountView:
@@ -903,8 +880,6 @@ func (m MainModel) currentFocusedModel() string {
 		return "users"
 	case common.AdminPanelView:
 		return "admin"
-	case common.InfoBoxesView:
-		return "info boxes"
 	case common.RelayManagementView:
 		return "relays"
 	case common.DeleteAccountView:
@@ -937,8 +912,6 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 		return m.localUsersModel.Init()
 	case common.AdminPanelView:
 		return m.adminModel.Init()
-	case common.InfoBoxesView:
-		return m.infoBoxesModel.Init()
 	case common.RelayManagementView:
 		return m.relayModel.Init()
 	case common.ThreadView:

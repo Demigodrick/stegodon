@@ -32,6 +32,7 @@ type IndexPageData struct {
 
 type InfoBoxView struct {
 	Title       string        // Plain text title (auto-escaped by template)
+	TitleHTML   template.HTML // Title rendered as markdown/HTML (for icons/formatting)
 	ContentHTML template.HTML // Sanitized HTML content from markdown
 }
 
@@ -203,8 +204,12 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 			// Convert markdown to HTML
 			htmlContent := convertMarkdownToHTML(content)
 			
+			// Render title as markdown too - this allows safe HTML/SVG but prevents XSS
+			titleHTML := convertMarkdownToHTML(box.Title)
+			
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title, // Plain text, will be auto-escaped in template
+				Title:       box.Title,                    // Plain text fallback
+				TitleHTML:   template.HTML(titleHTML),     // Markdown-rendered (allows safe HTML/SVG)
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -322,8 +327,10 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 		for _, box := range *infoBoxes {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
+			titleHTML := convertMarkdownToHTML(box.Title)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title, // Plain text, will be auto-escaped in template
+				Title:       box.Title,
+				TitleHTML:   template.HTML(titleHTML),
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -508,8 +515,10 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		for _, box := range *infoBoxes {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
+			titleHTML := convertMarkdownToHTML(box.Title)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title, // Plain text, will be auto-escaped in template
+				Title:       box.Title,
+				TitleHTML:   template.HTML(titleHTML),
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
@@ -613,8 +622,10 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 		for _, box := range *infoBoxes {
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
 			htmlContent := convertMarkdownToHTML(content)
+			titleHTML := convertMarkdownToHTML(box.Title)
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title, // Plain text, will be auto-escaped in template
+				Title:       box.Title,
+				TitleHTML:   template.HTML(titleHTML),
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
