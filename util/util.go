@@ -551,3 +551,89 @@ func ReplacePlaceholders(text string, sshPort int) string {
 	text = strings.ReplaceAll(text, "{{SSH_PORT}}", fmt.Sprintf("%d", sshPort))
 	return text
 }
+
+// ParseActivityPubURL attempts to extract username and domain from an ActivityPub profile URL.
+// Supports common URL patterns:
+// - https://example.com/u/username (stegodon format)
+// - https://example.com/@username (mastodon format)
+// - https://example.com/users/username (common activitypub format)
+// - example.com/u/username (will automatically add https://)
+// Returns username, domain, and true if successfully parsed; empty strings and false otherwise.
+func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool) {
+	// Trim whitespace
+	urlStr = strings.TrimSpace(urlStr)
+
+	// If it doesn't have a protocol but looks like it might be a URL (contains /),
+	// try adding https:// prefix
+	if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
+		// Check if it looks like a URL (has at least one /)
+		// If it contains @ but also contains /, it's likely a URL like "mastodon.social/@user"
+		// If it contains @ but no /, it's likely a webfinger format like "user@domain.com"
+		if strings.Contains(urlStr, "/") {
+			// Assume https:// and try again
+			urlStr = "https://" + urlStr
+		} else {
+			// No slash, doesn't look like a URL (probably webfinger format)
+			return "", "", false
+		}
+	}
+
+	// Remove protocol
+	withoutProtocol := strings.TrimPrefix(urlStr, "https://")
+	withoutProtocol = strings.TrimPrefix(withoutProtocol, "http://")
+
+	// Split by /
+	parts := strings.Split(withoutProtocol, "/")
+	if len(parts) < 2 {
+		// Need at least domain/path
+		return "", "", false
+	}
+
+	domain = parts[0]
+	
+	// Handle different URL formats
+	if len(parts) == 2 {
+		// Format: https://example.com/@username (Mastodon style without trailing slash)
+		pathType := parts[1]
+		if strings.HasPrefix(pathType, "@") {
+			username = strings.TrimPrefix(pathType, "@")
+		} else {
+			// Unknown format with only 2 parts
+			return "", "", false
+		}
+	} else if len(parts) >= 3 {
+		// Format: https://example.com/u/username or https://example.com/@/username
+		pathType := parts[1]
+		username = parts[2]
+
+		// Validate path type (u, @, users, etc.)
+		if pathType == "u" || pathType == "users" || pathType == "@" {
+			// Valid path type
+			username = parts[2]
+		} else if strings.HasPrefix(pathType, "@") {
+			// Path includes the @: https://example.com/@username/... (shouldn't happen but handle it)
+			username = strings.TrimPrefix(pathType, "@")
+		} else {
+			// Unknown path format
+			return "", "", false
+		}
+	} else {
+		return "", "", false
+	}
+
+	// Clean username and domain
+	username = strings.TrimSpace(username)
+	domain = strings.TrimSpace(domain)
+
+	// Remove any query parameters or fragments from username
+	if idx := strings.IndexAny(username, "?#"); idx != -1 {
+		username = username[:idx]
+	}
+
+	// Validate we have both username and domain
+	if username == "" || domain == "" {
+		return "", "", false
+	}
+
+	return username, domain, true
+}

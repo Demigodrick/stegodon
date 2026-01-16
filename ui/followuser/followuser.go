@@ -33,11 +33,11 @@ type Model struct {
 
 func InitialModel(accountId uuid.UUID) Model {
 	ti := textinput.New()
-	ti.Placeholder = "user@domain or @user@domain"
+	ti.Placeholder = "user@domain or https://example.com/u/user"
 	ti.Prompt = common.ListSelectedPrefix
 	ti.Focus()
-	ti.CharLimit = 100
-	ti.Width = 50
+	ti.CharLimit = 150
+	ti.Width = 60
 
 	return Model{
 		TextInput: ti,
@@ -86,28 +86,37 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
-			// Parse user@domain format
+			// Parse input - can be user@domain format or a URL
 			input := strings.TrimSpace(m.TextInput.Value())
 			if input == "" {
-				m.Error = "Please enter a user@domain"
+				m.Error = "Please enter a user@domain or profile URL"
 				return m, clearStatusAfter(2 * time.Second)
 			}
 
-			// Remove leading @ if present
-			input = strings.TrimPrefix(input, "@")
+			var username, domain string
 
-			parts := strings.Split(input, "@")
-			if len(parts) != 2 {
-				m.Error = "Invalid format. Use: user@domain.com or @user@domain.com"
-				return m, clearStatusAfter(2 * time.Second)
-			}
+			// Try parsing as URL first
+			if parsedUsername, parsedDomain, ok := util.ParseActivityPubURL(input); ok {
+				username = parsedUsername
+				domain = parsedDomain
+			} else {
+				// Not a URL, try parsing as user@domain format
+				// Remove leading @ if present
+				input = strings.TrimPrefix(input, "@")
 
-			username := parts[0]
-			domain := parts[1]
+				parts := strings.Split(input, "@")
+				if len(parts) != 2 {
+					m.Error = "Invalid format. Use: user@domain.com, @user@domain.com, or profile URL"
+					return m, clearStatusAfter(2 * time.Second)
+				}
 
-			if username == "" || domain == "" {
-				m.Error = "Invalid format. Use: user@domain.com or @user@domain.com"
-				return m, clearStatusAfter(2 * time.Second)
+				username = parts[0]
+				domain = parts[1]
+
+				if username == "" || domain == "" {
+					m.Error = "Invalid format. Use: user@domain.com, @user@domain.com, or profile URL"
+					return m, clearStatusAfter(2 * time.Second)
+				}
 			}
 
 			// Check if this is a local user - prevent following via federation
@@ -139,8 +148,8 @@ func (m Model) View() string {
 
 	s.WriteString(common.CaptionStyle.Render("follow remote user"))
 	s.WriteString("\n\n")
-	s.WriteString("Enter ActivityPub address:\n")
-	s.WriteString("(e.g., user@mastodon.social or @user@mastodon.social)\n\n")
+	s.WriteString("Enter ActivityPub address or profile URL:\n")
+	s.WriteString("(e.g., user@mastodon.social, @user@mastodon.social, or https://mastodon.social/@user)\n\n")
 	s.WriteString(m.TextInput.View())
 	s.WriteString("\n\n")
 
