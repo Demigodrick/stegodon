@@ -538,6 +538,27 @@ h2 {
   color: #5fafff;
 }
 
+/* Avatar styling */
+.user-avatar {
+  margin-bottom: 15px;
+}
+
+.avatar-large {
+  width: 120px;
+  height: 120px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 2px solid #333;
+}
+
+.avatar-small {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #333;
+}
+
 /* Hashtag styling */
 .hashtag {
   color: #5fafff;

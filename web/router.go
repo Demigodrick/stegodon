@@ -116,6 +116,19 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 		c.JSON(200, gin.H{"users": users})
 	})
 
+	// Avatar upload routes
+	g.GET("/upload/:token", func(c *gin.Context) {
+		HandleUploadForm(c, conf)
+	})
+	g.POST("/upload/:token", func(c *gin.Context) {
+		HandleUploadSubmit(c, conf)
+	})
+
+	// Serve avatar images
+	g.GET("/avatars/:filename", func(c *gin.Context) {
+		ServeAvatar(c, conf)
+	})
+
 	// RSS Feed
 	g.GET("/feed", func(c *gin.Context) {
 

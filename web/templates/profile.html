@@ -57,6 +57,11 @@
                     </div>
 
                     <div class="user-profile">
+                        {{if .User.AvatarURL}}
+                        <div class="user-avatar">
+                            <img src="{{.User.AvatarURL}}" alt="@{{.User.Username}}'s avatar" class="avatar-large">
+                        </div>
+                        {{end}}
                         <div class="user-info">
                             <p>
                                 <strong>posts:</strong>

@@ -42,9 +42,12 @@ const (
                         web_private_key text
                         )`
 	sqlInsertUser            = `INSERT INTO accounts(id, username, publickey, web_public_key, web_private_key, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-	sqlUpdateLoginUser       = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE publickey = ?`
-	sqlUpdateLoginUserById   = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE id = ?`
-	sqlSelectUserByPublicKey = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE publickey = ?`
+	sqlUpdateLoginUser           = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE publickey = ?`
+	sqlUpdateLoginUserById       = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE id = ?`
+	sqlUpdateAccountDisplayName  = `UPDATE accounts SET display_name = ? WHERE id = ?`
+	sqlUpdateAccountSummary      = `UPDATE accounts SET summary = ? WHERE id = ?`
+	sqlUpdateAccountAvatar       = `UPDATE accounts SET avatar_url = ? WHERE id = ?`
+	sqlSelectUserByPublicKey     = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE publickey = ?`
 	sqlSelectUserById        = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE id = ?`
 	sqlSelectUserByUsername  = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE username = ?`
 
@@ -191,6 +194,85 @@ func (db *DB) UpdateLoginById(username string, displayName string, summary strin
 			return err
 		}
 		return nil
+	})
+}
+
+// UpdateAccountDisplayName updates only the display name for an account
+func (db *DB) UpdateAccountDisplayName(accountId uuid.UUID, displayName string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlUpdateAccountDisplayName, displayName, accountId.String())
+		return err
+	})
+}
+
+// UpdateAccountSummary updates only the bio/summary for an account
+func (db *DB) UpdateAccountSummary(accountId uuid.UUID, summary string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlUpdateAccountSummary, summary, accountId.String())
+		return err
+	})
+}
+
+// UpdateAccountAvatar updates only the avatar URL for an account
+func (db *DB) UpdateAccountAvatar(accountId uuid.UUID, avatarURL string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(sqlUpdateAccountAvatar, avatarURL, accountId.String())
+		return err
+	})
+}
+
+// CreateUploadToken creates a new one-time upload token
+func (db *DB) CreateUploadToken(accountId uuid.UUID, token string, tokenType string, expiresIn time.Duration) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		expiresAt := time.Now().Add(expiresIn)
+		_, err := tx.Exec(`INSERT INTO upload_tokens (token, account_id, token_type, expires_at) VALUES (?, ?, ?, ?)`,
+			token, accountId.String(), tokenType, expiresAt.Format(time.RFC3339))
+		return err
+	})
+}
+
+// ValidateUploadToken validates a token and returns the account ID if valid
+func (db *DB) ValidateUploadToken(token string) (uuid.UUID, string, error) {
+	var accountIdStr, tokenType string
+	var expiresAtStr string
+	row := db.db.QueryRow(`SELECT account_id, token_type, expires_at FROM upload_tokens WHERE token = ?`, token)
+	err := row.Scan(&accountIdStr, &tokenType, &expiresAtStr)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+
+	// Parse expiry time
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf("invalid expiry time: %w", err)
+	}
+
+	// Check if expired
+	if time.Now().After(expiresAt) {
+		return uuid.Nil, "", fmt.Errorf("token expired")
+	}
+
+	accountId, err := uuid.Parse(accountIdStr)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+
+	return accountId, tokenType, nil
+}
+
+// DeleteUploadToken removes a used or expired token
+func (db *DB) DeleteUploadToken(token string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM upload_tokens WHERE token = ?`, token)
+		return err
+	})
+}
+
+// CleanupExpiredUploadTokens removes all expired tokens
+func (db *DB) CleanupExpiredUploadTokens() error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM upload_tokens WHERE expires_at < ?`, time.Now().Format(time.RFC3339))
+		return err
 	})
 }
 

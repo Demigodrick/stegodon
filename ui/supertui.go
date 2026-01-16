@@ -14,7 +14,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/admin"
 	"github.com/deemkeen/stegodon/ui/common"
 	"github.com/deemkeen/stegodon/ui/createuser"
-	"github.com/deemkeen/stegodon/ui/deleteaccount"
+	"github.com/deemkeen/stegodon/ui/accountsettings"
 	"github.com/deemkeen/stegodon/ui/followers"
 	"github.com/deemkeen/stegodon/ui/following"
 	"github.com/deemkeen/stegodon/ui/followuser"
@@ -57,7 +57,7 @@ type MainModel struct {
 	localUsersModel    localusers.Model
 	adminModel         admin.Model
 	relayModel         relay.Model
-	deleteAccountModel deleteaccount.Model
+	accountSettingsModel accountsettings.Model
 	threadViewModel    threadview.Model
 	notificationsModel notifications.Model
 }
@@ -105,7 +105,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	localUsersModel := localusers.InitialModel(acc.Id, width, height)
 	adminModel := admin.InitialModel(acc.Id, width, height)
 	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
-	deleteAccountModel := deleteaccount.InitialModel(&acc)
+	accountSettingsModel := accountsettings.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height, localDomain)
 	notificationsModel := notifications.InitialModel(acc.Id, width, height)
 
@@ -121,7 +121,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.localUsersModel = localUsersModel
 	m.adminModel = adminModel
 	m.relayModel = relayModel
-	m.deleteAccountModel = deleteAccountModel
+	m.accountSettingsModel = accountSettingsModel
 	m.threadViewModel = threadViewModel
 	m.notificationsModel = notificationsModel
 	m.headerModel = headerModel
@@ -230,8 +230,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = common.FollowingView
 		case common.LocalUsersView:
 			m.state = common.LocalUsersView
-		case common.DeleteAccountView:
-			m.state = common.DeleteAccountView
+		case common.AccountSettingsView:
+			m.state = common.AccountSettingsView
 		case common.ThreadView:
 			m.state = common.ThreadView
 		case common.UpdateNoteList:
@@ -326,17 +326,17 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.account.IsAdmin {
 					m.state = common.AdminPanelView
 				} else {
-					m.state = common.DeleteAccountView
+					m.state = common.AccountSettingsView
 				}
 			case common.AdminPanelView:
 				if m.config.Conf.WithAp {
 					m.state = common.RelayManagementView
 				} else {
-					m.state = common.DeleteAccountView
+					m.state = common.AccountSettingsView
 				}
 			case common.RelayManagementView:
-				m.state = common.DeleteAccountView
-			case common.DeleteAccountView:
+				m.state = common.AccountSettingsView
+			case common.AccountSettingsView:
 				m.state = common.NotificationsView
 			case common.NotificationsView:
 				m.state = common.CreateNoteView
@@ -385,7 +385,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case common.CreateNoteView:
 				m.state = common.NotificationsView
 			case common.NotificationsView:
-				m.state = common.DeleteAccountView
+				m.state = common.AccountSettingsView
 			case common.HomeTimelineView:
 				m.state = common.CreateNoteView
 			case common.MyPostsView:
@@ -406,7 +406,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = common.LocalUsersView
 			case common.RelayManagementView:
 				m.state = common.AdminPanelView
-			case common.DeleteAccountView:
+			case common.AccountSettingsView:
 				if m.account.IsAdmin {
 					if m.config.Conf.WithAp {
 						m.state = common.RelayManagementView
@@ -465,8 +465,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.headerModel = header.Model{Width: m.width, Acc: &m.account}
-				// Update deleteAccountModel and relayModel with the new account info
-				m.deleteAccountModel.Account = &m.account
+				// Update accountSettingsModel and relayModel with the new account info
+				m.accountSettingsModel.Account = &m.account
 				m.relayModel.AdminAcct = &m.account
 				return m, updateUserModelCmd(&m.account)
 			}
@@ -508,7 +508,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		m.followModel, cmd = m.followModel.Update(msg)
 		cmds = append(cmds, cmd)
-		m.deleteAccountModel, cmd = m.deleteAccountModel.Update(msg)
+		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.followersModel, cmd = m.followersModel.Update(msg)
 		cmds = append(cmds, cmd)
@@ -561,8 +561,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adminModel, cmd = m.adminModel.Update(msg)
 		case common.RelayManagementView:
 			m.relayModel, cmd = m.relayModel.Update(msg)
-		case common.DeleteAccountView:
-			m.deleteAccountModel, cmd = m.deleteAccountModel.Update(msg)
+		case common.AccountSettingsView:
+			m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
 		case common.ThreadView:
 			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
 		case common.NotificationsView:
@@ -697,13 +697,13 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.relayModel.View())
 
-	deleteAccountStyleStr := lipgloss.NewStyle().
+	accountSettingsStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
 		Height(availableHeight).
 		Width(rightPanelWidth).
 		MaxWidth(rightPanelWidth).
 		Margin(1).
-		Render(m.deleteAccountModel.View())
+		Render(m.accountSettingsModel.View())
 
 	threadViewStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
@@ -769,10 +769,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(relayStyleStr))
-		case common.DeleteAccountView:
+		case common.AccountSettingsView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
-				focusedModelStyle.Render(deleteAccountStyleStr))
+				focusedModelStyle.Render(accountSettingsStyleStr))
 		case common.ThreadView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -816,8 +816,8 @@ func (m MainModel) View() string {
 			}
 		case common.RelayManagementView:
 			viewCommands = "↑/↓ • a: add • d: delete • r: retry"
-		case common.DeleteAccountView:
-			viewCommands = "y: confirm • n/esc: cancel"
+		case common.AccountSettingsView:
+			viewCommands = "↑/↓ • e: name • b: bio • a: avatar • d: delete"
 		case common.ThreadView:
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: URL • esc: back"
 		case common.NotificationsView:
@@ -878,8 +878,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "admin"
 	case common.RelayManagementView:
 		return "relays"
-	case common.DeleteAccountView:
-		return "delete"
+	case common.AccountSettingsView:
+		return "settings"
 	case common.ThreadView:
 		return "thread"
 	case common.NotificationsView:

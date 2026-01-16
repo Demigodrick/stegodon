@@ -56,6 +56,7 @@ type UserView struct {
 	DisplayName string
 	Summary     string
 	JoinedAgo   string
+	AvatarURL   string
 }
 
 type PostView struct {
@@ -348,6 +349,7 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 			DisplayName: account.DisplayName,
 			Summary:     account.Summary,
 			JoinedAgo:   formatTimeAgo(account.CreatedAt),
+			AvatarURL:   account.AvatarURL,
 		},
 		Posts:      posts,
 		TotalPosts: totalPosts,
@@ -543,6 +545,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 			DisplayName: account.DisplayName,
 			Summary:     account.Summary,
 			JoinedAgo:   formatTimeAgo(account.CreatedAt),
+			AvatarURL:   account.AvatarURL,
 		},
 		ParentPost: parentPost,
 		Replies:    replies,
