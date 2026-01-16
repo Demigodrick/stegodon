@@ -787,7 +787,7 @@ func (m MainModel) View() string {
 		var viewCommands string
 		switch m.state {
 		case common.HomeTimelineView:
-			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: link"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link"
 		case common.MyPostsView:
 			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐"
 		case common.FollowUserView:

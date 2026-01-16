@@ -54,15 +54,18 @@ var (
 )
 
 type Model struct {
-	AccountId   uuid.UUID
-	Posts       []domain.HomePost
-	Offset      int // Pagination offset
-	Selected    int // Currently selected post index
-	Width       int
-	Height      int
-	isActive    bool   // Track if this view is currently visible (prevents ticker leaks)
-	showingURL  bool   // Track if URL is displayed instead of content for selected post
-	LocalDomain string // Cached local domain for mention highlighting
+	AccountId          uuid.UUID
+	Posts              []domain.HomePost
+	Offset             int      // Pagination offset
+	Selected           int      // Currently selected post index
+	Width              int
+	Height             int
+	isActive           bool     // Track if this view is currently visible (prevents ticker leaks)
+	showingURL         bool     // Track if URL is displayed instead of content for selected post
+	showingEngagement  bool     // Track if engagement info (likes/boosts) is displayed
+	engagementLikers   []string // List of users who liked the selected post
+	engagementBoosters []string // List of users who boosted the selected post
+	LocalDomain        string   // Cached local domain for mention highlighting
 }
 
 func InitialModel(accountId uuid.UUID, width, height int, localDomain string) Model {
@@ -109,6 +112,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Selected = 0
 		m.Offset = 0
 		m.showingURL = false
+		m.showingEngagement = false
 		// Load data first, tick will be scheduled when data arrives
 		return m, loadHomePosts(m.AccountId)
 
@@ -144,6 +148,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case engagementInfoMsg:
+		// Store the engagement info
+		m.engagementLikers = msg.likers
+		m.engagementBoosters = msg.boosters
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
@@ -152,12 +162,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.Offset = m.Selected
 			}
 			m.showingURL = false
+			m.showingEngagement = false
 		case "down", "j":
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts)-1 {
 				m.Selected++
 				m.Offset = m.Selected
 			}
 			m.showingURL = false
+			m.showingEngagement = false
 		case "o":
 			// Toggle between showing content and URL (only for posts with valid HTTP/HTTPS URLs)
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
@@ -251,6 +263,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 			}
+		case "i":
+			// Toggle engagement info display (who liked/boosted)
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				// Only show engagement if there are likes or boosts
+				if selectedPost.LikeCount > 0 || selectedPost.BoostCount > 0 {
+					m.showingEngagement = !m.showingEngagement
+					// If showing engagement, fetch the data
+					if m.showingEngagement {
+						return m, loadEngagementInfo(selectedPost)
+					}
+				}
+			}
 		}
 	}
 	return m, nil
@@ -310,8 +335,57 @@ func (m Model) View() string {
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render(author))
 
-				// Toggle between content and URL
-				if m.showingURL && post.ObjectURI != "" {
+				// Show engagement info if toggled
+				if m.showingEngagement {
+					var engagementText strings.Builder
+					hasContent := false
+
+					if len(m.engagementLikers) > 0 {
+						hasContent = true
+						engagementText.WriteString("⭐ Liked by:\n")
+						for idx, liker := range m.engagementLikers {
+							if idx < 10 { // Limit to first 10
+								engagementText.WriteString(fmt.Sprintf("  @%s\n", liker))
+							}
+						}
+						if len(m.engagementLikers) > 10 {
+							engagementText.WriteString(fmt.Sprintf("  ...and %d more\n", len(m.engagementLikers)-10))
+						}
+					}
+
+					if len(m.engagementBoosters) > 0 {
+						hasContent = true
+						if len(m.engagementLikers) > 0 {
+							engagementText.WriteString("\n")
+						}
+						engagementText.WriteString("🔁 Boosted by:\n")
+						for idx, booster := range m.engagementBoosters {
+							if idx < 10 { // Limit to first 10
+								engagementText.WriteString(fmt.Sprintf("  @%s\n", booster))
+							}
+						}
+						if len(m.engagementBoosters) > 10 {
+							engagementText.WriteString(fmt.Sprintf("  ...and %d more\n", len(m.engagementBoosters)-10))
+						}
+					}
+
+					if !hasContent {
+						engagementText.WriteString("No engagement information available yet.\n")
+						engagementText.WriteString("(Likes and boosts by local users will appear here)")
+					}
+
+					engagementText.WriteString("\n\n(Press 'i' to toggle back)")
+
+					contentStyleBg := lipgloss.NewStyle().
+						Background(lipgloss.Color(common.COLOR_ACCENT)).
+						Foreground(lipgloss.Color(common.COLOR_WHITE)).
+						Width(contentWidth)
+					contentFormatted := contentStyleBg.Render(engagementText.String())
+
+					s.WriteString(timeFormatted + "\n")
+					s.WriteString(authorFormatted + "\n")
+					s.WriteString(contentFormatted)
+				} else if m.showingURL && post.ObjectURI != "" {
 					osc8Link := util.FormatClickableURL(post.ObjectURI, common.MaxContentTruncateWidth, "🔗 ")
 					hintText := "(Cmd+click to open, press 'o' to toggle back)"
 
@@ -378,6 +452,12 @@ type postsLoadedMsg struct {
 	posts []domain.HomePost
 }
 
+// engagementInfoMsg is sent when engagement info is loaded
+type engagementInfoMsg struct {
+	likers   []string
+	boosters []string
+}
+
 // loadHomePosts loads the unified home timeline
 func loadHomePosts(accountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
@@ -393,6 +473,34 @@ func loadHomePosts(accountId uuid.UUID) tea.Cmd {
 		}
 
 		return postsLoadedMsg{posts: *posts}
+	}
+}
+
+// loadEngagementInfo loads the list of users who liked and boosted a post
+func loadEngagementInfo(post domain.HomePost) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		var likers []string
+		var boosters []string
+
+		// Fetch likers
+		if post.IsLocal && post.NoteID != uuid.Nil {
+			likers, _ = database.ReadLikersInfoByNoteId(post.NoteID)
+		} else if post.ObjectURI != "" {
+			likers, _ = database.ReadLikersInfoByObjectURI(post.ObjectURI)
+		}
+
+		// Fetch boosters
+		if post.IsLocal && post.NoteID != uuid.Nil {
+			boosters, _ = database.ReadBoostersInfoByNoteId(post.NoteID)
+		} else if post.ObjectURI != "" {
+			boosters, _ = database.ReadBoostersInfoByObjectURI(post.ObjectURI)
+		}
+
+		return engagementInfoMsg{
+			likers:   likers,
+			boosters: boosters,
+		}
 	}
 }
 

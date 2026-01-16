@@ -87,8 +87,16 @@
                         </div>
                         {{if or (gt .Post.LikeCount 0) (gt .Post.BoostCount 0)}}
                         <div class="post-footer">
-                            {{if gt .Post.LikeCount 0}}<span class="like-count"><span class="icon">⭐</span> {{.Post.LikeCount}}</span>{{end}}
-                            {{if gt .Post.BoostCount 0}}<span class="boost-count"><span class="icon">🔁</span> {{.Post.BoostCount}}</span>{{end}}
+                            {{if gt .Post.LikeCount 0}}
+                                <span class="like-count engagement-trigger" data-type="likes" style="cursor: pointer;">
+                                    <span class="icon">⭐</span> {{.Post.LikeCount}}
+                                </span>
+                            {{end}}
+                            {{if gt .Post.BoostCount 0}}
+                                <span class="boost-count engagement-trigger" data-type="boosts" style="cursor: pointer;">
+                                    <span class="icon">🔁</span> {{.Post.BoostCount}}
+                                </span>
+                            {{end}}
                         </div>
                         {{end}}
                     </div>
@@ -120,7 +128,23 @@
                 </div>
             </div>
         </div>
+
+        <!-- Engagement Modal -->
+        <div id="engagement-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <span class="modal-close">&times;</span>
+                <h3 id="modal-title"></h3>
+                <div id="modal-body"></div>
+            </div>
+        </div>
+
         <script>
+            // Engagement data
+            const engagementData = {
+                likers: [{{if .Post.Likers}}{{range $index, $user := .Post.Likers}}{{if $index}}, {{end}}"{{$user}}"{{end}}{{end}}],
+                boosters: [{{if .Post.Boosters}}{{range $index, $user := .Post.Boosters}}{{if $index}}, {{end}}"{{$user}}"{{end}}{{end}}]
+            };
+
             // Mobile toggle handler
             const sidebar = document.querySelector(".sidebar");
             const toggleBtn = document.querySelector(".toggle-btn");
@@ -143,6 +167,73 @@
                     }
                 });
             }
+
+            // Engagement modal handler
+            const modal = document.getElementById("engagement-modal");
+            const modalClose = document.querySelector(".modal-close");
+            const modalTitle = document.getElementById("modal-title");
+            const modalBody = document.getElementById("modal-body");
+
+            // Add click handlers to engagement triggers
+            document.querySelectorAll(".engagement-trigger").forEach(trigger => {
+                trigger.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    const type = trigger.dataset.type;
+                    
+                    if (type === "likes") {
+                        showEngagement("Liked by", engagementData.likers);
+                    } else if (type === "boosts") {
+                        showEngagement("Boosted by", engagementData.boosters);
+                    }
+                });
+            });
+
+            function showEngagement(title, users) {
+                modalTitle.textContent = title;
+                
+                if (users && users.length > 0) {
+                    const userList = users.map(user => {
+                        let displayName, userUrl;
+                        
+                        // Check if this is a remote user (contains @domain)
+                        const parts = user.split("@").filter(p => p); // Remove empty strings
+                        if (parts.length === 2) {
+                            // Remote user: username@domain
+                            displayName = `@${user}`;
+                            userUrl = `https://${parts[1]}/@${parts[0]}`;
+                        } else {
+                            // Local user
+                            displayName = `@${user}`;
+                            userUrl = `/u/${user}`;
+                        }
+                        
+                        return `<div class="engagement-user"><a href="${userUrl}" class="user-link" target="_blank" rel="noopener noreferrer">${displayName}</a></div>`;
+                    }).join("");
+                    modalBody.innerHTML = userList;
+                } else {
+                    modalBody.innerHTML = "<p>No engagement information available yet.</p>";
+                }
+                
+                modal.style.display = "flex";
+            }
+
+            // Close modal handlers
+            modalClose.addEventListener("click", () => {
+                modal.style.display = "none";
+            });
+
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) {
+                    modal.style.display = "none";
+                }
+            });
+
+            // Close modal on escape key
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape" && modal.style.display === "flex") {
+                    modal.style.display = "none";
+                }
+            });
         </script>
     </body>
 </html>

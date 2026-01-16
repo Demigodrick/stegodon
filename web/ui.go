@@ -64,10 +64,12 @@ type PostView struct {
 	Message      string
 	MessageHTML  template.HTML // HTML-rendered message with clickable links
 	TimeAgo      string
-	InReplyToURI string // URI of parent post if this is a reply
-	ReplyCount   int    // Number of replies to this post
-	LikeCount    int    // Number of likes on this post
-	BoostCount   int    // Number of boosts on this post
+	InReplyToURI string   // URI of parent post if this is a reply
+	ReplyCount   int      // Number of replies to this post
+	LikeCount    int      // Number of likes on this post
+	BoostCount   int      // Number of boosts on this post
+	Likers       []string // Usernames who liked this post
+	Boosters     []string // Usernames who boosted this post
 }
 
 // convertMarkdownToHTML converts markdown text to HTML
@@ -439,6 +441,10 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		replyCount = count
 	}
 
+	// Get engagement info (who liked and boosted this post)
+	likers, _ := database.ReadLikersInfoByNoteId(noteId)
+	boosters, _ := database.ReadBoostersInfoByNoteId(noteId)
+
 	post := PostView{
 		NoteId:       note.Id.String(),
 		Username:     note.CreatedBy,
@@ -449,6 +455,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		ReplyCount:   replyCount,
 		LikeCount:    note.LikeCount,
 		BoostCount:   note.BoostCount,
+		Likers:       likers,
+		Boosters:     boosters,
 	}
 
 	// Check if this is a reply and fetch parent post

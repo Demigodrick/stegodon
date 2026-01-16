@@ -3658,3 +3658,131 @@ func (db *DB) ToggleInfoBoxEnabled(id uuid.UUID) error {
 		return err
 	})
 }
+
+// ============================================================================
+// Engagement Info (Likers and Boosters)
+// ============================================================================
+
+// ReadLikersInfoByNoteId returns a list of usernames who liked a local note (local and remote users)
+func (db *DB) ReadLikersInfoByNoteId(noteId uuid.UUID) ([]string, error) {
+	rows, err := db.db.Query(`
+		SELECT DISTINCT 
+			CASE 
+				WHEN a.username IS NOT NULL THEN a.username
+				WHEN ra.username IS NOT NULL THEN ra.username || '@' || ra.domain
+				ELSE 'unknown'
+			END as display_name
+		FROM likes l
+		LEFT JOIN accounts a ON a.id = l.account_id
+		LEFT JOIN remote_accounts ra ON ra.id = l.account_id
+		WHERE l.note_id = ?
+		ORDER BY display_name ASC`,
+		noteId.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var usernames []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			continue
+		}
+		usernames = append(usernames, username)
+	}
+	return usernames, nil
+}
+
+// ReadLikersInfoByObjectURI returns a list of usernames who liked a remote post (local and remote users)
+func (db *DB) ReadLikersInfoByObjectURI(objectURI string) ([]string, error) {
+	rows, err := db.db.Query(`
+		SELECT DISTINCT 
+			CASE 
+				WHEN a.username IS NOT NULL THEN a.username
+				WHEN ra.username IS NOT NULL THEN ra.username || '@' || ra.domain
+				ELSE 'unknown'
+			END as display_name
+		FROM likes l
+		LEFT JOIN accounts a ON a.id = l.account_id
+		LEFT JOIN remote_accounts ra ON ra.id = l.account_id
+		WHERE l.object_uri = ?
+		ORDER BY display_name ASC`,
+		objectURI)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var usernames []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			continue
+		}
+		usernames = append(usernames, username)
+	}
+	return usernames, nil
+}
+
+// ReadBoostersInfoByNoteId returns a list of usernames who boosted a local note (local and remote users)
+func (db *DB) ReadBoostersInfoByNoteId(noteId uuid.UUID) ([]string, error) {
+	rows, err := db.db.Query(`
+		SELECT DISTINCT 
+			CASE 
+				WHEN a.username IS NOT NULL THEN a.username
+				WHEN ra.username IS NOT NULL THEN ra.username || '@' || ra.domain
+				ELSE 'unknown'
+			END as display_name
+		FROM boosts b
+		LEFT JOIN accounts a ON a.id = b.account_id
+		LEFT JOIN remote_accounts ra ON ra.id = b.account_id
+		WHERE b.note_id = ?
+		ORDER BY display_name ASC`,
+		noteId.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var usernames []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			continue
+		}
+		usernames = append(usernames, username)
+	}
+	return usernames, nil
+}
+
+// ReadBoostersInfoByObjectURI returns a list of usernames who boosted a remote post (local and remote users)
+func (db *DB) ReadBoostersInfoByObjectURI(objectURI string) ([]string, error) {
+	rows, err := db.db.Query(`
+		SELECT DISTINCT 
+			CASE 
+				WHEN a.username IS NOT NULL THEN a.username
+				WHEN ra.username IS NOT NULL THEN ra.username || '@' || ra.domain
+				ELSE 'unknown'
+			END as display_name
+		FROM boosts b
+		LEFT JOIN accounts a ON a.id = b.account_id
+		LEFT JOIN remote_accounts ra ON ra.id = b.account_id
+		WHERE b.object_uri = ?
+		ORDER BY display_name ASC`,
+		objectURI)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var usernames []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			continue
+		}
+		usernames = append(usernames, username)
+	}
+	return usernames, nil
+}

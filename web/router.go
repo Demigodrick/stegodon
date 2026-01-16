@@ -86,6 +86,36 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 		HandleTagFeed(c, conf)
 	})
 
+	// API endpoint for engagement data
+	g.GET("/api/engagement/:noteid/:type", func(c *gin.Context) {
+		noteIdStr := c.Param("noteid")
+		engagementType := c.Param("type")
+
+		noteId, err := uuid.Parse(noteIdStr)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid note ID"})
+			return
+		}
+
+		database := db.GetDB()
+		var users []string
+
+		if engagementType == "likes" {
+			users, _ = database.ReadLikersInfoByNoteId(noteId)
+		} else if engagementType == "boosts" {
+			users, _ = database.ReadBoostersInfoByNoteId(noteId)
+		} else {
+			c.JSON(400, gin.H{"error": "Invalid engagement type"})
+			return
+		}
+
+		if users == nil {
+			users = []string{}
+		}
+
+		c.JSON(200, gin.H{"users": users})
+	})
+
 	// RSS Feed
 	g.GET("/feed", func(c *gin.Context) {
 
