@@ -287,10 +287,10 @@ func TestUpdate_ViewNotification_WithLocalNote(t *testing.T) {
 
 func TestUpdate_ViewNotification_WithRemoteNote(t *testing.T) {
 	model := InitialModel(uuid.New(), 100, 40)
-	noteId := uuid.New()
 	createdAt := time.Now()
 
-	// Add a notification from a remote user
+	// Add a notification from a remote user about a remote note
+	// Remote notes don't have a local NoteId (they're not in our notes table)
 	model.Notifications = []domain.Notification{
 		{
 			Id:               uuid.New(),
@@ -298,7 +298,7 @@ func TestUpdate_ViewNotification_WithRemoteNote(t *testing.T) {
 			NotificationType: domain.NotificationMention,
 			ActorUsername:    "bob",
 			ActorDomain:      "remote.social", // Remote user
-			NoteId:           noteId,
+			NoteId:           uuid.Nil,        // No local ID for remote note
 			NoteURI:          "https://remote.social/note/456",
 			NotePreview:      "Mentioning you here!",
 			Read:             false,
@@ -325,8 +325,9 @@ func TestUpdate_ViewNotification_WithRemoteNote(t *testing.T) {
 	if viewMsg.Author != expectedAuthor {
 		t.Errorf("Expected Author '%s', got %s", expectedAuthor, viewMsg.Author)
 	}
+	// Remote note has no NoteId, so IsLocal should be false
 	if viewMsg.IsLocal {
-		t.Errorf("Expected IsLocal false for remote note")
+		t.Errorf("Expected IsLocal false for remote note (no NoteId)")
 	}
 	if viewMsg.NoteURI != "https://remote.social/note/456" {
 		t.Errorf("Expected NoteURI 'https://remote.social/note/456', got %s", viewMsg.NoteURI)
