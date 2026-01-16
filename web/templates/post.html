@@ -69,8 +69,16 @@
                             </div>
                             {{if or (gt .ParentPost.ReplyCount 0) (gt .ParentPost.LikeCount 0) (gt .ParentPost.BoostCount 0)}}
                             <div class="post-footer">
-                                {{if gt .ParentPost.LikeCount 0}}<span class="like-count"><span class="icon">⭐</span> {{.ParentPost.LikeCount}}</span>{{end}}
-                                {{if gt .ParentPost.BoostCount 0}}<span class="boost-count"><span class="icon">🔁</span> {{.ParentPost.BoostCount}}</span>{{end}}
+                                {{if gt .ParentPost.LikeCount 0}}
+                                    <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.ParentPost.NoteId}}" style="cursor: pointer;">
+                                        <span class="icon">⭐</span> {{.ParentPost.LikeCount}}
+                                    </span>
+                                {{end}}
+                                {{if gt .ParentPost.BoostCount 0}}
+                                    <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.ParentPost.NoteId}}" style="cursor: pointer;">
+                                        <span class="icon">🔁</span> {{.ParentPost.BoostCount}}
+                                    </span>
+                                {{end}}
                                 {{if gt .ParentPost.ReplyCount 0}}<a href="/u/{{.ParentPost.Username}}/{{.ParentPost.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ParentPost.ReplyCount}}</a>{{end}}
                             </div>
                             {{end}}
@@ -116,8 +124,16 @@
                             </div>
                             {{if or (gt .ReplyCount 0) (gt .LikeCount 0) (gt .BoostCount 0)}}
                             <div class="post-footer">
-                                {{if gt .LikeCount 0}}<span class="like-count"><span class="icon">⭐</span> {{.LikeCount}}</span>{{end}}
-                                {{if gt .BoostCount 0}}<span class="boost-count"><span class="icon">🔁</span> {{.BoostCount}}</span>{{end}}
+                                {{if gt .LikeCount 0}}
+                                    <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                        <span class="icon">⭐</span> {{.LikeCount}}
+                                    </span>
+                                {{end}}
+                                {{if gt .BoostCount 0}}
+                                    <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                        <span class="icon">🔁</span> {{.BoostCount}}
+                                    </span>
+                                {{end}}
                                 {{if gt .ReplyCount 0}}<a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
                             </div>
                             {{end}}
@@ -176,17 +192,61 @@
 
             // Add click handlers to engagement triggers
             document.querySelectorAll(".engagement-trigger").forEach(trigger => {
-                trigger.addEventListener("click", (e) => {
+                trigger.addEventListener("click", async (e) => {
                     e.preventDefault();
                     const type = trigger.dataset.type;
+                    const noteId = trigger.dataset.noteId;
                     
-                    if (type === "likes") {
-                        showEngagement("Liked by", engagementData.likers);
-                    } else if (type === "boosts") {
-                        showEngagement("Boosted by", engagementData.boosters);
+                    // If this trigger has a note ID, fetch data via API (parent/reply posts)
+                    // Otherwise use embedded data (main post)
+                    if (noteId) {
+                        await showEngagementFromAPI(type === "likes" ? "Liked by" : "Boosted by", noteId, type);
+                    } else {
+                        if (type === "likes") {
+                            showEngagement("Liked by", engagementData.likers);
+                        } else if (type === "boosts") {
+                            showEngagement("Boosted by", engagementData.boosters);
+                        }
                     }
                 });
             });
+
+            async function showEngagementFromAPI(title, noteId, type) {
+                modalTitle.textContent = title;
+                modalBody.innerHTML = "Loading...";
+                modal.style.display = "flex";
+                
+                try {
+                    const response = await fetch(`/api/engagement/${noteId}/${type}`);
+                    const data = await response.json();
+                    
+                    if (data.users && data.users.length > 0) {
+                        const userList = data.users.map(user => {
+                            let displayName, userUrl;
+                            
+                            // Check if this is a remote user (contains @domain)
+                            const parts = user.split("@").filter(p => p);
+                            if (parts.length === 2) {
+                                // Remote user: username@domain
+                                displayName = `@${user}`;
+                                userUrl = `https://${parts[1]}/@${parts[0]}`;
+                            } else {
+                                // Local user
+                                displayName = `@${user}`;
+                                userUrl = `/u/${user}`;
+                            }
+                            
+                            return `<div class="engagement-user"><a href="${userUrl}" class="user-link" target="_blank" rel="noopener noreferrer">${displayName}</a></div>`;
+                        }).join("");
+                        modalBody.innerHTML = userList;
+                    } else {
+                        modalBody.innerHTML = "<p>No engagement information available yet.</p>";
+                    }
+                } catch (error) {
+                    modalBody.innerHTML = "<p>Error loading engagement information.</p>";
+                    console.error("Error fetching engagement:", error);
+                }
+            }
 
             function showEngagement(title, users) {
                 modalTitle.textContent = title;
