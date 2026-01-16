@@ -288,6 +288,164 @@ func TestUploadTokenResult(t *testing.T) {
 	}
 }
 
+func TestRefreshAccountResult(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+
+	// Test successful refresh with new avatar
+	updatedAcc := &domain.Account{
+		Id:          acc.Id,
+		Username:    acc.Username,
+		DisplayName: "Updated Name",
+		Summary:     "Updated bio",
+		AvatarURL:   "/avatars/test-avatar.png",
+		CreatedAt:   acc.CreatedAt,
+	}
+
+	model, _ = model.Update(refreshAccountResultMsg{account: updatedAcc})
+
+	if model.Account.AvatarURL != "/avatars/test-avatar.png" {
+		t.Error("Avatar URL should be updated after refresh")
+	}
+	if model.Account.DisplayName != "Updated Name" {
+		t.Error("Display name should be updated after refresh")
+	}
+	if model.Status == "" {
+		t.Error("Status should show refresh success message")
+	}
+
+	// Test error refresh result
+	model2 := InitialModel(acc)
+	model2.ViewState = AvatarView
+	model2, _ = model2.Update(refreshAccountResultMsg{err: errTestError{}})
+	if model2.Error == "" {
+		t.Error("Error should be set on refresh error")
+	}
+}
+
+func TestAvatarViewShowsCurrentAvatar(t *testing.T) {
+	acc := createTestAccount()
+	acc.AvatarURL = "/avatars/my-avatar.png"
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+
+	view := model.View()
+	if !contains(view, "/avatars/my-avatar.png") {
+		t.Error("Avatar view should show current avatar URL")
+	}
+}
+
+func TestAvatarViewShowsDefaultWhenNoAvatar(t *testing.T) {
+	acc := createTestAccount()
+	acc.AvatarURL = ""
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+
+	view := model.View()
+	if !contains(view, "(default)") {
+		t.Error("Avatar view should show '(default)' when no avatar is set")
+	}
+}
+
+func TestUploadTokenStartsPolling(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+
+	// Simulate receiving upload token
+	model, cmd := model.Update(uploadTokenResultMsg{token: "test-token"})
+
+	if !model.isPolling {
+		t.Error("Should start polling after receiving upload token")
+	}
+	if model.originalAvatarURL != "" {
+		t.Error("Original avatar URL should be tracked (empty in this case)")
+	}
+	if cmd == nil {
+		t.Error("Should return a command to start polling")
+	}
+}
+
+func TestAutoRefreshDetectsUploadComplete(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+	model.isPolling = true
+	model.uploadToken = "test-token"
+	model.uploadURL = "http://example.com/upload/test-token"
+
+	// Simulate token being consumed (upload completed)
+	model, cmd := model.Update(checkTokenResultMsg{tokenExists: false})
+
+	if model.isPolling {
+		t.Error("Should stop polling after upload detected")
+	}
+	if model.uploadToken != "" {
+		t.Error("Upload token should be cleared")
+	}
+	if model.uploadURL != "" {
+		t.Error("Upload URL should be cleared")
+	}
+	if model.Status != "File successfully uploaded!" {
+		t.Errorf("Expected success status, got: %s", model.Status)
+	}
+	if cmd == nil {
+		t.Error("Should return command to refresh account")
+	}
+}
+
+func TestTokenStillExistsContinuesPolling(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+	model.isPolling = true
+	model.uploadToken = "test-token"
+
+	// Token still exists - upload not complete
+	model, cmd := model.Update(checkTokenResultMsg{tokenExists: true})
+
+	if !model.isPolling {
+		t.Error("Should continue polling when token exists")
+	}
+	if model.uploadToken == "" {
+		t.Error("Upload token should not be cleared")
+	}
+	if cmd == nil {
+		t.Error("Should return command to continue polling")
+	}
+}
+
+func TestEscapeStopsPolling(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = AvatarView
+	model.isPolling = true
+	model.uploadURL = "http://example.com/upload/token"
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if model.isPolling {
+		t.Error("Should stop polling when pressing Escape")
+	}
+	if model.ViewState != MenuView {
+		t.Error("Should return to menu view")
+	}
+}
+
+func TestPollTickOnlyPollsWhenActive(t *testing.T) {
+	acc := createTestAccount()
+	model := InitialModel(acc)
+	model.ViewState = MenuView // Not in avatar view
+	model.isPolling = true
+
+	_, cmd := model.Update(avatarPollTickMsg{})
+
+	if cmd != nil {
+		t.Error("Should not poll when not in avatar view")
+	}
+}
+
 // Helper error type for testing
 type errTestError struct{}
 

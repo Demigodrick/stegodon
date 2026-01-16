@@ -81,8 +81,11 @@ type Model struct {
 	bioInput         textinput.Model
 
 	// Avatar upload
-	uploadToken string
-	uploadURL   string
+	uploadToken       string
+	uploadURL         string
+	uploadExpiresAt   time.Time // When the upload token expires
+	originalAvatarURL string    // Track original to detect changes
+	isPolling         bool      // Whether we're polling for avatar changes
 
 	// Config for URLs
 	conf *util.AppConfig
@@ -165,13 +168,64 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case uploadTokenResultMsg:
 		if msg.err != nil {
 			m.Error = fmt.Sprintf("Failed to create upload link: %v", msg.err)
+			return m, nil
+		}
+
+		m.uploadToken = msg.token
+		m.uploadExpiresAt = msg.expiresAt
+		m.originalAvatarURL = m.Account.AvatarURL // Track current avatar to detect changes
+		m.isPolling = true                        // Start polling for changes
+		if m.conf != nil && m.conf.Conf.SslDomain != "" {
+			m.uploadURL = fmt.Sprintf("https://%s/upload/%s", m.conf.Conf.SslDomain, msg.token)
 		} else {
-			m.uploadToken = msg.token
-			if m.conf != nil && m.conf.Conf.SslDomain != "" {
-				m.uploadURL = fmt.Sprintf("https://%s/upload/%s", m.conf.Conf.SslDomain, msg.token)
-			} else {
-				m.uploadURL = fmt.Sprintf("http://localhost:%d/upload/%s", m.conf.Conf.HttpPort, msg.token)
+			m.uploadURL = fmt.Sprintf("http://localhost:%d/upload/%s", m.conf.Conf.HttpPort, msg.token)
+		}
+
+		if !msg.isNew {
+			m.Status = "Using existing upload link"
+		}
+		return m, tea.Batch(avatarPollTickCmd(), clearStatusAfter(3*time.Second)) // Start polling
+
+	case refreshAccountResultMsg:
+		if msg.err != nil {
+			m.Error = fmt.Sprintf("Failed to refresh account: %v", msg.err)
+		} else {
+			m.Account = msg.account
+			// Update text inputs with new values
+			m.displayNameInput.SetValue(msg.account.DisplayName)
+			m.bioInput.SetValue(msg.account.Summary)
+			// Only show "refreshed" message if manually triggered (not polling)
+			if m.Status == "" {
+				m.Status = "Account refreshed!"
+				return m, clearStatusAfter(3 * time.Second)
 			}
+		}
+		return m, nil
+
+	case avatarPollTickMsg:
+		// Only poll if we're still in avatar view and polling is active
+		if m.ViewState == AvatarView && m.isPolling && m.uploadToken != "" {
+			return m, checkTokenExistsCmd(m.uploadToken)
+		}
+		return m, nil
+
+	case checkTokenResultMsg:
+		if msg.err != nil {
+			// Error checking token, continue polling
+			return m, avatarPollTickCmd()
+		}
+		if !msg.tokenExists && m.isPolling {
+			// Token was consumed - upload completed!
+			m.isPolling = false
+			m.uploadToken = ""
+			m.uploadURL = ""
+			m.Status = "File successfully uploaded!"
+			// Refresh account to get new avatar URL
+			return m, tea.Batch(refreshAccountCmd(m.Account.Id), clearStatusAfter(5*time.Second))
+		}
+		// Token still exists, continue polling
+		if m.isPolling {
+			return m, avatarPollTickCmd()
 		}
 		return m, nil
 
@@ -284,6 +338,7 @@ func (m Model) updateAvatar(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.ViewState = MenuView
 		m.uploadToken = ""
 		m.uploadURL = ""
+		m.isPolling = false // Stop polling when leaving avatar view
 		return m, nil
 	case "g", "G":
 		// Generate upload link
@@ -432,18 +487,38 @@ func (m Model) renderAvatar() string {
 
 	s.WriteString("Change Avatar\n\n")
 
+	// Show current avatar status
+	if m.Account.AvatarURL != "" {
+		s.WriteString(fmt.Sprintf("Current avatar: %s\n\n", m.Account.AvatarURL))
+	} else {
+		s.WriteString("Current avatar: (default)\n\n")
+	}
+
 	if m.uploadURL != "" {
 		s.WriteString("Open this link in your browser to upload an image:\n\n")
 		s.WriteString(linkStyle.Render(m.uploadURL))
 		s.WriteString("\n\n")
-		s.WriteString(instructionStyle.Render("Link expires in 10 minutes"))
+
+		// Show remaining time
+		remaining := time.Until(m.uploadExpiresAt)
+		if remaining > 0 {
+			minutes := int(remaining.Minutes())
+			seconds := int(remaining.Seconds()) % 60
+			s.WriteString(instructionStyle.Render(fmt.Sprintf("Link expires in %d:%02d", minutes, seconds)))
+		} else {
+			s.WriteString(warningStyle.Render("Link expired - press 'g' to generate a new one"))
+		}
+		s.WriteString("\n")
+		if m.isPolling && remaining > 0 {
+			s.WriteString(successStyle.Render("Waiting for upload... (auto-refreshing)"))
+		}
 	} else {
 		s.WriteString("Press 'g' to generate an upload link.\n")
 		s.WriteString("The link will allow you to upload an avatar image from your browser.\n")
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(instructionStyle.Render("Press 'g' to generate link, Esc to go back"))
+	s.WriteString(instructionStyle.Render("'g' generate link • Esc go back"))
 
 	return s.String()
 }
@@ -493,8 +568,22 @@ type updateProfileResultMsg struct {
 }
 
 type uploadTokenResultMsg struct {
-	token string
-	err   error
+	token     string
+	expiresAt time.Time
+	isNew     bool // true if newly created, false if reusing existing
+	err       error
+}
+
+type refreshAccountResultMsg struct {
+	account *domain.Account
+	err     error
+}
+
+type avatarPollTickMsg struct{}
+
+type checkTokenResultMsg struct {
+	tokenExists bool
+	err         error
 }
 
 // Commands
@@ -539,7 +628,19 @@ func updateProfileCmd(accountId uuid.UUID, field, value string) tea.Cmd {
 
 func createUploadTokenCmd(accountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
-		// Generate random token
+		database := db.GetDB()
+
+		// Check for existing valid token first
+		existingToken, expiresAt, err := database.GetExistingUploadToken(accountId, "avatar")
+		if err != nil {
+			return uploadTokenResultMsg{err: err}
+		}
+		if existingToken != "" {
+			// Return existing token
+			return uploadTokenResultMsg{token: existingToken, expiresAt: expiresAt, isNew: false}
+		}
+
+		// Generate new random token
 		tokenBytes := make([]byte, 32)
 		if _, err := rand.Read(tokenBytes); err != nil {
 			return uploadTokenResultMsg{err: err}
@@ -547,12 +648,42 @@ func createUploadTokenCmd(accountId uuid.UUID) tea.Cmd {
 		token := hex.EncodeToString(tokenBytes)
 
 		// Store in database with expiry
-		database := db.GetDB()
-		err := database.CreateUploadToken(accountId, token, "avatar", 10*time.Minute)
+		expiresIn := 10 * time.Minute
+		err = database.CreateUploadToken(accountId, token, "avatar", expiresIn)
 		if err != nil {
 			return uploadTokenResultMsg{err: err}
 		}
 
-		return uploadTokenResultMsg{token: token}
+		return uploadTokenResultMsg{token: token, expiresAt: time.Now().Add(expiresIn), isNew: true}
+	}
+}
+
+func refreshAccountCmd(accountId uuid.UUID) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err, account := database.ReadAccById(accountId)
+		if err != nil {
+			return refreshAccountResultMsg{err: err}
+		}
+		return refreshAccountResultMsg{account: account}
+	}
+}
+
+func avatarPollTickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return avatarPollTickMsg{}
+	})
+}
+
+func checkTokenExistsCmd(token string) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		// Try to validate the token - if it fails, the token was consumed or expired
+		_, _, err := database.ValidateUploadToken(token)
+		if err != nil {
+			// Token doesn't exist or expired - upload likely completed
+			return checkTokenResultMsg{tokenExists: false, err: nil}
+		}
+		return checkTokenResultMsg{tokenExists: true, err: nil}
 	}
 }

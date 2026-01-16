@@ -276,6 +276,27 @@ func (db *DB) CleanupExpiredUploadTokens() error {
 	})
 }
 
+// GetExistingUploadToken returns an existing valid token for an account, or empty string if none exists
+func (db *DB) GetExistingUploadToken(accountId uuid.UUID, tokenType string) (string, time.Time, error) {
+	var token, expiresAtStr string
+	row := db.db.QueryRow(`SELECT token, expires_at FROM upload_tokens WHERE account_id = ? AND token_type = ? AND expires_at > ?`,
+		accountId.String(), tokenType, time.Now().Format(time.RFC3339))
+	err := row.Scan(&token, &expiresAtStr)
+	if err == sql.ErrNoRows {
+		return "", time.Time{}, nil // No existing token
+	}
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	return token, expiresAt, nil
+}
+
 func (db *DB) ReadAccBySession(s ssh.Session) (error, *domain.Account) {
 	publicKeyToString := util.PublicKeyToString(s.PublicKey())
 	var tempAcc domain.Account

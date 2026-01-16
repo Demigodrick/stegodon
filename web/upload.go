@@ -299,11 +299,26 @@ func ServeAvatar(c *gin.Context, conf *util.AppConfig) {
 		return
 	}
 
-	filepath := filepath.Join(avatarsDir, filename)
+	avatarPath := filepath.Join(avatarsDir, filename)
 
-	// Check if file exists
-	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+	// Check if file exists and get modification time
+	fileInfo, err := os.Stat(avatarPath)
+	if os.IsNotExist(err) {
 		c.Status(404)
+		return
+	}
+	if err != nil {
+		c.Status(500)
+		return
+	}
+
+	// Generate ETag based on modification time and size
+	modTime := fileInfo.ModTime()
+	etag := fmt.Sprintf(`"%x-%x"`, modTime.Unix(), fileInfo.Size())
+
+	// Check If-None-Match header for cache validation
+	if match := c.GetHeader("If-None-Match"); match == etag {
+		c.Status(304) // Not Modified
 		return
 	}
 
@@ -316,8 +331,10 @@ func ServeAvatar(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	c.Header("Content-Type", contentType)
-	c.Header("Cache-Control", "public, max-age=3600") // Cache for 1 hour
-	c.File(filepath)
+	c.Header("Cache-Control", "no-cache") // Always revalidate with server
+	c.Header("ETag", etag)
+	c.Header("Last-Modified", modTime.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
+	c.File(avatarPath)
 }
 
 // isValidAvatarFilename checks if the filename is a valid avatar filename
