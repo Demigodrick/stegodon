@@ -1,6 +1,7 @@
 package hometimeline
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -596,4 +597,423 @@ func TestUpdate_EmptyPosts_NoCrash(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 
 	// Should complete without panic
+}
+
+// ============================================================================
+// Engagement Info Tests (i key functionality)
+// ============================================================================
+
+func TestUpdate_ToggleEngagementInfo_WithEngagement(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post",
+			ObjectURI:  "https://example.com/notes/1",
+			IsLocal:    true,
+			LikeCount:  5,
+			BoostCount: 3,
+		},
+	}
+	m.Selected = 0
+
+	// Toggle engagement info on
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if !m.showingEngagement {
+		t.Error("Expected showingEngagement true after 'i' key")
+	}
+	if cmd == nil {
+		t.Error("Expected command to load engagement info")
+	}
+
+	// Toggle engagement info off
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if m.showingEngagement {
+		t.Error("Expected showingEngagement false after second 'i' key")
+	}
+}
+
+func TestUpdate_ToggleEngagementInfo_NoEngagement(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post with no engagement",
+			ObjectURI:  "https://example.com/notes/1",
+			IsLocal:    true,
+			LikeCount:  0,
+			BoostCount: 0,
+		},
+	}
+	m.Selected = 0
+
+	// Try to toggle engagement info on post without engagement
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if m.showingEngagement {
+		t.Error("Expected showingEngagement to remain false for post without engagement")
+	}
+	if cmd != nil {
+		t.Error("Expected no command for post without engagement")
+	}
+}
+
+func TestUpdate_EngagementInfoMsg(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	
+	likers := []string{"alice", "bob@mastodon.social", "charlie"}
+	boosters := []string{"dave", "eve@fosstodon.org"}
+	
+	m, cmd := m.Update(engagementInfoMsg{
+		likers:   likers,
+		boosters: boosters,
+	})
+	
+	if cmd != nil {
+		t.Error("Expected no command from engagementInfoMsg")
+	}
+	
+	if len(m.engagementLikers) != 3 {
+		t.Errorf("Expected 3 likers, got %d", len(m.engagementLikers))
+	}
+	if len(m.engagementBoosters) != 2 {
+		t.Errorf("Expected 2 boosters, got %d", len(m.engagementBoosters))
+	}
+	
+	if m.engagementLikers[0] != "alice" {
+		t.Errorf("Expected first liker 'alice', got '%s'", m.engagementLikers[0])
+	}
+	if m.engagementLikers[1] != "bob@mastodon.social" {
+		t.Errorf("Expected second liker 'bob@mastodon.social', got '%s'", m.engagementLikers[1])
+	}
+	if m.engagementBoosters[0] != "dave" {
+		t.Errorf("Expected first booster 'dave', got '%s'", m.engagementBoosters[0])
+	}
+	if m.engagementBoosters[1] != "eve@fosstodon.org" {
+		t.Errorf("Expected second booster 'eve@fosstodon.org', got '%s'", m.engagementBoosters[1])
+	}
+}
+
+func TestUpdate_NavigationResetsEngagementInfo(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser1",
+			Content:    "Post 1",
+			LikeCount:  5,
+			BoostCount: 3,
+		},
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser2",
+			Content:    "Post 2",
+			LikeCount:  2,
+			BoostCount: 1,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true // Set engagement info as visible
+	
+	// Navigate down
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	
+	if m.showingEngagement {
+		t.Error("Expected showingEngagement reset to false after navigation")
+	}
+	if m.Selected != 1 {
+		t.Errorf("Expected Selected 1, got %d", m.Selected)
+	}
+	
+	// Set engagement visible again
+	m.showingEngagement = true
+	
+	// Navigate up
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	
+	if m.showingEngagement {
+		t.Error("Expected showingEngagement reset to false after up navigation")
+	}
+}
+
+func TestUpdate_EngagementInfo_OnlyLikes(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Post with only likes",
+			LikeCount:  5,
+			BoostCount: 0,
+		},
+	}
+	m.Selected = 0
+	
+	// Should work with only likes
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if !m.showingEngagement {
+		t.Error("Expected showingEngagement true for post with likes only")
+	}
+	if cmd == nil {
+		t.Error("Expected command to load engagement info")
+	}
+}
+
+func TestUpdate_EngagementInfo_OnlyBoosts(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Post with only boosts",
+			LikeCount:  0,
+			BoostCount: 3,
+		},
+	}
+	m.Selected = 0
+	
+	// Should work with only boosts
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if !m.showingEngagement {
+		t.Error("Expected showingEngagement true for post with boosts only")
+	}
+	if cmd == nil {
+		t.Error("Expected command to load engagement info")
+	}
+}
+
+func TestUpdate_EngagementInfo_EmptyPosts(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.Posts = []domain.HomePost{}
+	
+	// Should not crash with empty posts
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	
+	if m.showingEngagement {
+		t.Error("Expected showingEngagement false with empty posts")
+	}
+	if cmd != nil {
+		t.Error("Expected no command with empty posts")
+	}
+}
+
+func TestView_EngagementInfoDisplay(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post",
+			Time:       time.Now(),
+			LikeCount:  3,
+			BoostCount: 2,
+			IsLocal:    true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true
+	m.engagementLikers = []string{"alice", "bob@mastodon.social", "charlie"}
+	m.engagementBoosters = []string{"dave", "eve@fosstodon.org"}
+	
+	view := m.View()
+	
+	if !strings.Contains(view, "⭐ Liked by:") {
+		t.Error("Expected 'Liked by:' section in view")
+	}
+	if !strings.Contains(view, "🔁 Boosted by:") {
+		t.Error("Expected 'Boosted by:' section in view")
+	}
+	if !strings.Contains(view, "@alice") {
+		t.Error("Expected '@alice' in likers")
+	}
+	if !strings.Contains(view, "@bob@mastodon.social") {
+		t.Error("Expected '@bob@mastodon.social' in likers")
+	}
+	if !strings.Contains(view, "@dave") {
+		t.Error("Expected '@dave' in boosters")
+	}
+	if !strings.Contains(view, "@eve@fosstodon.org") {
+		t.Error("Expected '@eve@fosstodon.org' in boosters")
+	}
+	if !strings.Contains(view, "(Press 'i' to toggle back)") {
+		t.Error("Expected toggle hint in view")
+	}
+}
+
+func TestView_EngagementInfoDisplay_OnlyLikers(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:    uuid.New(),
+			Author:    "testuser",
+			Content:   "Test post",
+			Time:      time.Now(),
+			LikeCount: 2,
+			IsLocal:   true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true
+	m.engagementLikers = []string{"alice", "bob"}
+	m.engagementBoosters = []string{} // No boosters
+	
+	view := m.View()
+	
+	if !strings.Contains(view, "⭐ Liked by:") {
+		t.Error("Expected 'Liked by:' section in view")
+	}
+	if strings.Contains(view, "🔁 Boosted by:") {
+		t.Error("Did not expect 'Boosted by:' section when no boosters")
+	}
+	if !strings.Contains(view, "@alice") {
+		t.Error("Expected '@alice' in likers")
+	}
+}
+
+func TestView_EngagementInfoDisplay_OnlyBoosters(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post",
+			Time:       time.Now(),
+			BoostCount: 2,
+			IsLocal:    true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true
+	m.engagementLikers = []string{} // No likers
+	m.engagementBoosters = []string{"dave", "eve"}
+	
+	view := m.View()
+	
+	if strings.Contains(view, "⭐ Liked by:") {
+		t.Error("Did not expect 'Liked by:' section when no likers")
+	}
+	if !strings.Contains(view, "🔁 Boosted by:") {
+		t.Error("Expected 'Boosted by:' section in view")
+	}
+	if !strings.Contains(view, "@dave") {
+		t.Error("Expected '@dave' in boosters")
+	}
+}
+
+func TestView_EngagementInfoDisplay_NoData(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post",
+			Time:       time.Now(),
+			LikeCount:  1, // Has count but no data yet
+			BoostCount: 1,
+			IsLocal:    true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true
+	m.engagementLikers = []string{}   // Empty - data not loaded yet
+	m.engagementBoosters = []string{} // Empty - data not loaded yet
+	
+	view := m.View()
+	
+	if !strings.Contains(view, "No engagement information available yet") {
+		t.Error("Expected 'No engagement information available yet' message")
+	}
+	if !strings.Contains(view, "(Likes and boosts by local users will appear here)") {
+		t.Error("Expected fallback explanation message")
+	}
+}
+
+func TestView_EngagementInfoDisplay_ManyUsers(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Popular post",
+			Time:       time.Now(),
+			LikeCount:  15,
+			BoostCount: 12,
+			IsLocal:    true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = true
+	
+	// Create list of 15 likers
+	m.engagementLikers = make([]string, 15)
+	for i := 0; i < 15; i++ {
+		m.engagementLikers[i] = fmt.Sprintf("user%d", i+1)
+	}
+	
+	// Create list of 12 boosters
+	m.engagementBoosters = make([]string, 12)
+	for i := 0; i < 12; i++ {
+		m.engagementBoosters[i] = fmt.Sprintf("booster%d", i+1)
+	}
+	
+	view := m.View()
+	
+	// Should show first 10 likers + "and X more" message
+	if !strings.Contains(view, "...and 5 more") {
+		t.Error("Expected '...and 5 more' for likers")
+	}
+	
+	// Should show first 10 boosters + "and X more" message
+	if !strings.Contains(view, "...and 2 more") {
+		t.Error("Expected '...and 2 more' for boosters")
+	}
+	
+	// Verify we see the first users but not the ones beyond 10
+	if !strings.Contains(view, "@user1") {
+		t.Error("Expected '@user1' in view")
+	}
+	if !strings.Contains(view, "@user10") {
+		t.Error("Expected '@user10' in view")
+	}
+	if strings.Contains(view, "@user11") {
+		t.Error("Did not expect '@user11' (should be truncated)")
+	}
+}
+
+func TestView_EngagementInfo_NotShowing(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "example.com")
+	m.Posts = []domain.HomePost{
+		{
+			NoteID:     uuid.New(),
+			Author:     "testuser",
+			Content:    "Test post",
+			Time:       time.Now(),
+			LikeCount:  3,
+			BoostCount: 2,
+			IsLocal:    true,
+		},
+	}
+	m.Selected = 0
+	m.showingEngagement = false // Not showing
+	m.engagementLikers = []string{"alice", "bob"}
+	m.engagementBoosters = []string{"charlie"}
+	
+	view := m.View()
+	
+	// Should show normal content, not engagement info
+	if strings.Contains(view, "⭐ Liked by:") {
+		t.Error("Did not expect 'Liked by:' when not showing engagement")
+	}
+	if strings.Contains(view, "🔁 Boosted by:") {
+		t.Error("Did not expect 'Boosted by:' when not showing engagement")
+	}
+	if !strings.Contains(view, "Test post") {
+		t.Error("Expected normal content to be displayed")
+	}
 }

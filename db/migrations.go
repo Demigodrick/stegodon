@@ -99,6 +99,7 @@ const (
 	sqlCreateBoostsIndices = `
 		CREATE INDEX IF NOT EXISTS idx_boosts_note_id ON boosts(note_id);
 		CREATE INDEX IF NOT EXISTS idx_boosts_account_id ON boosts(account_id);
+		CREATE INDEX IF NOT EXISTS idx_boosts_object_uri ON boosts(object_uri);
 	`
 
 	// Delivery queue table
@@ -399,6 +400,12 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 	// Add unique index for remote post likes (account_id + object_uri)
 	// This allows one like per account per remote post (identified by object_uri)
 	tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_account_object_uri ON likes(account_id, object_uri) WHERE object_uri IS NOT NULL AND object_uri != ''")
+
+	// Add object_uri column to boosts table for remote post boosts
+	tx.Exec("ALTER TABLE boosts ADD COLUMN object_uri TEXT")
+
+	// Add unique index for remote post boosts (account_id + object_uri)
+	tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_boosts_account_object_uri ON boosts(account_id, object_uri) WHERE object_uri IS NOT NULL AND object_uri != ''")
 
 	// Add follow_uri column to relays table for proper Undo Follow
 	tx.Exec("ALTER TABLE relays ADD COLUMN follow_uri TEXT")
