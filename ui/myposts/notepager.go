@@ -224,7 +224,7 @@ func (m Model) View() string {
 				// Render each line with the background and inverted text colors
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr + engagementStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
+				contentFormatted := selectedBg.Render(selectedContentStyle.Render(messageWithLinksAndHashtags))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")
@@ -236,7 +236,7 @@ func (m Model) View() string {
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr + engagementStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(messageWithLinksAndHashtags))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")

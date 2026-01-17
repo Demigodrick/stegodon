@@ -407,7 +407,7 @@ func (m Model) View() string {
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
 					highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
 
-					contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+					contentFormatted := selectedBg.Render(selectedContentStyle.Render(highlightedContent))
 					s.WriteString(timeFormatted + "\n")
 					s.WriteString(authorFormatted + "\n")
 					s.WriteString(contentFormatted)
@@ -433,7 +433,7 @@ func (m Model) View() string {
 				}
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(highlightedContent))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")

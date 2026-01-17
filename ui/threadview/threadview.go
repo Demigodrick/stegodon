@@ -809,7 +809,7 @@ func (m Model) View() string {
 					Width(itemWidth)
 				contentFormatted = contentStyleBg.Render(osc8Link + "\n\n" + hintText)
 			} else {
-				contentFormatted = selectedBg.Render(selectedReplyContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+				contentFormatted = selectedBg.Render(selectedReplyContentStyle.Render(highlightedContent))
 			}
 
 			// Build the post block
@@ -832,7 +832,7 @@ func (m Model) View() string {
 			}
 
 			timeFormatted := unselectedStyle.Render(parentTimeStyle.Render(timeStr))
-			contentFormatted := unselectedStyle.Render(parentContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+			contentFormatted := unselectedStyle.Render(parentContentStyle.Render(highlightedContent))
 
 			// Build the post block
 			postBlock := timeFormatted + "\n" + authorFormatted + "\n" + contentFormatted
