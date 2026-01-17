@@ -121,10 +121,15 @@
                     <div class="replies-section">
                         <h3 class="replies-header">Replies ({{len .Replies}})</h3>
                         {{range .Replies}}
-                        <div class="post reply-post">
+                        <div class="post reply-post{{if .IsRemote}} remote-reply{{end}}">
                             <div class="post-meta">
+                                {{if .IsRemote}}
+                                <a href="{{.ProfileURL}}" class="post-author remote-author" target="_blank" rel="noopener">@{{.Username}}@{{.UserDomain}} 🌐</a>
+                                {{if .PostURL}}<a href="{{.PostURL}}" class="post-permalink" target="_blank" rel="noopener" title="View on {{.UserDomain}}">#</a>{{end}}
+                                {{else}}
                                 <a href="/u/{{.Username}}" class="post-author">@{{.Username}}</a>
                                 <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                                {{end}}
                             </div>
                             <div class="post-content">
                                 <p class="post-time">{{.TimeAgo}}</p>
@@ -142,7 +147,13 @@
                                         <span class="icon">🔁</span> {{.BoostCount}}
                                     </span>
                                 {{end}}
-                                {{if gt .ReplyCount 0}}<a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
+                                {{if gt .ReplyCount 0}}
+                                    {{if .IsRemote}}
+                                    {{if .PostURL}}<a href="{{.PostURL}}" class="reply-count" target="_blank" rel="noopener"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
+                                    {{else}}
+                                    <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>
+                                    {{end}}
+                                {{end}}
                             </div>
                             {{end}}
                         </div>

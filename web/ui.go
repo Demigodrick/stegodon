@@ -1,10 +1,13 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/deemkeen/stegodon/db"
@@ -65,15 +68,20 @@ type UserView struct {
 type PostView struct {
 	NoteId       string
 	Username     string
+	UserDomain   string        // Domain for remote users (empty for local)
+	ProfileURL   string        // Full profile URL
+	PostURL      string        // Permalink to the post (remote object_uri or local path)
+	IsRemote     bool          // True if federated user
 	Message      string
 	MessageHTML  template.HTML // HTML-rendered message with clickable links
 	TimeAgo      string
-	InReplyToURI string   // URI of parent post if this is a reply
-	ReplyCount   int      // Number of replies to this post
-	LikeCount    int      // Number of likes on this post
-	BoostCount   int      // Number of boosts on this post
-	Likers       []string // Usernames who liked this post
-	Boosters     []string // Usernames who boosted this post
+	CreatedAt    time.Time     // For chronological sorting
+	InReplyToURI string        // URI of parent post if this is a reply
+	ReplyCount   int           // Number of replies to this post
+	LikeCount    int           // Number of likes on this post
+	BoostCount   int           // Number of boosts on this post
+	Likers       []string      // Usernames who liked this post
+	Boosters     []string      // Usernames who boosted this post
 }
 
 // convertMarkdownToHTML converts markdown text to HTML
@@ -117,6 +125,79 @@ func formatTimeAgo(t time.Time) string {
 	} else {
 		return t.Format("Jan 2, 2006")
 	}
+}
+
+// parseActivityContentForWeb extracts content and author info from an activity for web display
+// Returns content, username, domain, profileURL
+func parseActivityContentForWeb(activity *domain.Activity, database *db.DB) (content, username, userDomain, profileURL string) {
+	// Default to actor URI as fallback
+	username = activity.ActorURI
+	userDomain = ""
+	profileURL = activity.ActorURI
+
+	// Try to get better author info from cached remote account
+	err, remoteAcc := database.ReadRemoteAccountByActorURI(activity.ActorURI)
+	if err == nil && remoteAcc != nil {
+		username = remoteAcc.Username
+		userDomain = remoteAcc.Domain
+		profileURL = fmt.Sprintf("https://%s/@%s", remoteAcc.Domain, remoteAcc.Username)
+	} else {
+		// Parse username and domain from actor URI as fallback
+		// Format: https://domain.com/users/username or https://domain.com/@username
+		if strings.Contains(activity.ActorURI, "/users/") {
+			parts := strings.Split(activity.ActorURI, "/users/")
+			if len(parts) == 2 {
+				domainPart := strings.TrimPrefix(parts[0], "https://")
+				userDomain = domainPart
+				username = parts[1]
+				profileURL = fmt.Sprintf("https://%s/@%s", domainPart, parts[1])
+			}
+		} else if strings.Contains(activity.ActorURI, "/@") {
+			parts := strings.Split(activity.ActorURI, "/@")
+			if len(parts) == 2 {
+				domainPart := strings.TrimPrefix(parts[0], "https://")
+				userDomain = domainPart
+				username = parts[1]
+			}
+		}
+	}
+
+	// Parse content from raw JSON
+	if activity.RawJSON != "" {
+		var activityWrapper struct {
+			Type   string `json:"type"`
+			Object struct {
+				ID      string `json:"id"`
+				Content string `json:"content"`
+			} `json:"object"`
+		}
+
+		if err := json.Unmarshal([]byte(activity.RawJSON), &activityWrapper); err == nil {
+			content = util.StripHTMLTags(activityWrapper.Object.Content)
+		}
+	}
+
+	return content, username, userDomain, profileURL
+}
+
+// countTotalRepliesForWeb counts both local and remote replies to a note
+// When ActivityPub is enabled, it also counts remote activities that reply to this note
+func countTotalRepliesForWeb(database *db.DB, noteId uuid.UUID, sslDomain string, withAp bool) int {
+	// Count local replies first
+	localCount := 0
+	if count, err := database.CountRepliesByNoteId(noteId); err == nil {
+		localCount = count
+	}
+
+	// If ActivityPub is enabled, also count remote replies
+	if withAp && sslDomain != "" {
+		canonicalURI := fmt.Sprintf("https://%s/notes/%s", sslDomain, noteId.String())
+		if remoteCount, err := database.CountActivitiesByInReplyTo(canonicalURI); err == nil {
+			localCount += remoteCount
+		}
+	}
+
+	return localCount
 }
 
 // loadServerMessageForWeb returns the server message if web_enabled is true
@@ -190,11 +271,8 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
-		// Get reply count for this post
-		replyCount := 0
-		if count, err := database.CountRepliesByNoteId(note.Id); err == nil {
-			replyCount = count
-		}
+		// Get reply count for this post (including remote replies when AP is enabled)
+		replyCount := countTotalRepliesForWeb(database, note.Id, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 		posts = append(posts, PostView{
 			NoteId:      note.Id.String(),
@@ -318,11 +396,8 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
-		// Get reply count for this post
-		replyCount := 0
-		if count, err := database.CountRepliesByNoteId(note.Id); err == nil {
-			replyCount = count
-		}
+		// Get reply count for this post (including remote replies when AP is enabled)
+		replyCount := countTotalRepliesForWeb(database, note.Id, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 		posts = append(posts, PostView{
 			NoteId:      note.Id.String(),
@@ -460,11 +535,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 	messageHTML = util.HighlightHashtagsHTML(messageHTML)
 	messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
-	// Get reply count for this post
-	replyCount := 0
-	if count, err := database.CountRepliesByNoteId(noteId); err == nil {
-		replyCount = count
-	}
+	// Get reply count for this post (including remote replies when AP is enabled)
+	replyCount := countTotalRepliesForWeb(database, noteId, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 	// Get engagement info (who liked and boosted this post)
 	likers, _ := database.ReadLikersInfoByNoteId(noteId)
@@ -494,11 +566,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 			parentMessageHTML = util.HighlightHashtagsHTML(parentMessageHTML)
 			parentMessageHTML = util.HighlightMentionsHTML(parentMessageHTML, conf.Conf.SslDomain)
 
-			// Get reply count for parent post
-			parentReplyCount := 0
-			if count, err := database.CountRepliesByNoteId(parentNote.Id); err == nil {
-				parentReplyCount = count
-			}
+			// Get reply count for parent post (including remote replies when AP is enabled)
+			parentReplyCount := countTotalRepliesForWeb(database, parentNote.Id, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 			parentPost = &PostView{
 				NoteId:      parentNote.Id.String(),
@@ -522,11 +591,8 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 			replyMessageHTML = util.HighlightHashtagsHTML(replyMessageHTML)
 			replyMessageHTML = util.HighlightMentionsHTML(replyMessageHTML, conf.Conf.SslDomain)
 
-			// Get reply count for this reply
-			replyReplyCount := 0
-			if count, err := database.CountRepliesByNoteId(replyNote.Id); err == nil {
-				replyReplyCount = count
-			}
+			// Get reply count for this reply (including remote replies when AP is enabled)
+			replyReplyCount := countTotalRepliesForWeb(database, replyNote.Id, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 			replies = append(replies, PostView{
 				NoteId:      replyNote.Id.String(),
@@ -534,11 +600,75 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 				Message:     replyNote.Message,
 				MessageHTML: template.HTML(replyMessageHTML),
 				TimeAgo:     formatTimeAgo(replyNote.CreatedAt),
+				CreatedAt:   replyNote.CreatedAt,
 				ReplyCount:  replyReplyCount,
 				LikeCount:   replyNote.LikeCount,
 				BoostCount:  replyNote.BoostCount,
+				IsRemote:    false,
 			})
 		}
+	}
+
+	// Fetch remote replies from activities table (when ActivityPub is enabled)
+	if conf.Conf.WithAp {
+		// Build the canonical URI for this note
+		canonicalURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, noteId.String())
+		localActorPrefix := fmt.Sprintf("https://%s/users/", conf.Conf.SslDomain)
+
+		err, remoteReplies := database.ReadActivitiesByInReplyTo(canonicalURI)
+		if err == nil && remoteReplies != nil {
+			for _, activity := range *remoteReplies {
+				// Skip if this is from a local user (already shown as local reply)
+				if strings.HasPrefix(activity.ActorURI, localActorPrefix) {
+					continue
+				}
+
+				// Skip if this activity is a duplicate of a local note
+				if activity.ObjectURI != "" {
+					dupErr, existingNote := database.ReadNoteByURI(activity.ObjectURI)
+					if dupErr == nil && existingNote != nil {
+						continue
+					}
+				}
+
+				// Parse content and author info from activity
+				replyContent, replyUsername, replyDomain, replyProfileURL := parseActivityContentForWeb(&activity, database)
+
+				// Process content for display
+				replyMessageHTML := util.MarkdownLinksToHTML(replyContent)
+				replyMessageHTML = util.HighlightHashtagsHTML(replyMessageHTML)
+				replyMessageHTML = util.HighlightMentionsHTML(replyMessageHTML, conf.Conf.SslDomain)
+
+				// Get reply count for this remote reply (using object URI)
+				replyReplyCount := 0
+				if activity.ObjectURI != "" {
+					if count, countErr := database.CountRepliesByURI(activity.ObjectURI); countErr == nil {
+						replyReplyCount = count
+					}
+				}
+
+				replies = append(replies, PostView{
+					NoteId:      activity.Id.String(),
+					Username:    replyUsername,
+					UserDomain:  replyDomain,
+					ProfileURL:  replyProfileURL,
+					PostURL:     activity.ObjectURI,
+					IsRemote:    true,
+					Message:     replyContent,
+					MessageHTML: template.HTML(replyMessageHTML),
+					TimeAgo:     formatTimeAgo(activity.CreatedAt),
+					CreatedAt:   activity.CreatedAt,
+					ReplyCount:  replyReplyCount,
+					LikeCount:   activity.LikeCount,
+					BoostCount:  activity.BoostCount,
+				})
+			}
+		}
+
+		// Sort all replies chronologically
+		sort.Slice(replies, func(i, j int) bool {
+			return replies[i].CreatedAt.Before(replies[j].CreatedAt)
+		})
 	}
 
 	// Load info boxes
@@ -622,11 +752,8 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
-		// Get reply count for this post
-		replyCount := 0
-		if count, err := database.CountRepliesByNoteId(note.Id); err == nil {
-			replyCount = count
-		}
+		// Get reply count for this post (including remote replies when AP is enabled)
+		replyCount := countTotalRepliesForWeb(database, note.Id, conf.Conf.SslDomain, conf.Conf.WithAp)
 
 		posts = append(posts, PostView{
 			NoteId:      note.Id.String(),

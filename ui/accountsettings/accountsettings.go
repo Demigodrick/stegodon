@@ -496,7 +496,14 @@ func (m Model) renderAvatar() string {
 
 	if m.uploadURL != "" {
 		s.WriteString("Open this link in your browser to upload an image:\n\n")
+		// Use OSC 8 hyperlink escape sequence so the entire URL is clickable even when wrapped
+		// Format: ESC]8;;URL ST DISPLAY_TEXT ESC]8;; ST (where ST = ESC \ or BEL)
+		// Put escape sequences outside lipgloss styling to avoid interference
+		s.WriteString("\x1b]8;;")
+		s.WriteString(m.uploadURL)
+		s.WriteString("\x1b\\")
 		s.WriteString(linkStyle.Render(m.uploadURL))
+		s.WriteString("\x1b]8;;\x1b\\")
 		s.WriteString("\n\n")
 
 		// Show remaining time

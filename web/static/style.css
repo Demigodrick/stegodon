@@ -850,3 +850,20 @@ h2 {
   text-align: center;
   padding: 20px;
 }
+
+/* Remote reply styling */
+.remote-reply {
+  border-left-color: #4a90a4;
+}
+
+.remote-reply:hover {
+  border-left-color: #5fafff;
+}
+
+.remote-author {
+  color: #4a90a4;
+}
+
+.remote-author:hover {
+  color: #5fafff;
+}

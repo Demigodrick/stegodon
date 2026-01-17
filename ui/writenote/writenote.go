@@ -404,7 +404,6 @@ func loadServerMessage() tea.Cmd {
 			log.Printf("Failed to load server message: %v", err)
 			return serverMessageLoadedMsg{message: nil}
 		}
-		log.Printf("Server message loaded: enabled=%v, message='%s'", msg.Enabled, msg.Message)
 		return serverMessageLoadedMsg{message: msg}
 	}
 }
@@ -424,11 +423,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case serverMessageLoadedMsg:
 		m.serverMessage = msg.message
-		if msg.message != nil {
-			log.Printf("Server message received in Update: enabled=%v, message='%s'", msg.message.Enabled, msg.message.Message)
-		} else {
-			log.Printf("Server message received in Update: message is nil")
-		}
 		return m, nil
 
 	case common.EditNoteMsg:
@@ -846,13 +840,7 @@ func (m Model) View() string {
 
 	// Add server message if enabled
 	serverMessageSection := ""
-	log.Printf("View render - serverMessage nil? %v", m.serverMessage == nil)
-	if m.serverMessage != nil {
-		log.Printf("View render - serverMessage: enabled=%v, message='%s', len=%d",
-			m.serverMessage.Enabled, m.serverMessage.Message, len(m.serverMessage.Message))
-	}
 	if m.serverMessage != nil && m.serverMessage.Enabled && m.serverMessage.Message != "" {
-		log.Printf("View render - SHOWING server message")
 		serverMsgStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(common.COLOR_WARNING)).
 			Bold(true).
@@ -863,8 +851,6 @@ func (m Model) View() string {
 				Foreground(lipgloss.Color(common.COLOR_MUTED)).
 				PaddingLeft(5).
 				Render(m.serverMessage.Message)
-	} else {
-		log.Printf("View render - NOT showing server message")
 	}
 
 	return fmt.Sprintf("%s\n\n%s%s%s%s%s\n\n%s%s", caption, replyContext, styledTextarea, autocompletePopup, linkIndicator, errorSection, charsLeft, serverMessageSection)

@@ -3936,7 +3936,8 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 	if webEnabled {
 		webEnabledInt = 1
 	}
-	result, err := db.db.Exec(sqlUpdateServerMessage, message, enabledInt, webEnabledInt, time.Now())
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	result, err := db.db.Exec(sqlUpdateServerMessage, message, enabledInt, webEnabledInt, timestamp)
 	if err != nil {
 		return err
 	}
@@ -3949,7 +3950,7 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 
 	// If no rows affected, insert new row
 	if rowsAffected == 0 {
-		_, err = db.db.Exec(sqlInsertServerMessage, message, enabledInt, webEnabledInt, time.Now())
+		_, err = db.db.Exec(sqlInsertServerMessage, message, enabledInt, webEnabledInt, timestamp)
 	}
 	return err
 }
