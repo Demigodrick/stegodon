@@ -379,45 +379,45 @@ func TestHomeTimelineStaysActiveWhenVisible(t *testing.T) {
 	model := NewModel(account, 100, 30)
 
 	testCases := []struct {
-		name     string
-		oldState common.SessionState
-		newState common.SessionState
+		name                 string
+		oldState             common.SessionState
+		newState             common.SessionState
 		shouldSendDeactivate bool
 	}{
 		{
-			name:     "CreateNote to HomeTimeline (both show timeline)",
-			oldState: common.CreateNoteView,
-			newState: common.HomeTimelineView,
+			name:                 "CreateNote to HomeTimeline (both show timeline)",
+			oldState:             common.CreateNoteView,
+			newState:             common.HomeTimelineView,
 			shouldSendDeactivate: false, // Timeline stays active
 		},
 		{
-			name:     "HomeTimeline to CreateNote (both show timeline)",
-			oldState: common.HomeTimelineView,
-			newState: common.CreateNoteView,
+			name:                 "HomeTimeline to CreateNote (both show timeline)",
+			oldState:             common.HomeTimelineView,
+			newState:             common.CreateNoteView,
 			shouldSendDeactivate: false, // Timeline stays active
 		},
 		{
-			name:     "HomeTimeline to MyPosts (timeline hidden)",
-			oldState: common.HomeTimelineView,
-			newState: common.MyPostsView,
+			name:                 "HomeTimeline to MyPosts (timeline hidden)",
+			oldState:             common.HomeTimelineView,
+			newState:             common.MyPostsView,
 			shouldSendDeactivate: true, // Timeline should deactivate
 		},
 		{
-			name:     "CreateNote to MyPosts (timeline hidden)",
-			oldState: common.CreateNoteView,
-			newState: common.MyPostsView,
+			name:                 "CreateNote to MyPosts (timeline hidden)",
+			oldState:             common.CreateNoteView,
+			newState:             common.MyPostsView,
 			shouldSendDeactivate: true, // Timeline should deactivate
 		},
 		{
-			name:     "MyPosts to HomeTimeline (timeline visible)",
-			oldState: common.MyPostsView,
-			newState: common.HomeTimelineView,
+			name:                 "MyPosts to HomeTimeline (timeline visible)",
+			oldState:             common.MyPostsView,
+			newState:             common.HomeTimelineView,
 			shouldSendDeactivate: false, // Timeline activates (was inactive)
 		},
 		{
-			name:     "MyPosts to CreateNote (timeline visible)",
-			oldState: common.MyPostsView,
-			newState: common.CreateNoteView,
+			name:                 "MyPosts to CreateNote (timeline visible)",
+			oldState:             common.MyPostsView,
+			newState:             common.CreateNoteView,
 			shouldSendDeactivate: false, // Timeline activates (was inactive)
 		},
 	}

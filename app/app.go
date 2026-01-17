@@ -22,11 +22,11 @@ import (
 
 // App represents the main application with all its servers and dependencies
 type App struct {
-	config              *util.AppConfig
-	sshServer           *ssh.Server
-	httpServer          *http.Server
-	done                chan os.Signal
-	stopDeliveryWorker  func() // Stop function for ActivityPub delivery worker
+	config             *util.AppConfig
+	sshServer          *ssh.Server
+	httpServer         *http.Server
+	done               chan os.Signal
+	stopDeliveryWorker func() // Stop function for ActivityPub delivery worker
 }
 
 // New creates a new App instance with the given configuration

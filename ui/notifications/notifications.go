@@ -63,29 +63,29 @@ type followResultMsg struct {
 func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		
+
 		// Check if already following
 		isFollowing, err := database.IsFollowingLocal(followerId, targetId)
 		if err != nil {
 			return followResultMsg{username: "user", err: err}
 		}
-		
+
 		if isFollowing {
 			return followResultMsg{username: "user", err: fmt.Errorf("already following")}
 		}
-		
+
 		// Create follow
 		err = database.CreateLocalFollow(followerId, targetId)
 		if err != nil {
 			return followResultMsg{username: "user", err: err}
 		}
-		
+
 		// Get target username for success message
 		err, targetUser := database.ReadAccById(targetId)
 		username := "user"
 		if err == nil && targetUser != nil {
 			username = "@" + targetUser.Username
-			
+
 			// Create notification for the followed user
 			err, follower := database.ReadAccById(followerId)
 			if err == nil && follower != nil {
@@ -104,7 +104,7 @@ func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 				}
 			}
 		}
-		
+
 		return followResultMsg{username: username, err: nil}
 	}
 }
@@ -113,7 +113,7 @@ func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 func followRemoteUserCmd(accountId uuid.UUID, username, domain string) tea.Cmd {
 	return func() tea.Msg {
 		fullUsername := fmt.Sprintf("%s@%s", username, domain)
-		
+
 		// Get local account
 		database := db.GetDB()
 		err, localAccount := database.ReadAccById(accountId)
@@ -253,7 +253,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					var noteURI string
 					var noteID uuid.UUID
 					var isLocal bool
-					
+
 					if notif.NoteId != uuid.Nil {
 						// Local note - get from notes table
 						isLocal = true
@@ -299,7 +299,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 							log.Printf("[Notifications] Failed to load remote activity %s: %v", notif.NoteURI, err)
 						}
 					}
-					
+
 					// Fallback to notification data if database lookup failed
 					if noteCreatedAt.IsZero() {
 						noteCreatedAt = notif.CreatedAt
@@ -327,10 +327,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 						noteID = notif.NoteId
 						log.Printf("[Notifications] Using notification NoteId: %s", noteID)
 					}
-					
-					log.Printf("[Notifications] ViewThreadMsg: URI=%s, ID=%s, IsLocal=%v, Author=%s", 
+
+					log.Printf("[Notifications] ViewThreadMsg: URI=%s, ID=%s, IsLocal=%v, Author=%s",
 						noteURI, noteID, isLocal, noteAuthor)
-					
+
 					// Send ViewThreadMsg to navigate to the post
 					return m, func() tea.Msg {
 						return common.ViewThreadMsg{
@@ -348,7 +348,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Follow user back
 			if m.Selected < len(m.Notifications) {
 				notif := m.Notifications[m.Selected]
-				
+
 				// Determine if local or remote
 				if notif.ActorDomain == "" {
 					// Local user

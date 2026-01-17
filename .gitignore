@@ -9,3 +9,4 @@
 .ngrok_domain
 /remote
 coverage.out
+/dist/

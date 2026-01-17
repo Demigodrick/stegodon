@@ -96,7 +96,7 @@ type Model struct {
 	isActive     bool
 	loading      bool
 	errorMessage string
-	showingURL   bool   // Track if URL is displayed instead of content for selected post
+	showingURL   bool // Track if URL is displayed instead of content for selected post
 	// Fields to support reloading
 	parentNoteID    uuid.UUID // Local note ID (for local notes)
 	parentIsLocal   bool      // Whether the parent is a local note

@@ -235,29 +235,29 @@ type followResultMsg struct {
 func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		
+
 		// Check if already following
 		isFollowing, err := database.IsFollowingLocal(followerId, targetId)
 		if err != nil {
 			return followResultMsg{username: "user", err: err}
 		}
-		
+
 		if isFollowing {
 			return followResultMsg{username: "user", err: fmt.Errorf("already following")}
 		}
-		
+
 		// Create follow
 		err = database.CreateLocalFollow(followerId, targetId)
 		if err != nil {
 			return followResultMsg{username: "user", err: err}
 		}
-		
+
 		// Get target username for success message
 		err, targetUser := database.ReadAccById(targetId)
 		username := "user"
 		if err == nil && targetUser != nil {
 			username = "@" + targetUser.Username
-			
+
 			// Create notification for the followed user
 			err, follower := database.ReadAccById(followerId)
 			if err == nil && follower != nil {
@@ -276,7 +276,7 @@ func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 				}
 			}
 		}
-		
+
 		return followResultMsg{username: username, err: nil}
 	}
 }
@@ -285,15 +285,15 @@ func followLocalUserCmd(followerId, targetId uuid.UUID) tea.Cmd {
 func followRemoteUserByIdCmd(localAccountId, remoteAccountId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		
+
 		// Get remote account details
 		err, remoteAcc := database.ReadRemoteAccountById(remoteAccountId)
 		if err != nil {
 			return followResultMsg{username: "remote user", err: err}
 		}
-		
+
 		fullUsername := fmt.Sprintf("%s@%s", remoteAcc.Username, remoteAcc.Domain)
-		
+
 		// Get local account
 		err, localAccount := database.ReadAccById(localAccountId)
 		if err != nil {

@@ -11,10 +11,10 @@ import (
 	"github.com/deemkeen/stegodon/activitypub"
 	"github.com/deemkeen/stegodon/db"
 	"github.com/deemkeen/stegodon/domain"
+	"github.com/deemkeen/stegodon/ui/accountsettings"
 	"github.com/deemkeen/stegodon/ui/admin"
 	"github.com/deemkeen/stegodon/ui/common"
 	"github.com/deemkeen/stegodon/ui/createuser"
-	"github.com/deemkeen/stegodon/ui/accountsettings"
 	"github.com/deemkeen/stegodon/ui/followers"
 	"github.com/deemkeen/stegodon/ui/following"
 	"github.com/deemkeen/stegodon/ui/followuser"
@@ -41,25 +41,25 @@ var (
 )
 
 type MainModel struct {
-	width              int
-	height             int
-	config             *util.AppConfig
-	headerModel        header.Model
-	account            domain.Account
-	state              common.SessionState
-	newUserModel       createuser.Model
-	createModel        writenote.Model
-	myPostsModel       myposts.Model
-	followModel        followuser.Model
-	followersModel     followers.Model
-	followingModel     following.Model
-	homeTimelineModel  hometimeline.Model
-	localUsersModel    localusers.Model
-	adminModel         admin.Model
-	relayModel         relay.Model
+	width                int
+	height               int
+	config               *util.AppConfig
+	headerModel          header.Model
+	account              domain.Account
+	state                common.SessionState
+	newUserModel         createuser.Model
+	createModel          writenote.Model
+	myPostsModel         myposts.Model
+	followModel          followuser.Model
+	followersModel       followers.Model
+	followingModel       following.Model
+	homeTimelineModel    hometimeline.Model
+	localUsersModel      localusers.Model
+	adminModel           admin.Model
+	relayModel           relay.Model
 	accountSettingsModel accountsettings.Model
-	threadViewModel    threadview.Model
-	notificationsModel notifications.Model
+	threadViewModel      threadview.Model
+	notificationsModel   notifications.Model
 }
 
 type userUpdateErrorMsg struct {

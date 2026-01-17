@@ -135,7 +135,7 @@ func ReadConf() (*AppConfig, error) {
 			if v > 300 {
 				log.Printf("STEGODON_MAX_CHARS value %d exceeds maximum of 300, capping at 300", v)
 				c.Conf.MaxChars = 300
-			// Catch less then 1 character in config.	
+				// Catch less then 1 character in config.
 			} else if v < 1 {
 				log.Printf("STEGODON_MAX_CHARS value %d is less than minimum of 1, setting to default 150", v)
 				c.Conf.MaxChars = 150

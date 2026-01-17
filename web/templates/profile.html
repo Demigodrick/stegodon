@@ -36,7 +36,7 @@
                 <div class="sidebar-header">
                     <h1><span class="emoji">🦣</span> stegodon</h1>
                     <span class="version">v{{.Version}}</span>
-                    <span class="toggle-btn">☰</span>
+                    <span class="toggle-btn"><span></span><span></span><span></span></span>
                 </div>
 
                 {{range .InfoBoxes}}
@@ -48,6 +48,8 @@
                 </div>
                 {{end}}
             </div>
+
+            <div class="sidebar-backdrop"></div>
 
             <div class="main-content">
                 <div class="content-wrapper">
@@ -147,24 +149,28 @@
             // Mobile toggle handler
             const sidebar = document.querySelector(".sidebar");
             const toggleBtn = document.querySelector(".toggle-btn");
+            const backdrop = document.querySelector(".sidebar-backdrop");
 
             if (toggleBtn) {
                 // Toggle sidebar on button click
                 toggleBtn.addEventListener("click", (e) => {
                     e.stopPropagation();
                     sidebar.classList.toggle("minimized");
+                    const isOpen = !sidebar.classList.contains("minimized");
+                    if (backdrop) {
+                        backdrop.classList.toggle("active", isOpen);
+                    }
+                    document.body.classList.toggle("menu-open", isOpen);
                 });
 
-                // Close sidebar when clicking outside (only on mobile)
-                document.addEventListener("click", (e) => {
-                    if (
-                        window.innerWidth <= 768 &&
-                        !sidebar.contains(e.target) &&
-                        !sidebar.classList.contains("minimized")
-                    ) {
+                // Close sidebar when clicking backdrop
+                if (backdrop) {
+                    backdrop.addEventListener("click", () => {
                         sidebar.classList.add("minimized");
-                    }
-                });
+                        backdrop.classList.remove("active");
+                        document.body.classList.remove("menu-open");
+                    });
+                }
             }
 
             // Engagement modal handler

@@ -41,15 +41,15 @@ const (
                         web_public_key text,
                         web_private_key text
                         )`
-	sqlInsertUser            = `INSERT INTO accounts(id, username, publickey, web_public_key, web_private_key, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-	sqlUpdateLoginUser           = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE publickey = ?`
-	sqlUpdateLoginUserById       = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE id = ?`
-	sqlUpdateAccountDisplayName  = `UPDATE accounts SET display_name = ? WHERE id = ?`
-	sqlUpdateAccountSummary      = `UPDATE accounts SET summary = ? WHERE id = ?`
-	sqlUpdateAccountAvatar       = `UPDATE accounts SET avatar_url = ? WHERE id = ?`
-	sqlSelectUserByPublicKey     = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE publickey = ?`
-	sqlSelectUserById        = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE id = ?`
-	sqlSelectUserByUsername  = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE username = ?`
+	sqlInsertUser               = `INSERT INTO accounts(id, username, publickey, web_public_key, web_private_key, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	sqlUpdateLoginUser          = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE publickey = ?`
+	sqlUpdateLoginUserById      = `UPDATE accounts SET first_time_login = 0, username = ?, display_name = ?, summary = ? WHERE id = ?`
+	sqlUpdateAccountDisplayName = `UPDATE accounts SET display_name = ? WHERE id = ?`
+	sqlUpdateAccountSummary     = `UPDATE accounts SET summary = ? WHERE id = ?`
+	sqlUpdateAccountAvatar      = `UPDATE accounts SET avatar_url = ? WHERE id = ?`
+	sqlSelectUserByPublicKey    = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE publickey = ?`
+	sqlSelectUserById           = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE id = ?`
+	sqlSelectUserByUsername     = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE username = ?`
 
 	//Notes
 	sqlCreateNotesTable = `CREATE TABLE IF NOT EXISTS notes(
@@ -3623,13 +3623,13 @@ func (db *DB) DeleteAllNotifications(accountId uuid.UUID) error {
 // ============================================================================
 
 const (
-	sqlSelectAllInfoBoxes    = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes ORDER BY order_num ASC`
+	sqlSelectAllInfoBoxes     = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes ORDER BY order_num ASC`
 	sqlSelectEnabledInfoBoxes = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes WHERE enabled = 1 ORDER BY order_num ASC`
-	sqlSelectInfoBoxById     = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes WHERE id = ?`
-	sqlInsertInfoBox         = `INSERT INTO info_boxes(id, title, content, order_num, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	sqlUpdateInfoBox         = `UPDATE info_boxes SET title = ?, content = ?, order_num = ?, enabled = ?, updated_at = ? WHERE id = ?`
-	sqlDeleteInfoBox         = `DELETE FROM info_boxes WHERE id = ?`
-	sqlToggleInfoBoxEnabled  = `UPDATE info_boxes SET enabled = NOT enabled, updated_at = ? WHERE id = ?`
+	sqlSelectInfoBoxById      = `SELECT id, title, content, order_num, enabled, created_at, updated_at FROM info_boxes WHERE id = ?`
+	sqlInsertInfoBox          = `INSERT INTO info_boxes(id, title, content, order_num, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	sqlUpdateInfoBox          = `UPDATE info_boxes SET title = ?, content = ?, order_num = ?, enabled = ?, updated_at = ? WHERE id = ?`
+	sqlDeleteInfoBox          = `DELETE FROM info_boxes WHERE id = ?`
+	sqlToggleInfoBoxEnabled   = `UPDATE info_boxes SET enabled = NOT enabled, updated_at = ? WHERE id = ?`
 )
 
 // ReadAllInfoBoxes returns all info boxes ordered by order_num
