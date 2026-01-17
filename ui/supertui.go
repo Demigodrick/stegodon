@@ -506,6 +506,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// These are safe from goroutine accumulation
 		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
 		cmds = append(cmds, cmd)
+		m.createModel, cmd = m.createModel.Update(msg)
+		cmds = append(cmds, cmd)
 		m.followModel, cmd = m.followModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
