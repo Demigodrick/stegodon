@@ -139,16 +139,16 @@ func TestServerMessage(t *testing.T) {
 	})
 
 	t.Run("UpdateServerMessage sets updated_at timestamp", func(t *testing.T) {
-		beforeUpdate := time.Now()
-		time.Sleep(10 * time.Millisecond)
+		// Use a 1-second buffer to account for timestamp parsing precision
+		// and potential clock resolution differences
+		beforeUpdate := time.Now().Add(-1 * time.Second)
 
 		err := testDB.UpdateServerMessage("Test timestamp", true, true)
 		if err != nil {
 			t.Fatalf("Failed to update message: %v", err)
 		}
 
-		time.Sleep(10 * time.Millisecond)
-		afterUpdate := time.Now()
+		afterUpdate := time.Now().Add(1 * time.Second)
 
 		err, msg := testDB.ReadServerMessage()
 		if err != nil {
@@ -156,10 +156,10 @@ func TestServerMessage(t *testing.T) {
 		}
 
 		if msg.UpdatedAt.Before(beforeUpdate) {
-			t.Error("UpdatedAt should be after the update started")
+			t.Errorf("UpdatedAt (%v) should be after the update started (%v)", msg.UpdatedAt, beforeUpdate)
 		}
 		if msg.UpdatedAt.After(afterUpdate) {
-			t.Error("UpdatedAt should be before the update completed")
+			t.Errorf("UpdatedAt (%v) should be before the update completed (%v)", msg.UpdatedAt, afterUpdate)
 		}
 	})
 }
