@@ -57,6 +57,12 @@
                         <a href="/u/{{.User.Username}}" class="back-link">← @{{.User.Username}}'s timeline</a>
                     </div>
 
+                    {{if .ServerMessage}}
+                    <div class="server-message">
+                        <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}
+                    </div>
+                    {{end}}
+
                     {{if .ParentPost}}
                     <div class="thread-context">
                         <div class="reply-indicator">In reply to:</div>

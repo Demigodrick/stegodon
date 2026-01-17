@@ -233,6 +233,7 @@ const (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		message TEXT NOT NULL DEFAULT '',
 		enabled INTEGER NOT NULL DEFAULT 0,
+		web_enabled INTEGER NOT NULL DEFAULT 1,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`
 
@@ -257,6 +258,10 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_notes_object_uri ON notes(object_uri);
 		CREATE INDEX IF NOT EXISTS idx_notes_in_reply_to_uri ON notes(in_reply_to_uri);
+	`
+
+	sqlExtendServerMessageTable = `
+		ALTER TABLE server_message ADD COLUMN web_enabled INTEGER NOT NULL DEFAULT 1;
 	`
 )
 
@@ -447,6 +452,9 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 
 	// Add from_relay column to activities table to track relay-forwarded content
 	tx.Exec("ALTER TABLE activities ADD COLUMN from_relay INTEGER DEFAULT 0")
+
+	// Add web_enabled column to server_message table for separate web UI toggle
+	tx.Exec("ALTER TABLE server_message ADD COLUMN web_enabled INTEGER NOT NULL DEFAULT 1")
 
 	log.Println("Extended existing tables with new columns")
 }

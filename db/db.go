@@ -3895,9 +3895,9 @@ func (db *DB) ReadBoostersInfoByObjectURI(objectURI string) ([]string, error) {
 // ============================================================================
 
 const (
-	sqlSelectServerMessage = `SELECT id, message, enabled, updated_at FROM server_message WHERE id = 1`
-	sqlInsertServerMessage = `INSERT OR REPLACE INTO server_message(id, message, enabled, updated_at) VALUES (1, ?, ?, ?)`
-	sqlUpdateServerMessage = `UPDATE server_message SET message = ?, enabled = ?, updated_at = ? WHERE id = 1`
+	sqlSelectServerMessage = `SELECT id, message, enabled, web_enabled, updated_at FROM server_message WHERE id = 1`
+	sqlInsertServerMessage = `INSERT OR REPLACE INTO server_message(id, message, enabled, web_enabled, updated_at) VALUES (1, ?, ?, ?, ?)`
+	sqlUpdateServerMessage = `UPDATE server_message SET message = ?, enabled = ?, web_enabled = ?, updated_at = ? WHERE id = 1`
 )
 
 // ReadServerMessage returns the current server message (single row)
@@ -3905,32 +3905,38 @@ func (db *DB) ReadServerMessage() (error, *domain.ServerMessage) {
 	row := db.db.QueryRow(sqlSelectServerMessage)
 	var msg domain.ServerMessage
 	var updatedAtStr string
-	var enabled int
-	err := row.Scan(&msg.Id, &msg.Message, &enabled, &updatedAtStr)
+	var enabled, webEnabled int
+	err := row.Scan(&msg.Id, &msg.Message, &enabled, &webEnabled, &updatedAtStr)
 	if err == sql.ErrNoRows {
 		// No message exists yet, return empty disabled message
 		return nil, &domain.ServerMessage{
-			Id:        1,
-			Message:   "",
-			Enabled:   false,
-			UpdatedAt: time.Now(),
+			Id:         1,
+			Message:    "",
+			Enabled:    false,
+			WebEnabled: true, // Default to enabled for web
+			UpdatedAt:  time.Now(),
 		}
 	}
 	if err != nil {
 		return err, nil
 	}
 	msg.Enabled = enabled == 1
+	msg.WebEnabled = webEnabled == 1
 	msg.UpdatedAt, _ = parseTimestamp(updatedAtStr)
 	return nil, &msg
 }
 
 // UpdateServerMessage updates the server message (creates if doesn't exist)
-func (db *DB) UpdateServerMessage(message string, enabled bool) error {
+func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool) error {
 	enabledInt := 0
 	if enabled {
 		enabledInt = 1
 	}
-	result, err := db.db.Exec(sqlUpdateServerMessage, message, enabledInt, time.Now())
+	webEnabledInt := 0
+	if webEnabled {
+		webEnabledInt = 1
+	}
+	result, err := db.db.Exec(sqlUpdateServerMessage, message, enabledInt, webEnabledInt, time.Now())
 	if err != nil {
 		return err
 	}
@@ -3943,7 +3949,7 @@ func (db *DB) UpdateServerMessage(message string, enabled bool) error {
 
 	// If no rows affected, insert new row
 	if rowsAffected == 0 {
-		_, err = db.db.Exec(sqlInsertServerMessage, message, enabledInt, time.Now())
+		_, err = db.db.Exec(sqlInsertServerMessage, message, enabledInt, webEnabledInt, time.Now())
 	}
 	return err
 }

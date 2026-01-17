@@ -33,10 +33,13 @@ func TestServerMessage(t *testing.T) {
 		if msg.Enabled {
 			t.Error("Expected message to be disabled by default")
 		}
+		if !msg.WebEnabled {
+			t.Error("Expected web message to be enabled by default")
+		}
 	})
 
 	t.Run("UpdateServerMessage creates new message", func(t *testing.T) {
-		err := testDB.UpdateServerMessage("Welcome to our server!", true)
+		err := testDB.UpdateServerMessage("Welcome to our server!", true, true)
 		if err != nil {
 			t.Fatalf("Failed to update server message: %v", err)
 		}
@@ -51,11 +54,14 @@ func TestServerMessage(t *testing.T) {
 		if !msg.Enabled {
 			t.Error("Expected message to be enabled")
 		}
+		if !msg.WebEnabled {
+			t.Error("Expected web message to be enabled")
+		}
 	})
 
 	t.Run("UpdateServerMessage updates existing message", func(t *testing.T) {
 		// First update
-		err := testDB.UpdateServerMessage("First message", true)
+		err := testDB.UpdateServerMessage("First message", true, true)
 		if err != nil {
 			t.Fatalf("Failed to create message: %v", err)
 		}
@@ -63,8 +69,8 @@ func TestServerMessage(t *testing.T) {
 		// Wait a moment to ensure updated_at changes
 		time.Sleep(10 * time.Millisecond)
 
-		// Second update
-		err = testDB.UpdateServerMessage("Updated message", false)
+		// Second update - disable TUI but keep web enabled
+		err = testDB.UpdateServerMessage("Updated message", false, true)
 		if err != nil {
 			t.Fatalf("Failed to update message: %v", err)
 		}
@@ -79,21 +85,24 @@ func TestServerMessage(t *testing.T) {
 		if msg.Enabled {
 			t.Error("Expected message to be disabled")
 		}
+		if !msg.WebEnabled {
+			t.Error("Expected web message to be enabled")
+		}
 	})
 
 	t.Run("UpdateServerMessage preserves single row constraint", func(t *testing.T) {
 		// Update multiple times
-		err := testDB.UpdateServerMessage("Message 1", true)
+		err := testDB.UpdateServerMessage("Message 1", true, true)
 		if err != nil {
 			t.Fatalf("Failed first update: %v", err)
 		}
 
-		err = testDB.UpdateServerMessage("Message 2", false)
+		err = testDB.UpdateServerMessage("Message 2", false, false)
 		if err != nil {
 			t.Fatalf("Failed second update: %v", err)
 		}
 
-		err = testDB.UpdateServerMessage("Message 3", true)
+		err = testDB.UpdateServerMessage("Message 3", true, false)
 		if err != nil {
 			t.Fatalf("Failed third update: %v", err)
 		}
@@ -109,10 +118,13 @@ func TestServerMessage(t *testing.T) {
 		if !msg.Enabled {
 			t.Error("Expected message to be enabled")
 		}
+		if msg.WebEnabled {
+			t.Error("Expected web message to be disabled")
+		}
 	})
 
 	t.Run("UpdateServerMessage with empty message", func(t *testing.T) {
-		err := testDB.UpdateServerMessage("", false)
+		err := testDB.UpdateServerMessage("", false, true)
 		if err != nil {
 			t.Fatalf("Failed to update with empty message: %v", err)
 		}
@@ -130,7 +142,7 @@ func TestServerMessage(t *testing.T) {
 		beforeUpdate := time.Now()
 		time.Sleep(10 * time.Millisecond)
 
-		err := testDB.UpdateServerMessage("Test timestamp", true)
+		err := testDB.UpdateServerMessage("Test timestamp", true, true)
 		if err != nil {
 			t.Fatalf("Failed to update message: %v", err)
 		}

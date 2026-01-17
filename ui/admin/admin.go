@@ -245,10 +245,10 @@ func loadServerMessage() tea.Cmd {
 	}
 }
 
-func saveServerMessage(message string, enabled bool) tea.Cmd {
+func saveServerMessage(message string, enabled bool, webEnabled bool) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		err := database.UpdateServerMessage(message, enabled)
+		err := database.UpdateServerMessage(message, enabled, webEnabled)
 		if err != nil {
 			log.Printf("Failed to save server message: %v", err)
 		}
@@ -538,8 +538,9 @@ func (m Model) handleServerMessageKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if m.ServerMessage != nil {
 				message := m.ServerMsgInput.Value()
 				enabled := m.ServerMessage.Enabled
+				webEnabled := m.ServerMessage.WebEnabled
 				m.EditingServerMsg = false
-				return m, saveServerMessage(message, enabled)
+				return m, saveServerMessage(message, enabled, webEnabled)
 			}
 			return m, nil
 		}
@@ -566,10 +567,16 @@ func (m Model) handleServerMessageKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, textarea.Blink
 		}
 	case "t":
-		// Toggle enabled/disabled
+		// Toggle TUI enabled/disabled
 		if m.ServerMessage != nil {
 			newEnabled := !m.ServerMessage.Enabled
-			return m, saveServerMessage(m.ServerMessage.Message, newEnabled)
+			return m, saveServerMessage(m.ServerMessage.Message, newEnabled, m.ServerMessage.WebEnabled)
+		}
+	case "w":
+		// Toggle web enabled/disabled
+		if m.ServerMessage != nil {
+			newWebEnabled := !m.ServerMessage.WebEnabled
+			return m, saveServerMessage(m.ServerMessage.Message, m.ServerMessage.Enabled, newWebEnabled)
 		}
 	}
 	return m, nil
@@ -927,14 +934,23 @@ func (m Model) renderServerMessageView() string {
 		return s.String()
 	}
 
-	// Show current status
-	statusText := "Disabled"
-	statusStyle := common.ListErrorStyle
+	// Show current status for TUI
+	tuiStatusText := "Disabled"
+	tuiStatusStyle := common.ListErrorStyle
 	if m.ServerMessage.Enabled {
-		statusText = "Enabled"
-		statusStyle = common.ListBadgeEnabledStyle
+		tuiStatusText = "Enabled"
+		tuiStatusStyle = common.ListBadgeEnabledStyle
 	}
-	s.WriteString(fmt.Sprintf("Status: %s\n\n", statusStyle.Render(statusText)))
+	s.WriteString(fmt.Sprintf("TUI Status: %s\n", tuiStatusStyle.Render(tuiStatusText)))
+
+	// Show current status for Web UI
+	webStatusText := "Disabled"
+	webStatusStyle := common.ListErrorStyle
+	if m.ServerMessage.WebEnabled {
+		webStatusText = "Enabled"
+		webStatusStyle = common.ListBadgeEnabledStyle
+	}
+	s.WriteString(fmt.Sprintf("Web Status: %s\n\n", webStatusStyle.Render(webStatusText)))
 
 	// Show message
 	if m.ServerMessage.Message == "" {
@@ -946,7 +962,7 @@ func (m Model) renderServerMessageView() string {
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: enter/e: edit message • t: toggle enabled/disabled • esc: back"))
+	s.WriteString(common.ListBadgeStyle.Render("Keys: enter/e: edit message • t: toggle TUI • w: toggle Web • esc: back"))
 
 	return s.String()
 }

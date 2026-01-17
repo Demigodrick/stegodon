@@ -57,6 +57,12 @@
                         <a href="/" class="back-link">← back to timeline</a>
                     </div>
 
+                    {{if .ServerMessage}}
+                    <div class="server-message">
+                        <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}
+                    </div>
+                    {{end}}
+
                     <div class="user-profile">
                         <div class="user-info">
                             <p>
