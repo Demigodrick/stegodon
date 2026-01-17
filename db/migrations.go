@@ -228,6 +228,14 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_upload_tokens_expires_at ON upload_tokens(expires_at);
 	`
 
+	// Server message table - single row for admin announcements
+	sqlCreateServerMessageTable = `CREATE TABLE IF NOT EXISTS server_message (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		message TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 0,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -293,6 +301,9 @@ func (db *DB) RunMigrations() error {
 			return err
 		}
 		if err := db.createTableIfNotExists(tx, sqlCreateUploadTokensTable, "upload_tokens"); err != nil {
+			return err
+		}
+		if err := db.createTableIfNotExists(tx, sqlCreateServerMessageTable, "server_message"); err != nil {
 			return err
 		}
 

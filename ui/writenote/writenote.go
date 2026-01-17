@@ -65,6 +65,8 @@ type Model struct {
 	autocompleteIndex      int                // Currently selected suggestion
 	mentionStartPos        int                // Position where @ was typed
 	localDomain            string             // Local domain for identifying local users
+	// Server message
+	serverMessage *domain.ServerMessage // Message from server admin to display
 }
 
 func InitialNote(contentWidth int, userId uuid.UUID) Model {
@@ -387,7 +389,23 @@ func updateNoteModelCmd(noteId uuid.UUID, message string) tea.Cmd {
 }
 
 func (m Model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, loadServerMessage())
+}
+
+type serverMessageLoadedMsg struct {
+	message *domain.ServerMessage
+}
+
+func loadServerMessage() tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err, msg := database.ReadServerMessage()
+		if err != nil {
+			log.Printf("Failed to load server message: %v", err)
+			return serverMessageLoadedMsg{message: nil}
+		}
+		return serverMessageLoadedMsg{message: msg}
+	}
 }
 
 func (m *Model) Focus() {
@@ -403,6 +421,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case serverMessageLoadedMsg:
+		m.serverMessage = msg.message
+		return m, nil
+
 	case common.EditNoteMsg:
 		// Enter edit mode: populate textarea with existing note
 		m.isEditing = true
@@ -816,7 +838,22 @@ func (m Model) View() string {
 		errorSection = "\n" + errorStyle.Render(m.Error)
 	}
 
-	return fmt.Sprintf("%s\n\n%s%s%s%s%s\n\n%s", caption, replyContext, styledTextarea, autocompletePopup, linkIndicator, errorSection, charsLeft)
+	// Add server message if enabled
+	serverMessageSection := ""
+	if m.serverMessage != nil && m.serverMessage.Enabled && m.serverMessage.Message != "" {
+		serverMsgStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(common.COLOR_WARNING)).
+			Bold(true).
+			PaddingLeft(5).
+			PaddingTop(1)
+		serverMessageSection = "\n\n" + serverMsgStyle.Render("📢 Server Message:") + "\n" +
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color(common.COLOR_MUTED)).
+				PaddingLeft(5).
+				Render(m.serverMessage.Message)
+	}
+
+	return fmt.Sprintf("%s\n\n%s%s%s%s%s\n\n%s%s", caption, replyContext, styledTextarea, autocompletePopup, linkIndicator, errorSection, charsLeft, serverMessageSection)
 }
 
 // renderAutocompletePopup renders the autocomplete suggestion list

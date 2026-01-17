@@ -23,6 +23,7 @@ const (
 	MenuView AdminView = iota
 	UsersView
 	InfoBoxesView
+	ServerMessageView
 )
 
 type Model struct {
@@ -41,12 +42,17 @@ type Model struct {
 	BoxOffset     int
 	Editing       bool
 	EditBox       *domain.InfoBox
-	EditField     int            // 0=Title, 1=Content, 2=Order
-	TitleInput    textarea.Model // Textarea for title
-	ContentInput  textarea.Model // Textarea for content
-	OrderInput    textarea.Model // Textarea for order number
-	ConfirmDelete bool           // True when confirming deletion
-	DeleteBoxId   uuid.UUID      // ID of box to delete
+	EditField     int              // 0=Title, 1=Content, 2=Order
+	TitleInput    textarea.Model   // Textarea for title
+	ContentInput  textarea.Model   // Textarea for content
+	OrderInput    textarea.Model   // Textarea for order number
+	ConfirmDelete bool             // True when confirming deletion
+	DeleteBoxId   uuid.UUID        // ID of box to delete
+
+	// Server message management
+	ServerMessage       *domain.ServerMessage
+	EditingServerMsg    bool
+	ServerMsgInput      textarea.Model // Textarea for server message
 
 	Width  int
 	Height int
@@ -74,7 +80,7 @@ func InitialModel(adminId uuid.UUID, width, height int) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadUsers(), loadInfoBoxes())
+	return tea.Batch(loadUsers(), loadInfoBoxes(), loadServerMessage())
 }
 
 // createTextarea creates a new textarea with standard settings
@@ -123,6 +129,12 @@ type infoBoxesLoadedMsg struct {
 type infoBoxSavedMsg struct{}
 type infoBoxDeletedMsg struct{}
 type infoBoxToggledMsg struct{}
+
+type serverMessageLoadedMsg struct {
+	message *domain.ServerMessage
+}
+
+type serverMessageSavedMsg struct{}
 
 // User management commands
 func loadUsers() tea.Cmd {
@@ -220,6 +232,30 @@ func toggleInfoBox(id uuid.UUID) tea.Cmd {
 	}
 }
 
+// Server message management commands
+func loadServerMessage() tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err, msg := database.ReadServerMessage()
+		if err != nil {
+			log.Printf("Failed to load server message: %v", err)
+			return serverMessageLoadedMsg{message: &domain.ServerMessage{}}
+		}
+		return serverMessageLoadedMsg{message: msg}
+	}
+}
+
+func saveServerMessage(message string, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err := database.UpdateServerMessage(message, enabled)
+		if err != nil {
+			log.Printf("Failed to save server message: %v", err)
+		}
+		return serverMessageSavedMsg{}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
@@ -249,6 +285,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case serverMessageLoadedMsg:
+		m.ServerMessage = msg.message
+		return m, nil
+
 	case infoBoxSavedMsg:
 		m.Status = "Info box saved successfully"
 		m.Error = ""
@@ -265,6 +305,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Status = "Info box toggled"
 		m.Error = ""
 		return m, loadInfoBoxes()
+
+	case serverMessageSavedMsg:
+		m.Status = "Server message saved successfully"
+		m.Error = ""
+		m.EditingServerMsg = false
+		return m, loadServerMessage()
 
 	case tea.KeyMsg:
 		m.Status = ""
@@ -289,6 +335,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			} else {
 				return m.handleInfoBoxesKeys(msg)
 			}
+		case ServerMessageView:
+			return m.handleServerMessageKeys(msg)
 		}
 	}
 
@@ -334,7 +382,7 @@ func (m Model) handleMenuKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.MenuSelected--
 		}
 	case "down", "j":
-		if m.MenuSelected < 1 { // We have 2 menu items (0 and 1)
+		if m.MenuSelected < 2 { // We have 3 menu items (0, 1, and 2)
 			m.MenuSelected++
 		}
 	case "enter":
@@ -344,6 +392,8 @@ func (m Model) handleMenuKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.CurrentView = UsersView
 		case 1:
 			m.CurrentView = InfoBoxesView
+		case 2:
+			m.CurrentView = ServerMessageView
 		}
 	}
 	return m, nil
@@ -469,6 +519,57 @@ func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "t":
 		if len(m.InfoBoxes) > 0 && m.BoxSelected < len(m.InfoBoxes) {
 			return m, toggleInfoBox(m.InfoBoxes[m.BoxSelected].Id)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleServerMessageKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.EditingServerMsg {
+		// Handle editing mode
+		switch msg.String() {
+		case "esc":
+			// Cancel editing
+			m.EditingServerMsg = false
+			m.Status = "Edit cancelled"
+			return m, nil
+		case "ctrl+s":
+			// Save message
+			if m.ServerMessage != nil {
+				message := m.ServerMsgInput.Value()
+				enabled := m.ServerMessage.Enabled
+				m.EditingServerMsg = false
+				return m, saveServerMessage(message, enabled)
+			}
+			return m, nil
+		}
+
+		// Pass keys to textarea
+		var cmd tea.Cmd
+		m.ServerMsgInput, cmd = m.ServerMsgInput.Update(msg)
+		return m, cmd
+	}
+
+	// Normal navigation
+	switch msg.String() {
+	case "esc":
+		// Go back to menu
+		m.CurrentView = MenuView
+		return m, nil
+	case "e", "enter":
+		// Edit message
+		if m.ServerMessage != nil {
+			m.EditingServerMsg = true
+			m.ServerMsgInput = createTextarea("Enter server message", 5)
+			m.ServerMsgInput.SetValue(m.ServerMessage.Message)
+			m.ServerMsgInput.Focus()
+			return m, textarea.Blink
+		}
+	case "t":
+		// Toggle enabled/disabled
+		if m.ServerMessage != nil {
+			newEnabled := !m.ServerMessage.Enabled
+			return m, saveServerMessage(m.ServerMessage.Message, newEnabled)
 		}
 	}
 	return m, nil
@@ -607,6 +708,12 @@ func (m Model) View() string {
 		} else {
 			s.WriteString(m.renderInfoBoxesView())
 		}
+	case ServerMessageView:
+		if m.EditingServerMsg {
+			s.WriteString(m.renderServerMessageEditView())
+		} else {
+			s.WriteString(m.renderServerMessageView())
+		}
 	}
 
 	// Status messages
@@ -626,7 +733,7 @@ func (m Model) View() string {
 func (m Model) renderMenu() string {
 	var s strings.Builder
 
-	menuItems := []string{"Manage Users", "Manage Info Boxes"}
+	menuItems := []string{"Manage Users", "Manage Info Boxes", "Server Message"}
 
 	for i, item := range menuItems {
 		if i == m.MenuSelected {
@@ -805,6 +912,55 @@ func (m Model) renderEditView() string {
 	s.WriteString(common.ListBadgeStyle.Render("Keys: tab/shift+tab: switch field • ctrl+s: save • esc: cancel"))
 	s.WriteString("\n\n")
 	s.WriteString(common.ListBadgeStyle.Render("Note: Content supports Markdown. Use {{SSH_PORT}} for port substitution."))
+
+	return s.String()
+}
+
+func (m Model) renderServerMessageView() string {
+	var s strings.Builder
+
+	s.WriteString(common.CaptionStyle.Render("server message"))
+	s.WriteString("\n\n")
+
+	if m.ServerMessage == nil {
+		s.WriteString(common.ListEmptyStyle.Render("Loading..."))
+		return s.String()
+	}
+
+	// Show current status
+	statusText := "Disabled"
+	statusStyle := common.ListErrorStyle
+	if m.ServerMessage.Enabled {
+		statusText = "Enabled"
+		statusStyle = common.ListBadgeEnabledStyle
+	}
+	s.WriteString(fmt.Sprintf("Status: %s\n\n", statusStyle.Render(statusText)))
+
+	// Show message
+	if m.ServerMessage.Message == "" {
+		s.WriteString(common.ListEmptyStyle.Render("No message set"))
+	} else {
+		s.WriteString(common.ListItemStyle.Render("Current message:"))
+		s.WriteString("\n")
+		s.WriteString(common.ListItemSelectedStyle.Render(m.ServerMessage.Message))
+	}
+
+	s.WriteString("\n\n")
+	s.WriteString(common.ListBadgeStyle.Render("Keys: enter/e: edit message • t: toggle enabled/disabled • esc: back"))
+
+	return s.String()
+}
+
+func (m Model) renderServerMessageEditView() string {
+	var s strings.Builder
+
+	s.WriteString(common.CaptionStyle.Render("edit server message"))
+	s.WriteString("\n\n")
+
+	s.WriteString(m.ServerMsgInput.View())
+	s.WriteString("\n\n")
+
+	s.WriteString(common.ListBadgeStyle.Render("Keys: ctrl+s: save • esc: cancel"))
 
 	return s.String()
 }
