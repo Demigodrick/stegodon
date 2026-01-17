@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -244,27 +245,101 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				notif := m.Notifications[m.Selected]
 				// Only view if notification has an associated note (either URI or ID)
 				if notif.NotificationType != domain.NotificationFollow && (notif.NoteURI != "" || notif.NoteId != uuid.Nil) {
-					// Prepare note details for thread view
-					author := notif.ActorUsername
-					if notif.ActorDomain != "" {
-						author = fmt.Sprintf("%s@%s", notif.ActorUsername, notif.ActorDomain)
-					}
-					content := notif.NotePreview
-					if content == "" {
-						content = "[No preview available]"
+					// Get the actual note creation time from database
+					database := db.GetDB()
+					var noteCreatedAt time.Time
+					var noteContent string
+					var noteAuthor string
+					var noteURI string
+					var noteID uuid.UUID
+					var isLocal bool
+					
+					if notif.NoteId != uuid.Nil {
+						// Local note - get from notes table
+						isLocal = true
+						err, note := database.ReadNoteId(notif.NoteId)
+						if err == nil && note != nil {
+							noteCreatedAt = note.CreatedAt
+							noteContent = note.Message
+							noteAuthor = note.CreatedBy
+							noteURI = note.ObjectURI
+							if noteURI == "" {
+								// Use local: prefix for notes without ObjectURI
+								noteURI = "local:" + note.Id.String()
+							}
+							noteID = note.Id
+							log.Printf("[Notifications] Loaded local note %s by %s", noteID, noteAuthor)
+						} else {
+							log.Printf("[Notifications] Failed to load local note %s: %v", notif.NoteId, err)
+						}
+					} else if notif.NoteURI != "" {
+						// Remote note - try to find in activities table
+						err, activity := database.ReadActivityByObjectURI(notif.NoteURI)
+						if err == nil && activity != nil {
+							noteCreatedAt = activity.CreatedAt
+							noteURI = activity.ObjectURI
+							noteID = activity.Id
+							isLocal = false
+							// Parse activity content
+							var activityWrapper struct {
+								Object struct {
+									Content string `json:"content"`
+								} `json:"object"`
+							}
+							if err := json.Unmarshal([]byte(activity.RawJSON), &activityWrapper); err == nil {
+								noteContent = util.StripHTMLTags(activityWrapper.Object.Content)
+							}
+							// Get author from notification
+							noteAuthor = notif.ActorUsername
+							if notif.ActorDomain != "" {
+								noteAuthor = fmt.Sprintf("%s@%s", notif.ActorUsername, notif.ActorDomain)
+							}
+							log.Printf("[Notifications] Loaded remote activity %s by %s", noteURI, noteAuthor)
+						} else {
+							log.Printf("[Notifications] Failed to load remote activity %s: %v", notif.NoteURI, err)
+						}
 					}
 					
+					// Fallback to notification data if database lookup failed
+					if noteCreatedAt.IsZero() {
+						noteCreatedAt = notif.CreatedAt
+						log.Printf("[Notifications] Using fallback timestamp from notification")
+					}
+					if noteContent == "" {
+						noteContent = notif.NotePreview
+						if noteContent == "" {
+							noteContent = "[No preview available]"
+						}
+						log.Printf("[Notifications] Using fallback content from notification preview")
+					}
+					if noteAuthor == "" {
+						noteAuthor = notif.ActorUsername
+						if notif.ActorDomain != "" {
+							noteAuthor = fmt.Sprintf("%s@%s", notif.ActorUsername, notif.ActorDomain)
+						}
+						log.Printf("[Notifications] Using fallback author from notification")
+					}
+					if noteURI == "" {
+						noteURI = notif.NoteURI
+						log.Printf("[Notifications] Using notification NoteURI: %s", noteURI)
+					}
+					if noteID == uuid.Nil {
+						noteID = notif.NoteId
+						log.Printf("[Notifications] Using notification NoteId: %s", noteID)
+					}
+					
+					log.Printf("[Notifications] ViewThreadMsg: URI=%s, ID=%s, IsLocal=%v, Author=%s", 
+						noteURI, noteID, isLocal, noteAuthor)
+					
 					// Send ViewThreadMsg to navigate to the post
-					// Note: IsLocal should be based on the NOTE being local, not the ACTOR
-					// If NoteId is set, the note exists in our local notes table
 					return m, func() tea.Msg {
 						return common.ViewThreadMsg{
-							NoteURI:   notif.NoteURI,
-							NoteID:    notif.NoteId,
-							IsLocal:   notif.NoteId != uuid.Nil,
-							Author:    author,
-							Content:   content,
-							CreatedAt: notif.CreatedAt,
+							NoteURI:   noteURI,
+							NoteID:    noteID,
+							IsLocal:   isLocal,
+							Author:    noteAuthor,
+							Content:   noteContent,
+							CreatedAt: noteCreatedAt,
 						}
 					}
 				}
