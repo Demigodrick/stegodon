@@ -52,10 +52,12 @@ type ProfilePageData struct {
 }
 
 type UserView struct {
-	Username    string
-	DisplayName string
-	Summary     string
-	JoinedAgo   string
+	Username      string
+	DisplayName   string
+	Summary       string
+	JoinedAgo     string
+	AvatarURL     string
+	AvatarVersion int64 // Unix timestamp for cache busting
 }
 
 type PostView struct {
@@ -344,10 +346,12 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 		SSHPort: conf.Conf.SshPort,
 		Version: util.GetVersion(),
 		User: UserView{
-			Username:    account.Username,
-			DisplayName: account.DisplayName,
-			Summary:     account.Summary,
-			JoinedAgo:   formatTimeAgo(account.CreatedAt),
+			Username:      account.Username,
+			DisplayName:   account.DisplayName,
+			Summary:       account.Summary,
+			JoinedAgo:     formatTimeAgo(account.CreatedAt),
+			AvatarURL:     account.AvatarURL,
+			AvatarVersion: time.Now().Unix(),
 		},
 		Posts:      posts,
 		TotalPosts: totalPosts,
@@ -539,10 +543,12 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		Version: util.GetVersion(),
 		Post:    post,
 		User: UserView{
-			Username:    account.Username,
-			DisplayName: account.DisplayName,
-			Summary:     account.Summary,
-			JoinedAgo:   formatTimeAgo(account.CreatedAt),
+			Username:      account.Username,
+			DisplayName:   account.DisplayName,
+			Summary:       account.Summary,
+			JoinedAgo:     formatTimeAgo(account.CreatedAt),
+			AvatarURL:     account.AvatarURL,
+			AvatarVersion: time.Now().Unix(),
 		},
 		ParentPost: parentPost,
 		Replies:    replies,

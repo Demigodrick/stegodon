@@ -213,6 +213,21 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_info_boxes_enabled ON info_boxes(enabled);
 	`
 
+	// Upload tokens table for one-time upload links (avatar, etc.)
+	sqlCreateUploadTokensTable = `CREATE TABLE IF NOT EXISTS upload_tokens (
+		token TEXT NOT NULL PRIMARY KEY,
+		account_id TEXT NOT NULL,
+		token_type TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP NOT NULL,
+		FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+	)`
+
+	sqlCreateUploadTokensIndices = `
+		CREATE INDEX IF NOT EXISTS idx_upload_tokens_account_id ON upload_tokens(account_id);
+		CREATE INDEX IF NOT EXISTS idx_upload_tokens_expires_at ON upload_tokens(expires_at);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -277,6 +292,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateInfoBoxesTable, "info_boxes"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateUploadTokensTable, "upload_tokens"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -314,6 +332,9 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateInfoBoxesIndices); err != nil {
 			log.Printf("Warning: Failed to create info_boxes indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateUploadTokensIndices); err != nil {
+			log.Printf("Warning: Failed to create upload_tokens indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)

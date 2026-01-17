@@ -57,6 +57,13 @@
                     </div>
 
                     <div class="user-profile">
+                        <div class="user-avatar">
+                            {{if .User.AvatarURL}}
+                            <img src="{{.User.AvatarURL}}?v={{.User.AvatarVersion}}" alt="@{{.User.Username}}'s avatar" class="avatar-large">
+                            {{else}}
+                            <img src="/static/stegologo.png" alt="Default avatar" class="avatar-large">
+                            {{end}}
+                        </div>
                         <div class="user-info">
                             <p>
                                 <strong>posts:</strong>

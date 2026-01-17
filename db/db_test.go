@@ -3453,3 +3453,353 @@ func TestReadRelayById(t *testing.T) {
 		t.Errorf("Expected ActorURI %s, got %s", relay.ActorURI, fetched.ActorURI)
 	}
 }
+
+// Tests for upload tokens and account updates (Issue #41)
+
+func TestUpdateAccountDisplayName(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test account
+	accountId := uuid.New()
+	_, err := db.db.Exec(sqlInsertUser, accountId.String(), "testuser", "pkhash123", "", "", time.Now().Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create test account: %v", err)
+	}
+
+	// Update display name
+	err = db.UpdateAccountDisplayName(accountId, "New Display Name")
+	if err != nil {
+		t.Fatalf("UpdateAccountDisplayName failed: %v", err)
+	}
+
+	// Verify update
+	err, acc := db.ReadAccById(accountId)
+	if err != nil {
+		t.Fatalf("ReadAccById failed: %v", err)
+	}
+	if acc.DisplayName != "New Display Name" {
+		t.Errorf("Expected display name 'New Display Name', got '%s'", acc.DisplayName)
+	}
+}
+
+func TestUpdateAccountSummary(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test account
+	accountId := uuid.New()
+	_, err := db.db.Exec(sqlInsertUser, accountId.String(), "testuser", "pkhash123", "", "", time.Now().Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create test account: %v", err)
+	}
+
+	// Update summary/bio
+	err = db.UpdateAccountSummary(accountId, "This is my new bio")
+	if err != nil {
+		t.Fatalf("UpdateAccountSummary failed: %v", err)
+	}
+
+	// Verify update
+	err, acc := db.ReadAccById(accountId)
+	if err != nil {
+		t.Fatalf("ReadAccById failed: %v", err)
+	}
+	if acc.Summary != "This is my new bio" {
+		t.Errorf("Expected summary 'This is my new bio', got '%s'", acc.Summary)
+	}
+}
+
+func TestUpdateAccountAvatar(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.db.Close()
+
+	// Create test account
+	accountId := uuid.New()
+	_, err := db.db.Exec(sqlInsertUser, accountId.String(), "testuser", "pkhash123", "", "", time.Now().Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create test account: %v", err)
+	}
+
+	// Update avatar URL
+	avatarURL := "/avatars/" + accountId.String() + ".png"
+	err = db.UpdateAccountAvatar(accountId, avatarURL)
+	if err != nil {
+		t.Fatalf("UpdateAccountAvatar failed: %v", err)
+	}
+
+	// Verify update
+	err, acc := db.ReadAccById(accountId)
+	if err != nil {
+		t.Fatalf("ReadAccById failed: %v", err)
+	}
+	if acc.AvatarURL != avatarURL {
+		t.Errorf("Expected avatar URL '%s', got '%s'", avatarURL, acc.AvatarURL)
+	}
+}
+
+func setupTestDBWithUploadTokens(t *testing.T) *DB {
+	db := setupTestDB(t)
+
+	// Create upload_tokens table
+	_, err := db.db.Exec(`CREATE TABLE IF NOT EXISTS upload_tokens (
+		token TEXT NOT NULL PRIMARY KEY,
+		account_id TEXT NOT NULL,
+		token_type TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("Failed to create upload_tokens table: %v", err)
+	}
+
+	return db
+}
+
+func TestCreateUploadToken(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	token := "test-token-123"
+
+	err := db.CreateUploadToken(accountId, token, "avatar", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateUploadToken failed: %v", err)
+	}
+
+	// Verify token was created
+	var count int
+	err = db.db.QueryRow(`SELECT COUNT(*) FROM upload_tokens WHERE token = ?`, token).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 token, got %d", count)
+	}
+}
+
+func TestValidateUploadToken(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	token := "valid-token-456"
+
+	// Create a valid token
+	err := db.CreateUploadToken(accountId, token, "avatar", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateUploadToken failed: %v", err)
+	}
+
+	// Validate the token
+	returnedAccountId, tokenType, err := db.ValidateUploadToken(token)
+	if err != nil {
+		t.Fatalf("ValidateUploadToken failed: %v", err)
+	}
+	if returnedAccountId != accountId {
+		t.Errorf("Expected account ID %s, got %s", accountId, returnedAccountId)
+	}
+	if tokenType != "avatar" {
+		t.Errorf("Expected token type 'avatar', got '%s'", tokenType)
+	}
+}
+
+func TestValidateUploadTokenExpired(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	token := "expired-token-789"
+
+	// Create an expired token (negative duration)
+	expiresAt := time.Now().Add(-1 * time.Hour)
+	_, err := db.db.Exec(`INSERT INTO upload_tokens (token, account_id, token_type, expires_at) VALUES (?, ?, ?, ?)`,
+		token, accountId.String(), "avatar", expiresAt.Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create expired token: %v", err)
+	}
+
+	// Validate should fail for expired token
+	_, _, err = db.ValidateUploadToken(token)
+	if err == nil {
+		t.Error("Expected error for expired token, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "expired") {
+		t.Errorf("Expected 'expired' in error message, got: %v", err)
+	}
+}
+
+func TestValidateUploadTokenNotFound(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	// Try to validate non-existent token
+	_, _, err := db.ValidateUploadToken("nonexistent-token")
+	if err == nil {
+		t.Error("Expected error for non-existent token, got nil")
+	}
+}
+
+func TestDeleteUploadToken(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+	token := "delete-me-token"
+
+	// Create token
+	err := db.CreateUploadToken(accountId, token, "avatar", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateUploadToken failed: %v", err)
+	}
+
+	// Delete token
+	err = db.DeleteUploadToken(token)
+	if err != nil {
+		t.Fatalf("DeleteUploadToken failed: %v", err)
+	}
+
+	// Verify token was deleted
+	var count int
+	err = db.db.QueryRow(`SELECT COUNT(*) FROM upload_tokens WHERE token = ?`, token).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 tokens after delete, got %d", count)
+	}
+}
+
+func TestCleanupExpiredUploadTokens(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+
+	// Create an expired token
+	expiredToken := "expired-cleanup-token"
+	expiresAt := time.Now().Add(-1 * time.Hour)
+	_, err := db.db.Exec(`INSERT INTO upload_tokens (token, account_id, token_type, expires_at) VALUES (?, ?, ?, ?)`,
+		expiredToken, accountId.String(), "avatar", expiresAt.Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create expired token: %v", err)
+	}
+
+	// Create a valid token
+	validToken := "valid-cleanup-token"
+	err = db.CreateUploadToken(accountId, validToken, "avatar", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateUploadToken failed: %v", err)
+	}
+
+	// Run cleanup
+	err = db.CleanupExpiredUploadTokens()
+	if err != nil {
+		t.Fatalf("CleanupExpiredUploadTokens failed: %v", err)
+	}
+
+	// Verify expired token was deleted
+	var count int
+	err = db.db.QueryRow(`SELECT COUNT(*) FROM upload_tokens WHERE token = ?`, expiredToken).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected expired token to be deleted, but found %d", count)
+	}
+
+	// Verify valid token still exists
+	err = db.db.QueryRow(`SELECT COUNT(*) FROM upload_tokens WHERE token = ?`, validToken).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected valid token to still exist, but found %d", count)
+	}
+}
+
+func TestGetExistingUploadToken(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+
+	// Test when no token exists
+	token, expiresAt, err := db.GetExistingUploadToken(accountId, "avatar")
+	if err != nil {
+		t.Fatalf("GetExistingUploadToken failed: %v", err)
+	}
+	if token != "" {
+		t.Errorf("Expected empty token when none exists, got %s", token)
+	}
+	if !expiresAt.IsZero() {
+		t.Errorf("Expected zero time when no token exists")
+	}
+
+	// Create a token
+	testToken := "existing-test-token"
+	err = db.CreateUploadToken(accountId, testToken, "avatar", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateUploadToken failed: %v", err)
+	}
+
+	// Test when token exists
+	token, expiresAt, err = db.GetExistingUploadToken(accountId, "avatar")
+	if err != nil {
+		t.Fatalf("GetExistingUploadToken failed: %v", err)
+	}
+	if token != testToken {
+		t.Errorf("Expected token %s, got %s", testToken, token)
+	}
+	if expiresAt.IsZero() {
+		t.Error("Expected non-zero expiry time")
+	}
+	if time.Until(expiresAt) < 9*time.Minute {
+		t.Error("Expected expiry time to be around 10 minutes from now")
+	}
+
+	// Test with different token type - should not find avatar token
+	token, _, err = db.GetExistingUploadToken(accountId, "other")
+	if err != nil {
+		t.Fatalf("GetExistingUploadToken failed: %v", err)
+	}
+	if token != "" {
+		t.Errorf("Expected empty token for different type, got %s", token)
+	}
+
+	// Test with different account - should not find token
+	otherAccountId := uuid.New()
+	token, _, err = db.GetExistingUploadToken(otherAccountId, "avatar")
+	if err != nil {
+		t.Fatalf("GetExistingUploadToken failed: %v", err)
+	}
+	if token != "" {
+		t.Errorf("Expected empty token for different account, got %s", token)
+	}
+}
+
+func TestGetExistingUploadTokenExpired(t *testing.T) {
+	db := setupTestDBWithUploadTokens(t)
+	defer db.db.Close()
+
+	accountId := uuid.New()
+
+	// Create an expired token manually
+	expiredToken := "expired-existing-token"
+	expiresAt := time.Now().Add(-1 * time.Hour)
+	_, err := db.db.Exec(`INSERT INTO upload_tokens (token, account_id, token_type, expires_at) VALUES (?, ?, ?, ?)`,
+		expiredToken, accountId.String(), "avatar", expiresAt.Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("Failed to create expired token: %v", err)
+	}
+
+	// Should not return expired token
+	token, _, err := db.GetExistingUploadToken(accountId, "avatar")
+	if err != nil {
+		t.Fatalf("GetExistingUploadToken failed: %v", err)
+	}
+	if token != "" {
+		t.Errorf("Expected empty token for expired token, got %s", token)
+	}
+}

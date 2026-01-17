@@ -183,7 +183,7 @@ func TestSafeModelsReceiveMessagesRegardlessOfActiveView(t *testing.T) {
 	}
 
 	// The test verifies that no panic occurs when routing to inactive safe models
-	// In production, followModel, deleteAccountModel, followersModel, followingModel,
+	// In production, followModel, accountSettingsModel, followersModel, followingModel,
 	// and localUsersModel should all receive this message regardless of active view
 }
 
@@ -315,9 +315,9 @@ func TestCommandBatchingWithMultipleModels(t *testing.T) {
 	_ = cmd
 }
 
-// TestDeleteAccountModelUpdatedAfterUsernameChange verifies deleteAccountModel
+// TestAccountSettingsModelUpdatedAfterUsernameChange verifies accountSettingsModel
 // receives updated account info after username creation
-func TestDeleteAccountModelUpdatedAfterUsernameChange(t *testing.T) {
+func TestAccountSettingsModelUpdatedAfterUsernameChange(t *testing.T) {
 	account := domain.Account{
 		Id:             uuid.New(),
 		Username:       "internal_generated_name",
@@ -333,10 +333,10 @@ func TestDeleteAccountModelUpdatedAfterUsernameChange(t *testing.T) {
 	model.newUserModel.Bio.SetValue("Test bio")
 	model.newUserModel.Step = 2
 
-	// Verify deleteAccountModel initially has old username
-	if model.deleteAccountModel.Account.Username != "internal_generated_name" {
-		t.Errorf("Expected deleteAccountModel to have internal username initially, got %s",
-			model.deleteAccountModel.Account.Username)
+	// Verify accountSettingsModel initially has old username
+	if model.accountSettingsModel.Account.Username != "internal_generated_name" {
+		t.Errorf("Expected accountSettingsModel to have internal username initially, got %s",
+			model.accountSettingsModel.Account.Username)
 	}
 
 	// Simulate pressing enter on bio step (Step 2)
@@ -352,19 +352,19 @@ func TestDeleteAccountModelUpdatedAfterUsernameChange(t *testing.T) {
 		t.Errorf("Expected display name to be 'Alice Test', got %s", mainModel.account.DisplayName)
 	}
 
-	// Verify deleteAccountModel now has updated username
-	if mainModel.deleteAccountModel.Account.Username != "alice" {
-		t.Errorf("Expected deleteAccountModel to have updated username 'alice', got %s",
-			mainModel.deleteAccountModel.Account.Username)
+	// Verify accountSettingsModel now has updated username
+	if mainModel.accountSettingsModel.Account.Username != "alice" {
+		t.Errorf("Expected accountSettingsModel to have updated username 'alice', got %s",
+			mainModel.accountSettingsModel.Account.Username)
 	}
 
-	// Verify deleteAccountModel has same values as mainModel.account
-	if mainModel.deleteAccountModel.Account.DisplayName != mainModel.account.DisplayName {
-		t.Error("deleteAccountModel should have same DisplayName as mainModel.account")
+	// Verify accountSettingsModel has same values as mainModel.account
+	if mainModel.accountSettingsModel.Account.DisplayName != mainModel.account.DisplayName {
+		t.Error("accountSettingsModel should have same DisplayName as mainModel.account")
 	}
 
-	if mainModel.deleteAccountModel.Account.Summary != mainModel.account.Summary {
-		t.Error("deleteAccountModel should have same Summary as mainModel.account")
+	if mainModel.accountSettingsModel.Account.Summary != mainModel.account.Summary {
+		t.Error("accountSettingsModel should have same Summary as mainModel.account")
 	}
 }
 

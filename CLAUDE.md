@@ -82,7 +82,7 @@ Built with [bubbletea](https://github.com/charmbracelet/bubbletea) MVC pattern. 
 - `notifications` - View and manage notifications
 - `relay` - Manage ActivityPub relay subscriptions (admin)
 - `admin` - Admin panel
-- `deleteaccount` - Account deletion
+- `accountsettings` - Profile editing, avatar upload, account deletion
 
 **Navigation:** Tab cycles forward, Shift+Tab backward. Press Ctrl+N for notifications. Enter opens threads, Esc returns.
 
@@ -139,7 +139,8 @@ stegodon/
 │   ├── relay/       # Relay management (admin)
 │   ├── admin/       # Admin panel
 │   ├── header/      # Navigation bar
-│   └── deleteaccount/
+│   ├── accountsettings/ # Profile and account settings
+│   └── notifications/ # Notifications view
 ├── util/            # Utilities (config, crypto, helpers)
 ├── web/             # HTTP server (RSS, ActivityPub, web UI)
 │   ├── templates/   # HTML templates (embedded)

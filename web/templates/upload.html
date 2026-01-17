@@ -1,0 +1,212 @@
+{{define "upload.html"}}
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Upload Avatar - stegodon</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23000'/><text x='50' y='70' text-anchor='middle' font-family='monospace' font-size='70' font-weight='bold' fill='%2300ff7f'>S</text></svg>">
+        <link rel="stylesheet" href="/static/style.css">
+        <style>
+            .upload-container {
+                max-width: 500px;
+                margin: 50px auto;
+                padding: 30px;
+                background: #1a1a1a;
+                border-radius: 8px;
+                border: 1px solid #333;
+            }
+            .upload-header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .upload-header h1 {
+                color: #00ff7f;
+                font-size: 1.5em;
+                margin-bottom: 10px;
+            }
+            .upload-header p {
+                color: #888;
+                font-size: 0.9em;
+            }
+            .upload-form {
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+            }
+            .file-input-wrapper {
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 40px 20px;
+                border: 2px dashed #444;
+                border-radius: 8px;
+                background: #0a0a0a;
+                cursor: pointer;
+                transition: border-color 0.2s, background-color 0.2s;
+            }
+            .file-input-wrapper:hover {
+                border-color: #00ff7f;
+                background: #111;
+            }
+            .file-input-wrapper input[type="file"] {
+                position: absolute;
+                inset: 0;
+                opacity: 0;
+                cursor: pointer;
+            }
+            .file-input-wrapper .icon {
+                font-size: 3em;
+                margin-bottom: 10px;
+            }
+            .file-input-wrapper .text {
+                color: #888;
+                text-align: center;
+            }
+            .file-input-wrapper .text strong {
+                color: #00ff7f;
+            }
+            .file-name {
+                color: #00ff7f;
+                text-align: center;
+                padding: 10px;
+                display: none;
+            }
+            .submit-btn {
+                background: #00ff7f;
+                color: #000;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 6px;
+                font-size: 1em;
+                font-weight: bold;
+                cursor: pointer;
+                transition: background-color 0.2s;
+            }
+            .submit-btn:hover {
+                background: #00cc66;
+            }
+            .submit-btn:disabled {
+                background: #333;
+                color: #666;
+                cursor: not-allowed;
+            }
+            .error-message {
+                background: #3d1515;
+                border: 1px solid #ff4444;
+                color: #ff6666;
+                padding: 15px;
+                border-radius: 6px;
+                text-align: center;
+            }
+            .success-message {
+                background: #153d15;
+                border: 1px solid #00ff7f;
+                color: #00ff7f;
+                padding: 15px;
+                border-radius: 6px;
+                text-align: center;
+            }
+            .info-text {
+                color: #666;
+                font-size: 0.85em;
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="upload-container">
+            <div class="upload-header">
+                <h1>Upload Avatar</h1>
+                {{if .Username}}
+                <p>for @{{.Username}}</p>
+                {{end}}
+            </div>
+
+            {{if .Error}}
+            <div class="error-message">
+                {{.Error}}
+            </div>
+            {{else if .Success}}
+            <div class="success-message">
+                {{.Success}}
+            </div>
+            {{else}}
+            <form class="upload-form" method="POST" enctype="multipart/form-data">
+                <div class="file-input-wrapper" id="dropZone">
+                    <div class="icon">📷</div>
+                    <div class="text">
+                        <strong>Click to select</strong> or drag and drop<br>
+                        PNG, JPEG, GIF (max 2MB)
+                    </div>
+                    <input type="file" name="avatar" id="avatarInput" accept="image/png,image/jpeg,image/gif,image/webp" required>
+                </div>
+                <div class="file-name" id="fileName"></div>
+                <button type="submit" class="submit-btn" id="submitBtn" disabled>Upload Avatar</button>
+                <p class="info-text">Images will be resized to 400x400 max</p>
+            </form>
+            {{end}}
+        </div>
+
+        <script>
+            const fileInput = document.getElementById('avatarInput');
+            const fileName = document.getElementById('fileName');
+            const submitBtn = document.getElementById('submitBtn');
+            const dropZone = document.getElementById('dropZone');
+
+            if (fileInput) {
+                fileInput.addEventListener('change', function() {
+                    if (this.files && this.files[0]) {
+                        fileName.textContent = this.files[0].name;
+                        fileName.style.display = 'block';
+                        submitBtn.disabled = false;
+                    }
+                });
+            }
+
+            if (dropZone) {
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, preventDefaults, false);
+                });
+
+                function preventDefaults(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, highlight, false);
+                });
+
+                ['dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, unhighlight, false);
+                });
+
+                function highlight(e) {
+                    dropZone.style.borderColor = '#00ff7f';
+                    dropZone.style.backgroundColor = '#111';
+                }
+
+                function unhighlight(e) {
+                    dropZone.style.borderColor = '#444';
+                    dropZone.style.backgroundColor = '#0a0a0a';
+                }
+
+                dropZone.addEventListener('drop', handleDrop, false);
+
+                function handleDrop(e) {
+                    const dt = e.dataTransfer;
+                    const files = dt.files;
+                    if (files && files[0]) {
+                        fileInput.files = files;
+                        fileName.textContent = files[0].name;
+                        fileName.style.display = 'block';
+                        submitBtn.disabled = false;
+                    }
+                }
+            }
+        </script>
+    </body>
+</html>
+{{end}}
