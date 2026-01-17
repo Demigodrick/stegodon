@@ -18,16 +18,17 @@ import (
 )
 
 type IndexPageData struct {
-	Title     string
-	Host      string
-	SSHPort   int
-	Version   string
-	Posts     []PostView
-	HasPrev   bool
-	HasNext   bool
-	PrevPage  int
-	NextPage  int
-	InfoBoxes []InfoBoxView
+	Title         string
+	Host          string
+	SSHPort       int
+	Version       string
+	Posts         []PostView
+	HasPrev       bool
+	HasNext       bool
+	PrevPage      int
+	NextPage      int
+	InfoBoxes     []InfoBoxView
+	ServerMessage *domain.ServerMessage
 }
 
 type InfoBoxView struct {
@@ -37,18 +38,19 @@ type InfoBoxView struct {
 }
 
 type ProfilePageData struct {
-	Title      string
-	Host       string
-	SSHPort    int
-	Version    string
-	User       UserView
-	Posts      []PostView
-	TotalPosts int
-	HasPrev    bool
-	HasNext    bool
-	PrevPage   int
-	NextPage   int
-	InfoBoxes  []InfoBoxView
+	Title         string
+	Host          string
+	SSHPort       int
+	Version       string
+	User          UserView
+	Posts         []PostView
+	TotalPosts    int
+	HasPrev       bool
+	HasNext       bool
+	PrevPage      int
+	NextPage      int
+	InfoBoxes     []InfoBoxView
+	ServerMessage *domain.ServerMessage
 }
 
 type UserView struct {
@@ -115,6 +117,21 @@ func formatTimeAgo(t time.Time) string {
 	} else {
 		return t.Format("Jan 2, 2006")
 	}
+}
+
+// loadServerMessageForWeb returns the server message if web_enabled is true
+func loadServerMessageForWeb() *domain.ServerMessage {
+	database := db.GetDB()
+	err, msg := database.ReadServerMessage()
+	if err != nil {
+		log.Printf("Failed to load server message for web: %v", err)
+		return nil
+	}
+	// Only return if web display is enabled
+	if msg != nil && msg.WebEnabled && msg.Message != "" {
+		return msg
+	}
+	return nil
 }
 
 func HandleIndex(c *gin.Context, conf *util.AppConfig) {
@@ -220,16 +237,17 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	data := IndexPageData{
-		Title:     "Home",
-		Host:      host,
-		SSHPort:   conf.Conf.SshPort,
-		Version:   util.GetVersion(),
-		Posts:     posts,
-		HasPrev:   page > 1,
-		HasNext:   end < totalPosts,
-		PrevPage:  page - 1,
-		NextPage:  page + 1,
-		InfoBoxes: infoBoxViews,
+		Title:         "Home",
+		Host:          host,
+		SSHPort:       conf.Conf.SshPort,
+		Version:       util.GetVersion(),
+		Posts:         posts,
+		HasPrev:       page > 1,
+		HasNext:       end < totalPosts,
+		PrevPage:      page - 1,
+		NextPage:      page + 1,
+		InfoBoxes:     infoBoxViews,
+		ServerMessage: loadServerMessageForWeb(),
 	}
 
 	c.HTML(200, "index.html", data)
@@ -353,43 +371,46 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 			AvatarURL:     account.AvatarURL,
 			AvatarVersion: time.Now().Unix(),
 		},
-		Posts:      posts,
-		TotalPosts: totalPosts,
-		HasPrev:    page > 1,
-		HasNext:    end < totalPosts,
-		PrevPage:   page - 1,
-		NextPage:   page + 1,
-		InfoBoxes:  infoBoxViews,
+		Posts:         posts,
+		TotalPosts:    totalPosts,
+		HasPrev:       page > 1,
+		HasNext:       end < totalPosts,
+		PrevPage:      page - 1,
+		NextPage:      page + 1,
+		InfoBoxes:     infoBoxViews,
+		ServerMessage: loadServerMessageForWeb(),
 	}
 
 	c.HTML(200, "profile.html", data)
 }
 
 type SinglePostPageData struct {
-	Title      string
-	Host       string
-	SSHPort    int
-	Version    string
-	Post       PostView
-	User       UserView
-	ParentPost *PostView  // Parent post if this is a reply (nil if not a reply)
-	Replies    []PostView // Replies to this post
-	InfoBoxes  []InfoBoxView
+	Title         string
+	Host          string
+	SSHPort       int
+	Version       string
+	Post          PostView
+	User          UserView
+	ParentPost    *PostView  // Parent post if this is a reply (nil if not a reply)
+	Replies       []PostView // Replies to this post
+	InfoBoxes     []InfoBoxView
+	ServerMessage *domain.ServerMessage
 }
 
 type TagPageData struct {
-	Title      string
-	Host       string
-	SSHPort    int
-	Version    string
-	Tag        string
-	Posts      []PostView
-	TotalPosts int
-	HasPrev    bool
-	HasNext    bool
-	PrevPage   int
-	NextPage   int
-	InfoBoxes  []InfoBoxView
+	Title         string
+	Host          string
+	SSHPort       int
+	Version       string
+	Tag           string
+	Posts         []PostView
+	TotalPosts    int
+	HasPrev       bool
+	HasNext       bool
+	PrevPage      int
+	NextPage      int
+	InfoBoxes     []InfoBoxView
+	ServerMessage *domain.ServerMessage
 }
 
 func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
@@ -550,9 +571,10 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 			AvatarURL:     account.AvatarURL,
 			AvatarVersion: time.Now().Unix(),
 		},
-		ParentPost: parentPost,
-		Replies:    replies,
-		InfoBoxes:  infoBoxViews,
+		ParentPost:    parentPost,
+		Replies:       replies,
+		InfoBoxes:     infoBoxViews,
+		ServerMessage: loadServerMessageForWeb(),
 	}
 
 	c.HTML(200, "post.html", data)
@@ -646,18 +668,19 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	data := TagPageData{
-		Title:      fmt.Sprintf("#%s", tag),
-		Host:       host,
-		SSHPort:    conf.Conf.SshPort,
-		Version:    util.GetVersion(),
-		Tag:        tag,
-		Posts:      posts,
-		TotalPosts: totalPosts,
-		HasPrev:    page > 1,
-		HasNext:    end < totalPosts,
-		PrevPage:   page - 1,
-		NextPage:   page + 1,
-		InfoBoxes:  infoBoxViews,
+		Title:         fmt.Sprintf("#%s", tag),
+		Host:          host,
+		SSHPort:       conf.Conf.SshPort,
+		Version:       util.GetVersion(),
+		Tag:           tag,
+		Posts:         posts,
+		TotalPosts:    totalPosts,
+		HasPrev:       page > 1,
+		HasNext:       end < totalPosts,
+		PrevPage:      page - 1,
+		NextPage:      page + 1,
+		InfoBoxes:     infoBoxViews,
+		ServerMessage: loadServerMessageForWeb(),
 	}
 
 	c.HTML(200, "tag.html", data)

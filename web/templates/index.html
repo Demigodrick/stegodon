@@ -54,6 +54,11 @@
                 <div class="content-wrapper">
                     <div class="timeline">
                         <h2>local timeline</h2>
+                        {{if .ServerMessage}}
+                        <div class="server-message">
+                            <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}
+                        </div>
+                        {{end}}
                     </div>
 
                     {{if .Posts}} {{range .Posts}}
