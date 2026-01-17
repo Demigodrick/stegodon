@@ -620,7 +620,7 @@ func TestUpdate_ToggleEngagementInfo_WithEngagement(t *testing.T) {
 
 	// Toggle engagement info on
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if !m.showingEngagement {
 		t.Error("Expected showingEngagement true after 'i' key")
 	}
@@ -630,7 +630,7 @@ func TestUpdate_ToggleEngagementInfo_WithEngagement(t *testing.T) {
 
 	// Toggle engagement info off
 	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if m.showingEngagement {
 		t.Error("Expected showingEngagement false after second 'i' key")
 	}
@@ -653,7 +653,7 @@ func TestUpdate_ToggleEngagementInfo_NoEngagement(t *testing.T) {
 
 	// Try to toggle engagement info on post without engagement
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if m.showingEngagement {
 		t.Error("Expected showingEngagement to remain false for post without engagement")
 	}
@@ -664,26 +664,26 @@ func TestUpdate_ToggleEngagementInfo_NoEngagement(t *testing.T) {
 
 func TestUpdate_EngagementInfoMsg(t *testing.T) {
 	m := InitialModel(uuid.New(), 120, 40, "")
-	
+
 	likers := []string{"alice", "bob@mastodon.social", "charlie"}
 	boosters := []string{"dave", "eve@fosstodon.org"}
-	
+
 	m, cmd := m.Update(engagementInfoMsg{
 		likers:   likers,
 		boosters: boosters,
 	})
-	
+
 	if cmd != nil {
 		t.Error("Expected no command from engagementInfoMsg")
 	}
-	
+
 	if len(m.engagementLikers) != 3 {
 		t.Errorf("Expected 3 likers, got %d", len(m.engagementLikers))
 	}
 	if len(m.engagementBoosters) != 2 {
 		t.Errorf("Expected 2 boosters, got %d", len(m.engagementBoosters))
 	}
-	
+
 	if m.engagementLikers[0] != "alice" {
 		t.Errorf("Expected first liker 'alice', got '%s'", m.engagementLikers[0])
 	}
@@ -718,23 +718,23 @@ func TestUpdate_NavigationResetsEngagementInfo(t *testing.T) {
 	}
 	m.Selected = 0
 	m.showingEngagement = true // Set engagement info as visible
-	
+
 	// Navigate down
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	
+
 	if m.showingEngagement {
 		t.Error("Expected showingEngagement reset to false after navigation")
 	}
 	if m.Selected != 1 {
 		t.Errorf("Expected Selected 1, got %d", m.Selected)
 	}
-	
+
 	// Set engagement visible again
 	m.showingEngagement = true
-	
+
 	// Navigate up
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	
+
 	if m.showingEngagement {
 		t.Error("Expected showingEngagement reset to false after up navigation")
 	}
@@ -752,10 +752,10 @@ func TestUpdate_EngagementInfo_OnlyLikes(t *testing.T) {
 		},
 	}
 	m.Selected = 0
-	
+
 	// Should work with only likes
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if !m.showingEngagement {
 		t.Error("Expected showingEngagement true for post with likes only")
 	}
@@ -776,10 +776,10 @@ func TestUpdate_EngagementInfo_OnlyBoosts(t *testing.T) {
 		},
 	}
 	m.Selected = 0
-	
+
 	// Should work with only boosts
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if !m.showingEngagement {
 		t.Error("Expected showingEngagement true for post with boosts only")
 	}
@@ -791,10 +791,10 @@ func TestUpdate_EngagementInfo_OnlyBoosts(t *testing.T) {
 func TestUpdate_EngagementInfo_EmptyPosts(t *testing.T) {
 	m := InitialModel(uuid.New(), 120, 40, "")
 	m.Posts = []domain.HomePost{}
-	
+
 	// Should not crash with empty posts
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
-	
+
 	if m.showingEngagement {
 		t.Error("Expected showingEngagement false with empty posts")
 	}
@@ -820,9 +820,9 @@ func TestView_EngagementInfoDisplay(t *testing.T) {
 	m.showingEngagement = true
 	m.engagementLikers = []string{"alice", "bob@mastodon.social", "charlie"}
 	m.engagementBoosters = []string{"dave", "eve@fosstodon.org"}
-	
+
 	view := m.View()
-	
+
 	if !strings.Contains(view, "⭐ Liked by:") {
 		t.Error("Expected 'Liked by:' section in view")
 	}
@@ -862,9 +862,9 @@ func TestView_EngagementInfoDisplay_OnlyLikers(t *testing.T) {
 	m.showingEngagement = true
 	m.engagementLikers = []string{"alice", "bob"}
 	m.engagementBoosters = []string{} // No boosters
-	
+
 	view := m.View()
-	
+
 	if !strings.Contains(view, "⭐ Liked by:") {
 		t.Error("Expected 'Liked by:' section in view")
 	}
@@ -892,9 +892,9 @@ func TestView_EngagementInfoDisplay_OnlyBoosters(t *testing.T) {
 	m.showingEngagement = true
 	m.engagementLikers = []string{} // No likers
 	m.engagementBoosters = []string{"dave", "eve"}
-	
+
 	view := m.View()
-	
+
 	if strings.Contains(view, "⭐ Liked by:") {
 		t.Error("Did not expect 'Liked by:' section when no likers")
 	}
@@ -923,9 +923,9 @@ func TestView_EngagementInfoDisplay_NoData(t *testing.T) {
 	m.showingEngagement = true
 	m.engagementLikers = []string{}   // Empty - data not loaded yet
 	m.engagementBoosters = []string{} // Empty - data not loaded yet
-	
+
 	view := m.View()
-	
+
 	if !strings.Contains(view, "No engagement information available yet") {
 		t.Error("Expected 'No engagement information available yet' message")
 	}
@@ -949,31 +949,31 @@ func TestView_EngagementInfoDisplay_ManyUsers(t *testing.T) {
 	}
 	m.Selected = 0
 	m.showingEngagement = true
-	
+
 	// Create list of 15 likers
 	m.engagementLikers = make([]string, 15)
 	for i := 0; i < 15; i++ {
 		m.engagementLikers[i] = fmt.Sprintf("user%d", i+1)
 	}
-	
+
 	// Create list of 12 boosters
 	m.engagementBoosters = make([]string, 12)
 	for i := 0; i < 12; i++ {
 		m.engagementBoosters[i] = fmt.Sprintf("booster%d", i+1)
 	}
-	
+
 	view := m.View()
-	
+
 	// Should show first 10 likers + "and X more" message
 	if !strings.Contains(view, "...and 5 more") {
 		t.Error("Expected '...and 5 more' for likers")
 	}
-	
+
 	// Should show first 10 boosters + "and X more" message
 	if !strings.Contains(view, "...and 2 more") {
 		t.Error("Expected '...and 2 more' for boosters")
 	}
-	
+
 	// Verify we see the first users but not the ones beyond 10
 	if !strings.Contains(view, "@user1") {
 		t.Error("Expected '@user1' in view")
@@ -1003,9 +1003,9 @@ func TestView_EngagementInfo_NotShowing(t *testing.T) {
 	m.showingEngagement = false // Not showing
 	m.engagementLikers = []string{"alice", "bob"}
 	m.engagementBoosters = []string{"charlie"}
-	
+
 	view := m.View()
-	
+
 	// Should show normal content, not engagement info
 	if strings.Contains(view, "⭐ Liked by:") {
 		t.Error("Did not expect 'Liked by:' when not showing engagement")

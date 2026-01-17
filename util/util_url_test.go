@@ -6,11 +6,11 @@ import (
 
 func TestParseActivityPubURL(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          string
-		wantUsername   string
-		wantDomain     string
-		wantOk         bool
+		name         string
+		input        string
+		wantUsername string
+		wantDomain   string
+		wantOk       bool
 	}{
 		// Stegodon format
 		{
@@ -144,15 +144,15 @@ func TestParseActivityPubURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotUsername, gotDomain, gotOk := ParseActivityPubURL(tt.input)
-			
+
 			if gotOk != tt.wantOk {
 				t.Errorf("ParseActivityPubURL() gotOk = %v, wantOk %v", gotOk, tt.wantOk)
 			}
-			
+
 			if gotUsername != tt.wantUsername {
 				t.Errorf("ParseActivityPubURL() gotUsername = %v, wantUsername %v", gotUsername, tt.wantUsername)
 			}
-			
+
 			if gotDomain != tt.wantDomain {
 				t.Errorf("ParseActivityPubURL() gotDomain = %v, wantDomain %v", gotDomain, tt.wantDomain)
 			}

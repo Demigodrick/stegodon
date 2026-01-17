@@ -18,11 +18,11 @@ const (
 	FollowersView       // View who follows you
 	FollowingView       // View who you're following
 	LocalUsersView      // Browse and follow local users
-	AdminPanelView       // Admin panel for user management (admin only)
-	RelayManagementView  // Admin panel for relay management (admin only)
-	AccountSettingsView  // Account settings (profile, avatar, delete)
-	ThreadView           // View thread with parent and replies
-	NotificationsView    // View notifications
+	AdminPanelView      // Admin panel for user management (admin only)
+	RelayManagementView // Admin panel for relay management (admin only)
+	AccountSettingsView // Account settings (profile, avatar, delete)
+	ThreadView          // View thread with parent and replies
+	NotificationsView   // View notifications
 )
 
 const (

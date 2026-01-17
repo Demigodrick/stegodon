@@ -411,10 +411,32 @@ h2 {
   display: none;
 }
 
+/* Backdrop overlay for mobile menu */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.sidebar-backdrop.active {
+  display: block;
+  opacity: 1;
+}
+
 @media (max-width: 768px) {
   body {
     overflow: auto;
     overflow-y: scroll;
+  }
+  body.menu-open {
+    overflow: hidden;
   }
   .layout {
     flex-direction: column;
@@ -426,8 +448,20 @@ h2 {
     position: sticky;
     top: 0;
     height: auto;
+    max-height: 70vh;
+    overflow-y: auto;
     z-index: 100;
     padding: 15px 30px;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+  }
+  .sidebar::-webkit-scrollbar {
+    display: none; /* Chrome/Safari/Opera */
+  }
+  .sidebar.minimized {
+    max-height: none;
+    overflow: visible;
+    cursor: pointer;
   }
   .sidebar-header {
     display: flex;
@@ -443,23 +477,49 @@ h2 {
     flex: 1;
     font-size: 1.5em;
   }
-  .sidebar.minimized {
-    cursor: pointer;
+  /* Animated info-box for smooth open/close */
+  .sidebar .info-box {
+    max-height: 500px;
+    opacity: 1;
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease, margin-bottom 0.3s ease;
   }
   .sidebar.minimized .info-box {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: 0;
   }
   .sidebar .toggle-btn {
-    display: inline-block;
-    color: #00ff7f;
-    font-size: 1.5em;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 44px;
+    height: 44px;
     cursor: pointer;
     flex-shrink: 0;
-    padding-left: 15px;
     user-select: none;
     -webkit-user-select: none;
     -moz-user-select: none;
-    -ms-user-select: none;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #181818;
+    transition: transform 0.3s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+  .sidebar .toggle-btn span {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: #00ff7f;
+    border-radius: 1px;
+  }
+  .sidebar .toggle-btn:hover {
+    background: #222;
+    border-color: #00ff7f;
+  }
+  .sidebar:not(.minimized) .toggle-btn {
+    transform: rotate(90deg);
   }
   .main-content {
     margin-left: 0;

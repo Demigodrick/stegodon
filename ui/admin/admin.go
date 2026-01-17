@@ -26,28 +26,28 @@ const (
 )
 
 type Model struct {
-	AdminId uuid.UUID
-	CurrentView   AdminView
-	MenuSelected  int // Which menu item is selected
-	
+	AdminId      uuid.UUID
+	CurrentView  AdminView
+	MenuSelected int // Which menu item is selected
+
 	// User management
 	Users    []domain.Account
 	Selected int
 	Offset   int
-	
+
 	// Info boxes management
 	InfoBoxes     []domain.InfoBox
 	BoxSelected   int
 	BoxOffset     int
 	Editing       bool
 	EditBox       *domain.InfoBox
-	EditField     int              // 0=Title, 1=Content, 2=Order
-	TitleInput    textarea.Model   // Textarea for title
-	ContentInput  textarea.Model   // Textarea for content
-	OrderInput    textarea.Model   // Textarea for order number
-	ConfirmDelete bool             // True when confirming deletion
-	DeleteBoxId   uuid.UUID        // ID of box to delete
-	
+	EditField     int            // 0=Title, 1=Content, 2=Order
+	TitleInput    textarea.Model // Textarea for title
+	ContentInput  textarea.Model // Textarea for content
+	OrderInput    textarea.Model // Textarea for order number
+	ConfirmDelete bool           // True when confirming deletion
+	DeleteBoxId   uuid.UUID      // ID of box to delete
+
 	Width  int
 	Height int
 	Status string
@@ -95,15 +95,15 @@ func (m *Model) initializeTextareas(box *domain.InfoBox) {
 	m.TitleInput = createTextarea("Enter title", 1)
 	m.TitleInput.SetValue(box.Title)
 	// Don't focus yet - let user navigate fields first
-	
+
 	// Content input - multi-line
 	m.ContentInput = createTextarea("Enter content (Markdown)", 8)
 	m.ContentInput.SetValue(box.Content)
-	
+
 	// Order input - single line
 	m.OrderInput = createTextarea("Enter order number", 1)
 	m.OrderInput.SetValue(fmt.Sprintf("%d", box.OrderNum))
-	
+
 	// Start with field 0 selected but not focused (user can navigate with arrows)
 	m.EditField = 0
 }
@@ -296,7 +296,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if m.Editing {
 		// Check if textarea is focused before passing keys
 		isFocused := m.TitleInput.Focused() || m.ContentInput.Focused() || m.OrderInput.Focused()
-		
+
 		if isFocused {
 			// Block enter key in single-line fields
 			if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "enter" {
@@ -305,7 +305,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			
+
 			// Pass key to active textarea
 			switch m.EditField {
 			case 0:
@@ -477,7 +477,7 @@ func (m Model) handleInfoBoxesKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// Check if any textarea is focused
 	isFocused := m.TitleInput.Focused() || m.ContentInput.Focused() || m.OrderInput.Focused()
-	
+
 	if !isFocused {
 		// No textarea focused - handle field navigation
 		switch msg.String() {
@@ -487,12 +487,12 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.EditBox = nil
 			m.Status = "Edit cancelled"
 			return m, nil
-			
+
 		case "ctrl+s":
 			// Save the info box
 			m.saveFromTextareas()
 			return m, saveInfoBox(m.EditBox)
-			
+
 		case "up", "k":
 			// Move to previous field
 			m.saveFromTextareas()
@@ -500,7 +500,7 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.EditField--
 			}
 			return m, nil
-			
+
 		case "down", "j":
 			// Move to next field
 			m.saveFromTextareas()
@@ -508,7 +508,7 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.EditField++
 			}
 			return m, nil
-			
+
 		case "enter":
 			// Start editing the current field
 			m.focusCurrentField()
@@ -524,26 +524,26 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.ContentInput.Blur()
 			m.OrderInput.Blur()
 			return m, nil
-			
+
 		case "ctrl+s":
 			// Save the info box
 			m.saveFromTextareas()
 			return m, saveInfoBox(m.EditBox)
-			
+
 		case "tab":
 			// Move to next field
 			m.saveFromTextareas()
 			m.EditField = (m.EditField + 1) % 3
 			m.focusCurrentField()
 			return m, nil
-			
+
 		case "shift+tab":
 			// Move to previous field
 			m.saveFromTextareas()
 			m.EditField = (m.EditField + 2) % 3
 			m.focusCurrentField()
 			return m, nil
-			
+
 		case "enter":
 			// Prevent newlines in single-line fields (title and order)
 			if m.EditField == 0 || m.EditField == 2 {
@@ -553,7 +553,7 @@ func (m Model) handleEditingKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			// Allow enter in content field (field 1) - pass to textarea
 		}
 	}
-	
+
 	// Let the active textarea handle the key (if focused)
 	return m, nil
 }
@@ -565,7 +565,7 @@ func (m *Model) saveFromTextareas() {
 	}
 	m.EditBox.Title = m.TitleInput.Value()
 	m.EditBox.Content = m.ContentInput.Value()
-	
+
 	// Parse order number
 	orderStr := strings.TrimSpace(m.OrderInput.Value())
 	if order, err := strconv.Atoi(orderStr); err == nil {
@@ -578,7 +578,7 @@ func (m *Model) focusCurrentField() {
 	m.TitleInput.Blur()
 	m.ContentInput.Blur()
 	m.OrderInput.Blur()
-	
+
 	switch m.EditField {
 	case 0:
 		m.TitleInput.Focus()
@@ -627,7 +627,7 @@ func (m Model) renderMenu() string {
 	var s strings.Builder
 
 	menuItems := []string{"Manage Users", "Manage Info Boxes"}
-	
+
 	for i, item := range menuItems {
 		if i == m.MenuSelected {
 			text := common.ListItemSelectedStyle.Render(item)
@@ -751,7 +751,7 @@ func (m Model) renderInfoBoxesView() string {
 	}
 
 	s.WriteString("\n\n")
-	
+
 	// Show confirmation prompt if deleting
 	if m.ConfirmDelete {
 		s.WriteString(common.ListErrorStyle.Render("Delete this info box? (y/n)"))
@@ -775,19 +775,19 @@ func (m Model) renderEditView() string {
 	// Render textareas with labels and visual separation
 	fieldNames := []string{"Title", "Content (Markdown)", "Order Number"}
 	textareas := []textarea.Model{m.TitleInput, m.ContentInput, m.OrderInput}
-	
+
 	for i, name := range fieldNames {
 		// Add space between fields (except before first)
 		if i > 0 {
 			s.WriteString("\n")
 		}
-		
+
 		// Add indicator for focused field
 		indicator := "  "
 		if i == m.EditField {
 			indicator = "▶ "
 		}
-		
+
 		// Render label
 		labelStyle := common.ListItemStyle
 		if i == m.EditField {
@@ -795,7 +795,7 @@ func (m Model) renderEditView() string {
 		}
 		s.WriteString(labelStyle.Render(indicator + name + ":"))
 		s.WriteString("\n")
-		
+
 		// Render textarea
 		s.WriteString(textareas[i].View())
 		s.WriteString("\n")

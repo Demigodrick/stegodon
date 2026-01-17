@@ -601,7 +601,7 @@ func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool
 	}
 
 	domain = parts[0]
-	
+
 	// Handle different URL formats
 	if len(parts) == 2 {
 		// Format: https://example.com/@username (Mastodon style without trailing slash)

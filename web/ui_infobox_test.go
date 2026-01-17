@@ -11,9 +11,9 @@ import (
 // TestInfoBoxView_TitleEscaping tests that titles are properly HTML-escaped to prevent XSS
 func TestInfoBoxView_TitleEscaping(t *testing.T) {
 	tests := []struct {
-		name          string
-		title         string
-		wantContains  string
+		name           string
+		title          string
+		wantContains   string
 		wantNotContain string
 	}{
 		{
@@ -31,19 +31,19 @@ func TestInfoBoxView_TitleEscaping(t *testing.T) {
 		{
 			name:           "JavaScript event handlers should be escaped",
 			title:          "<img src=x onerror='alert(1)'>",
-			wantContains:   "&#39;", // Single quotes should be escaped
+			wantContains:   "&#39;",          // Single quotes should be escaped
 			wantNotContain: "onerror='alert", // Unescaped attack should not exist
 		},
 		{
-			name:          "Plain text should work normally",
-			title:         "Welcome to Stegodon",
-			wantContains:  "Welcome to Stegodon",
+			name:           "Plain text should work normally",
+			title:          "Welcome to Stegodon",
+			wantContains:   "Welcome to Stegodon",
 			wantNotContain: "&lt;",
 		},
 		{
-			name:          "Special characters should be escaped",
-			title:         "Title with & < > \" '",
-			wantContains:  "&amp;",
+			name:           "Special characters should be escaped",
+			title:          "Title with & < > \" '",
+			wantContains:   "&amp;",
 			wantNotContain: "& <",
 		},
 	}
@@ -237,7 +237,7 @@ func TestInfoBoxSecurity_IntegrationTest(t *testing.T) {
 	// Convert to view (simulating what HandleIndex does)
 	htmlContent := convertMarkdownToHTML(maliciousBox.Content)
 	view := InfoBoxView{
-		Title:       maliciousBox.Title, // Plain string - will be auto-escaped
+		Title:       maliciousBox.Title,         // Plain string - will be auto-escaped
 		ContentHTML: template.HTML(htmlContent), // Already sanitized markdown HTML
 	}
 

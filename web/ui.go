@@ -204,16 +204,16 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 		for _, box := range *infoBoxes {
 			// Replace placeholders first
 			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
-			
+
 			// Convert markdown to HTML
 			htmlContent := convertMarkdownToHTML(content)
-			
+
 			// Render title as markdown too - this allows safe HTML/SVG but prevents XSS
 			titleHTML := convertMarkdownToHTML(box.Title)
-			
+
 			infoBoxViews = append(infoBoxViews, InfoBoxView{
-				Title:       box.Title,                    // Plain text fallback
-				TitleHTML:   template.HTML(titleHTML),     // Markdown-rendered (allows safe HTML/SVG)
+				Title:       box.Title,                // Plain text fallback
+				TitleHTML:   template.HTML(titleHTML), // Markdown-rendered (allows safe HTML/SVG)
 				ContentHTML: template.HTML(htmlContent),
 			})
 		}
