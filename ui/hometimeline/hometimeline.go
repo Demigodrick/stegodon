@@ -399,15 +399,16 @@ func (m Model) View() string {
 					s.WriteString(authorFormatted + "\n")
 					s.WriteString(contentFormatted)
 				} else {
-					// Convert Markdown links first, then highlight hashtags (same order as myposts)
+					// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 					processedContent := post.Content
 					if post.IsLocal {
+						processedContent = util.UnescapeHTML(processedContent)
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
 					}
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
 					highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
 
-					contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+					contentFormatted := selectedBg.Render(selectedContentStyle.Render(highlightedContent))
 					s.WriteString(timeFormatted + "\n")
 					s.WriteString(authorFormatted + "\n")
 					s.WriteString(contentFormatted)
@@ -416,9 +417,10 @@ func (m Model) View() string {
 				unselectedStyle := lipgloss.NewStyle().
 					Width(contentWidth)
 
-				// Convert Markdown links first, then highlight hashtags (same order as myposts)
+				// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 				processedContent := post.Content
 				if post.IsLocal {
+					processedContent = util.UnescapeHTML(processedContent)
 					processedContent = util.MarkdownLinksToTerminal(processedContent)
 				}
 				highlightedContent := util.HighlightHashtagsTerminal(processedContent)
@@ -433,7 +435,7 @@ func (m Model) View() string {
 				}
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(highlightedContent, common.MaxContentTruncateWidth)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(highlightedContent))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")

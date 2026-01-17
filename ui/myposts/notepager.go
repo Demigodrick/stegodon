@@ -209,8 +209,9 @@ func (m Model) View() string {
 				engagementStr += fmt.Sprintf(" · 🔁 %d", note.BoostCount)
 			}
 
-			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags and mentions
-			messageWithLinks := util.MarkdownLinksToTerminal(note.Message)
+			// Unescape HTML entities, convert Markdown links to OSC 8 hyperlinks, and highlight hashtags and mentions
+			unescapedMessage := util.UnescapeHTML(note.Message)
+			messageWithLinks := util.MarkdownLinksToTerminal(unescapedMessage)
 			messageWithLinksAndHashtags := util.HighlightHashtagsTerminal(messageWithLinks)
 			messageWithLinksAndHashtags = util.HighlightMentionsTerminal(messageWithLinksAndHashtags, m.LocalDomain)
 
@@ -224,7 +225,7 @@ func (m Model) View() string {
 				// Render each line with the background and inverted text colors
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr + engagementStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := selectedBg.Render(selectedContentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
+				contentFormatted := selectedBg.Render(selectedContentStyle.Render(messageWithLinksAndHashtags))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")
@@ -236,7 +237,7 @@ func (m Model) View() string {
 
 				timeFormatted := unselectedStyle.Render(timeStyle.Render(timeStr + engagementStr))
 				authorFormatted := unselectedStyle.Render(authorStyle.Render("@" + note.CreatedBy))
-				contentFormatted := unselectedStyle.Render(contentStyle.Render(util.TruncateVisibleLength(messageWithLinksAndHashtags, common.MaxContentTruncateWidth)))
+				contentFormatted := unselectedStyle.Render(contentStyle.Render(messageWithLinksAndHashtags))
 
 				s.WriteString(timeFormatted + "\n")
 				s.WriteString(authorFormatted + "\n")
