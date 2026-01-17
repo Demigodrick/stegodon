@@ -32,3 +32,23 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Announce release on stegodon.social
+        if: success()
+        env:
+          STEGODON_SSH_KEY: ${{ secrets.STEGODON_SSH_KEY }}
+        run: |
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$STEGODON_SSH_KEY" > ~/.ssh/stegodon_key
+          chmod 600 ~/.ssh/stegodon_key
+
+          # Post announcement
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          MESSAGE="🦣 Stegodon [$TAG_NAME](https://github.com/deemkeen/stegodon/releases/tag/$TAG_NAME) released!"
+
+          echo "$MESSAGE" | ssh -o StrictHostKeyChecking=no \
+            -i ~/.ssh/stegodon_key -p 37331 stegodon.social post -
+
+          # Cleanup
+          rm -f ~/.ssh/stegodon_key
