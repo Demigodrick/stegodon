@@ -399,9 +399,10 @@ func (m Model) View() string {
 					s.WriteString(authorFormatted + "\n")
 					s.WriteString(contentFormatted)
 				} else {
-					// Convert Markdown links first, then highlight hashtags (same order as myposts)
+					// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 					processedContent := post.Content
 					if post.IsLocal {
+						processedContent = util.UnescapeHTML(processedContent)
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
 					}
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
@@ -416,9 +417,10 @@ func (m Model) View() string {
 				unselectedStyle := lipgloss.NewStyle().
 					Width(contentWidth)
 
-				// Convert Markdown links first, then highlight hashtags (same order as myposts)
+				// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 				processedContent := post.Content
 				if post.IsLocal {
+					processedContent = util.UnescapeHTML(processedContent)
 					processedContent = util.MarkdownLinksToTerminal(processedContent)
 				}
 				highlightedContent := util.HighlightHashtagsTerminal(processedContent)

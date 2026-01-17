@@ -79,18 +79,29 @@ func NormalizeInput(text string) string {
 	return normalized
 }
 
+// UnescapeHTML converts common HTML entities back to their characters
+// Used to display user-entered text that was escaped during storage
+func UnescapeHTML(text string) string {
+	// Convert common HTML entities (same as StripHTMLTags but without tag removal)
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#34;", "\"")  // Numeric entity for double quote
+	text = strings.ReplaceAll(text, "&#39;", "'")   // Numeric entity for apostrophe
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	return text
+}
+
 // StripHTMLTags removes HTML tags from a string and converts common HTML entities
 func StripHTMLTags(html string) string {
 	// Remove all HTML tags using pre-compiled regex
 	text := htmlTagRegex.ReplaceAllString(html, "")
 
-	// Convert common HTML entities
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&quot;", "\"")
-	text = strings.ReplaceAll(text, "&#39;", "'")
-	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	// Convert common HTML entities using the shared function
+	text = UnescapeHTML(text)
+
+	// Additional cleanup for escaped sequences
 	text = strings.ReplaceAll(text, "\\n", "\n")
 	text = strings.ReplaceAll(text, "\\\"", "\"")
 

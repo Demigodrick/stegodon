@@ -209,8 +209,9 @@ func (m Model) View() string {
 				engagementStr += fmt.Sprintf(" · 🔁 %d", note.BoostCount)
 			}
 
-			// Convert Markdown links to OSC 8 hyperlinks and highlight hashtags and mentions
-			messageWithLinks := util.MarkdownLinksToTerminal(note.Message)
+			// Unescape HTML entities, convert Markdown links to OSC 8 hyperlinks, and highlight hashtags and mentions
+			unescapedMessage := util.UnescapeHTML(note.Message)
+			messageWithLinks := util.MarkdownLinksToTerminal(unescapedMessage)
 			messageWithLinksAndHashtags := util.HighlightHashtagsTerminal(messageWithLinks)
 			messageWithLinksAndHashtags = util.HighlightMentionsTerminal(messageWithLinksAndHashtags, m.LocalDomain)
 

@@ -780,9 +780,10 @@ func (m Model) View() string {
 			author = "@" + author
 		}
 
-		// Format content - Convert Markdown links first, then highlight hashtags and mentions (same order as myposts)
+		// Format content - Unescape HTML entities, convert Markdown links, then highlight hashtags and mentions (same order as myposts)
 		processedContent := post.Content
 		if post.IsLocal {
+			processedContent = util.UnescapeHTML(processedContent)
 			processedContent = util.MarkdownLinksToTerminal(processedContent)
 		}
 		highlightedContent := util.HighlightHashtagsTerminal(processedContent)

@@ -183,6 +183,64 @@ func TestNormalizeInput(t *testing.T) {
 	}
 }
 
+func TestUnescapeHTML(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "apostrophe",
+			input:    "Hope it&#39;s a nice day out and not too cold!!",
+			expected: "Hope it's a nice day out and not too cold!!",
+		},
+		{
+			name:     "quotes",
+			input:    "He said &#34;Hello&#34;",
+			expected: `He said "Hello"`,
+		},
+		{
+			name:     "ampersand",
+			input:    "Tom &amp; Jerry",
+			expected: "Tom & Jerry",
+		},
+		{
+			name:     "less than and greater than",
+			input:    "5 &lt; 10 &gt; 3",
+			expected: "5 < 10 > 3",
+		},
+		{
+			name:     "non-breaking space",
+			input:    "Hello&nbsp;World",
+			expected: "Hello World",
+		},
+		{
+			name:     "multiple entities",
+			input:    "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;",
+			expected: "<script>alert('xss')</script>",
+		},
+		{
+			name:     "no entities",
+			input:    "Plain text with no entities",
+			expected: "Plain text with no entities",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := UnescapeHTML(tt.input)
+			if result != tt.expected {
+				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestDateTimeFormat(t *testing.T) {
 	format := DateTimeFormat()
 	expected := "2006-01-02 15:04:05 CEST"
