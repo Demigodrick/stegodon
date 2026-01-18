@@ -252,6 +252,34 @@ if create.Object.InReplyTo != "" {
 }
 ```
 
+### Object URL and InReplyTo Extraction
+
+When processing Create activities, the handler extracts additional fields for display and threading:
+
+**ObjectURL**: Human-readable web UI link
+- Extracted from `object.url` in the activity JSON
+- Preferred over `object.id` (ObjectURI) for user-facing links
+- Falls back to `object.id` if `url` is not present
+
+**InReplyTo**: Parent post URI for replies
+- Extracted from `object.inReplyTo` in the activity JSON
+- Stored in indexed column for fast timeline/thread lookups
+- Used by `ReadActivitiesByInReplyTo()` for thread building
+
+```go
+// Extract inReplyTo from activity JSON
+if inReplyTo, ok := objectMap["inReplyTo"].(string); ok && inReplyTo != "" {
+    activityRecord.InReplyTo = inReplyTo
+}
+
+// Extract url (human-readable link) from activity JSON
+if url, ok := objectMap["url"].(string); ok && url != "" {
+    activityRecord.ObjectURL = url
+}
+```
+
+---
+
 ### Mention Processing
 
 Mentions are extracted from the `tag` array and stored:

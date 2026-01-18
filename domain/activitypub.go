@@ -63,6 +63,7 @@ type Activity struct {
 	CreatedAt    time.Time
 	Local        bool // true if originated from this server
 	FromRelay    bool // true if forwarded by a relay
+	ReplyCount   int  // Denormalized reply count
 	LikeCount    int  // Denormalized like count
 	BoostCount   int  // Denormalized boost count
 }

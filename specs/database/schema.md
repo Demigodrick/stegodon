@@ -201,6 +201,8 @@ CREATE TABLE IF NOT EXISTS activities (
     activity_type TEXT NOT NULL,
     actor_uri TEXT NOT NULL,
     object_uri TEXT,
+    object_url TEXT,
+    in_reply_to TEXT,
     raw_json TEXT NOT NULL,
     processed INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -218,7 +220,9 @@ CREATE TABLE IF NOT EXISTS activities (
 | `activity_uri` | TEXT | Unique ActivityPub activity URI |
 | `activity_type` | TEXT | `Create`, `Update`, `Delete`, `Like`, etc. |
 | `actor_uri` | TEXT | Actor who performed the activity |
-| `object_uri` | TEXT | Object URI (extracted from raw_json) |
+| `object_uri` | TEXT | ActivityPub object id (canonical URI, returns JSON) |
+| `object_url` | TEXT | Human-readable web UI link (preferred for display) |
+| `in_reply_to` | TEXT | For Create activities, the URI this is replying to |
 | `raw_json` | TEXT | Full activity JSON |
 | `processed` | INTEGER | 1 if fully processed |
 | `created_at` | TIMESTAMP | When received |
@@ -236,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(activity_type);
 CREATE INDEX IF NOT EXISTS idx_activities_created_at ON activities(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activities_object_uri ON activities(object_uri);
 CREATE INDEX IF NOT EXISTS idx_activities_from_relay ON activities(from_relay);
+CREATE INDEX IF NOT EXISTS idx_activities_in_reply_to ON activities(in_reply_to);
 ```
 
 ---

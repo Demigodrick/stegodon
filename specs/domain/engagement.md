@@ -277,13 +277,17 @@ UPDATE notes SET boost_count = boost_count - 1 WHERE id = ?
 
 ### Activity Counters
 
-Remote activities also have denormalized counters:
+Remote activities also have denormalized counters and URL fields:
 
 ```go
 type Activity struct {
     // ...
-    LikeCount  int
-    BoostCount int
+    ObjectURI  string // ActivityPub object id (canonical URI, returns JSON)
+    ObjectURL  string // ActivityPub object url (human-readable web UI link)
+    InReplyTo  string // For Create activities, the URI this is a reply to (indexed for fast lookups)
+    ReplyCount int    // Denormalized reply count
+    LikeCount  int    // Denormalized like count
+    BoostCount int    // Denormalized boost count
 }
 ```
 

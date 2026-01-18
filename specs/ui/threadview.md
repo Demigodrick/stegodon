@@ -53,7 +53,8 @@ type ThreadPost struct {
     Author     string
     Content    string
     Time       time.Time
-    ObjectURI  string
+    ObjectURI  string     // ActivityPub object id (canonical URI, returns JSON)
+    ObjectURL  string     // ActivityPub object url (human-readable web UI link, preferred for display)
     IsLocal    bool       // Local vs remote post
     IsParent   bool       // Whether this is the parent post
     IsDeleted  bool       // Placeholder for deleted posts
@@ -321,15 +322,26 @@ case "l":
 
 ## URL Toggle
 
-Press `o` to toggle between content and URL:
+Press `o` to toggle between content and URL. The display prefers `ObjectURL` (web UI link) over `ObjectURI` (JSON endpoint) when available:
 
 ```go
 case "o":
-    if m.Selected == -1 && m.ParentPost != nil && util.IsURL(m.ParentPost.ObjectURI) {
-        m.showingURL = !m.showingURL
+    if m.Selected == -1 && m.ParentPost != nil {
+        // Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+        displayURL := m.ParentPost.ObjectURL
+        if displayURL == "" {
+            displayURL = m.ParentPost.ObjectURI
+        }
+        if util.IsURL(displayURL) {
+            m.showingURL = !m.showingURL
+        }
     } else if m.Selected >= 0 && m.Selected < len(m.Replies) {
         reply := m.Replies[m.Selected]
-        if util.IsURL(reply.ObjectURI) {
+        displayURL := reply.ObjectURL
+        if displayURL == "" {
+            displayURL = reply.ObjectURI
+        }
+        if util.IsURL(displayURL) {
             m.showingURL = !m.showingURL
         }
     }
@@ -337,11 +349,16 @@ case "o":
 
 ### URL Display Rendering
 
-When `showingURL` is true, the post content is replaced with a clickable URL:
+When `showingURL` is true, the post content is replaced with a clickable URL. The display prefers `ObjectURL` (web UI link) over `ObjectURI` (JSON endpoint):
 
 ```go
-if m.showingURL && post.ObjectURI != "" {
-    osc8Link := util.FormatClickableURL(post.ObjectURI, common.MaxContentTruncateWidth, "🔗 ")
+// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+displayURL := post.ObjectURL
+if displayURL == "" {
+    displayURL = post.ObjectURI
+}
+if m.showingURL && displayURL != "" {
+    osc8Link := util.FormatClickableURL(displayURL, common.MaxContentTruncateWidth, "🔗 ")
     hintText := "(Cmd+click to open, press 'o' to toggle back)"
 
     contentStyleBg := lipgloss.NewStyle().
@@ -352,7 +369,7 @@ if m.showingURL && post.ObjectURI != "" {
 }
 ```
 
-Uses `util.FormatClickableURL()` for OSC 8 terminal hyperlinks.
+Uses `util.FormatClickableURL()` for OSC 8 terminal hyperlinks. The `ObjectURL` field is preferred because it points to the human-readable web page, while `ObjectURI` typically returns JSON.
 
 ---
 
