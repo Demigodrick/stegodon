@@ -81,6 +81,10 @@ func (w *dbWrapper) CreateNote(userId interface{}, message string) (interface{},
 	return w.db.CreateNote(userId.(uuid.UUID), message)
 }
 
+func (w *dbWrapper) ReadNoteIdWithReplyInfo(id interface{}) (error, *domain.Note) {
+	return w.db.ReadNoteIdWithReplyInfo(id.(uuid.UUID))
+}
+
 func (w *dbWrapper) ReadHomeTimelinePosts(accountId interface{}, limit int) (error, *[]domain.HomePost) {
 	return w.db.ReadHomeTimelinePosts(accountId.(uuid.UUID), limit)
 }
