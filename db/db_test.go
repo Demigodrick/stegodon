@@ -85,6 +85,7 @@ func setupTestDB(t *testing.T) *DB {
 		activity_type varchar(50) NOT NULL,
 		actor_uri varchar(500),
 		object_uri varchar(500),
+		object_url TEXT,
 		in_reply_to TEXT,
 		raw_json text,
 		processed int default 0,

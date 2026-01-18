@@ -996,7 +996,7 @@ func (db *DB) CleanupOrphanedFollows() error {
 
 // Activity queries
 const (
-	sqlInsertActivity      = `INSERT INTO activities(id, activity_uri, activity_type, actor_uri, object_uri, in_reply_to, raw_json, processed, local, created_at, from_relay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	sqlInsertActivity      = `INSERT INTO activities(id, activity_uri, activity_type, actor_uri, object_uri, object_url, in_reply_to, raw_json, processed, local, created_at, from_relay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	sqlUpdateActivity      = `UPDATE activities SET raw_json = ?, processed = ?, object_uri = ? WHERE id = ?`
 	sqlSelectActivityByURI = `SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at FROM activities WHERE activity_uri = ?`
 )
@@ -1009,6 +1009,7 @@ func (db *DB) CreateActivity(activity *domain.Activity) error {
 			activity.ActivityType,
 			activity.ActorURI,
 			activity.ObjectURI,
+			activity.ObjectURL,
 			activity.InReplyTo,
 			activity.RawJSON,
 			activity.Processed,
@@ -1173,7 +1174,7 @@ const (
 	// Excludes replies (activities where inReplyTo has a URL value, not null)
 	// Top-level posts have "inReplyTo":null, replies have "inReplyTo":"https://..."
 	// Includes reply_count for denormalized reply counting
-	sqlSelectHomeRemoteActivities = `SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, ra.username, ra.domain, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
+	sqlSelectHomeRemoteActivities = `SELECT a.id, a.actor_uri, a.object_uri, COALESCE(a.object_url, ''), a.raw_json, a.created_at, ra.username, ra.domain, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
 		FROM activities a
 		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
 		INNER JOIN follows f ON f.target_account_id = ra.id
@@ -1243,6 +1244,7 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		var idStr string
 		var actorURI string
 		var objectURI string
+		var objectURL string
 		var rawJSON string
 		var createdAtStr string
 		var username string
@@ -1251,7 +1253,7 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		var likeCount int
 		var boostCount int
 
-		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount, &likeCount, &boostCount); err != nil {
+		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount, &likeCount, &boostCount); err != nil {
 			return err, &posts
 		}
 
@@ -1267,6 +1269,7 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 			Content:    content,
 			Time:       parsedTime,
 			ObjectURI:  objectURI,
+			ObjectURL:  objectURL,
 			IsLocal:    false,
 			NoteID:     uuid.Nil,
 			ReplyCount: replyCount,
@@ -1281,7 +1284,7 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 	// Fetch relay-forwarded activities (marked with from_relay = 1)
 	// These come from both FediBuzz (Announce-wrapped) and YUKIMOCHI (raw Create) relays
 	relayRows, err := db.db.Query(`
-		SELECT a.id, a.actor_uri, a.object_uri, a.raw_json, a.created_at, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
+		SELECT a.id, a.actor_uri, a.object_uri, COALESCE(a.object_url, ''), a.raw_json, a.created_at, COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
 		FROM activities a
 		WHERE a.activity_type = 'Create' AND a.local = 0 AND a.from_relay = 1
 		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
@@ -1295,13 +1298,14 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		var idStr string
 		var actorURI string
 		var objectURI string
+		var objectURL string
 		var rawJSON string
 		var createdAtStr string
 		var replyCount int
 		var likeCount int
 		var boostCount int
 
-		if err := relayRows.Scan(&idStr, &actorURI, &objectURI, &rawJSON, &createdAtStr, &replyCount, &likeCount, &boostCount); err != nil {
+		if err := relayRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &replyCount, &likeCount, &boostCount); err != nil {
 			return err, &posts
 		}
 
@@ -1320,6 +1324,7 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 			Content:    content,
 			Time:       parsedTime,
 			ObjectURI:  objectURI,
+			ObjectURL:  objectURL,
 			IsLocal:    false,
 			NoteID:     uuid.Nil,
 			ReplyCount: replyCount,
@@ -3200,7 +3205,7 @@ func (db *DB) scanNotesWithReplyInfo(rows *sql.Rows) (error, *[]domain.Note) {
 func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Activity) {
 	// Search for activities where in_reply_to matches the parentURI (using indexed column)
 	rows, err := db.db.Query(`
-		SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
+		SELECT id, activity_uri, activity_type, actor_uri, object_uri, COALESCE(object_url, ''), raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
 		FROM activities
 		WHERE activity_type = 'Create'
 		AND in_reply_to = ?
@@ -3215,7 +3220,7 @@ func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Acti
 	for rows.Next() {
 		var a domain.Activity
 		var idStr string
-		err := rows.Scan(&idStr, &a.ActivityURI, &a.ActivityType, &a.ActorURI, &a.ObjectURI, &a.RawJSON, &a.Processed, &a.Local, &a.CreatedAt, &a.LikeCount, &a.BoostCount)
+		err := rows.Scan(&idStr, &a.ActivityURI, &a.ActivityType, &a.ActorURI, &a.ObjectURI, &a.ObjectURL, &a.RawJSON, &a.Processed, &a.Local, &a.CreatedAt, &a.LikeCount, &a.BoostCount)
 		if err != nil {
 			continue
 		}

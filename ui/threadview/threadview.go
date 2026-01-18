@@ -74,13 +74,14 @@ type ThreadPost struct {
 	Author     string
 	Content    string
 	Time       time.Time
-	ObjectURI  string
-	IsLocal    bool // Whether this is a local post
-	IsParent   bool // Whether this is the parent post
-	IsDeleted  bool // Whether this post was deleted (placeholder)
-	ReplyCount int  // Number of replies to this post
-	LikeCount  int  // Number of likes on this post
-	BoostCount int  // Number of boosts on this post
+	ObjectURI  string // ActivityPub object id (canonical URI, returns JSON)
+	ObjectURL  string // ActivityPub object url (human-readable web UI link, preferred for display)
+	IsLocal    bool   // Whether this is a local post
+	IsParent   bool   // Whether this is the parent post
+	IsDeleted  bool   // Whether this post was deleted (placeholder)
+	ReplyCount int    // Number of replies to this post
+	LikeCount  int    // Number of likes on this post
+	BoostCount int    // Number of boosts on this post
 }
 
 // Model represents the thread view state
@@ -197,6 +198,7 @@ func loadThread(parentURI string) tea.Cmd {
 					Content:    content,
 					Time:       activity.CreatedAt,
 					ObjectURI:  activity.ObjectURI,
+					ObjectURL:  activity.ObjectURL,
 					IsLocal:    false,
 					IsParent:   true,
 					ReplyCount: replyCount,
@@ -266,6 +268,7 @@ func loadThread(parentURI string) tea.Cmd {
 					Content:    replyContent,
 					Time:       activity.CreatedAt,
 					ObjectURI:  activity.ObjectURI,
+					ObjectURL:  activity.ObjectURL,
 					IsLocal:    false,
 					IsParent:   false,
 					ReplyCount: replyCount,
@@ -412,6 +415,7 @@ func loadThreadByID(noteID uuid.UUID, noteURI string, author string, content str
 						Content:    replyContent,
 						Time:       activity.CreatedAt,
 						ObjectURI:  activity.ObjectURI,
+						ObjectURL:  activity.ObjectURL,
 						IsLocal:    false,
 						IsParent:   false,
 						ReplyCount: replyCount,
@@ -673,13 +677,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case "o":
 			// Toggle between showing content and URL (only for posts with valid HTTP/HTTPS URLs)
-			if m.Selected == -1 && m.ParentPost != nil && util.IsURL(m.ParentPost.ObjectURI) {
+			// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+			if m.Selected == -1 && m.ParentPost != nil {
 				// Toggle URL for parent post
-				m.showingURL = !m.showingURL
+				displayURL := m.ParentPost.ObjectURL
+				if displayURL == "" {
+					displayURL = m.ParentPost.ObjectURI
+				}
+				if util.IsURL(displayURL) {
+					m.showingURL = !m.showingURL
+				}
 			} else if m.Selected >= 0 && m.Selected < len(m.Replies) {
 				// Toggle URL for selected reply
 				reply := m.Replies[m.Selected]
-				if util.IsURL(reply.ObjectURI) {
+				displayURL := reply.ObjectURL
+				if displayURL == "" {
+					displayURL = reply.ObjectURI
+				}
+				if util.IsURL(displayURL) {
 					m.showingURL = !m.showingURL
 				}
 			}
@@ -800,8 +815,13 @@ func (m Model) View() string {
 
 			var contentFormatted string
 			// Toggle between content and URL
-			if m.showingURL && post.ObjectURI != "" {
-				osc8Link := util.FormatClickableURL(post.ObjectURI, common.MaxContentTruncateWidth, "🔗 ")
+			// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+			displayURL := post.ObjectURL
+			if displayURL == "" {
+				displayURL = post.ObjectURI
+			}
+			if m.showingURL && displayURL != "" {
+				osc8Link := util.FormatClickableURL(displayURL, common.MaxContentTruncateWidth, "🔗 ")
 				hintText := "(Cmd+click to open, press 'o' to toggle back)"
 
 				contentStyleBg := lipgloss.NewStyle().

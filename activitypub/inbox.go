@@ -148,8 +148,9 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 	// Store activity in database (except for Announce which may need special handling for relays)
 	database := deps.Database
 
-	// Extract ObjectURI and InReplyTo from the activity's object field
+	// Extract ObjectURI, ObjectURL and InReplyTo from the activity's object field
 	objectURI := ""
+	objectURL := ""
 	inReplyTo := ""
 	if activity.Object != nil {
 		switch obj := activity.Object.(type) {
@@ -160,6 +161,10 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			// Object is a full object (like in Create, Update)
 			if id, ok := obj["id"].(string); ok {
 				objectURI = id
+			}
+			// Extract url for human-readable web link (preferred for display)
+			if url, ok := obj["url"].(string); ok {
+				objectURL = url
 			}
 			// Extract inReplyTo for indexed reply lookups
 			if reply, ok := obj["inReplyTo"].(string); ok {
@@ -191,6 +196,7 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			ActivityType: activity.Type,
 			ActorURI:     activity.Actor,
 			ObjectURI:    objectURI,
+			ObjectURL:    objectURL,
 			InReplyTo:    inReplyTo,
 			RawJSON:      string(body),
 			Processed:    false,
@@ -1028,6 +1034,12 @@ func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string
 		relayInReplyTo = reply
 	}
 
+	// Extract url for human-readable web link
+	relayObjectURL := ""
+	if url, ok := objectContent["url"].(string); ok {
+		relayObjectURL = url
+	}
+
 	// Store as a Create activity so it shows in the timeline
 	activity := &domain.Activity{
 		Id:           uuid.New(),
@@ -1035,6 +1047,7 @@ func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string
 		ActivityType: "Create",   // Store as Create so it shows in timeline
 		ActorURI:     actorURI,
 		ObjectURI:    objectURI,
+		ObjectURL:    relayObjectURL,
 		InReplyTo:    relayInReplyTo,
 		RawJSON:      string(rawJSON),
 		Processed:    true,
@@ -1232,6 +1245,7 @@ func handleUpdateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 	var objectType struct {
 		Type      string `json:"type"`
 		ID        string `json:"id"`
+		URL       string `json:"url"`
 		InReplyTo string `json:"inReplyTo"`
 	}
 	if err := json.Unmarshal(update.Object, &objectType); err != nil {
@@ -1268,6 +1282,7 @@ func handleUpdateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 				ActivityType: "Create",  // Store as Create so it shows in timeline
 				ActorURI:     update.Actor,
 				ObjectURI:    objectType.ID,
+				ObjectURL:    objectType.URL,
 				InReplyTo:    objectType.InReplyTo,
 				RawJSON:      string(body),
 				Processed:    true,

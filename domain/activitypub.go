@@ -55,7 +55,8 @@ type Activity struct {
 	ActivityURI  string
 	ActivityType string // Follow, Create, Like, Announce, Undo, etc.
 	ActorURI     string
-	ObjectURI    string
+	ObjectURI    string // ActivityPub object id (canonical URI, returns JSON)
+	ObjectURL    string // ActivityPub object url (human-readable web UI link)
 	InReplyTo    string // For Create activities, the URI this is a reply to (indexed for fast lookups)
 	RawJSON      string
 	Processed    bool
