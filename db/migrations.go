@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -55,6 +56,7 @@ const (
 		activity_type TEXT NOT NULL,
 		actor_uri TEXT NOT NULL,
 		object_uri TEXT,
+		in_reply_to TEXT,
 		raw_json TEXT NOT NULL,
 		processed INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -68,6 +70,7 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_activities_created_at ON activities(created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_activities_object_uri ON activities(object_uri);
 		CREATE INDEX IF NOT EXISTS idx_activities_from_relay ON activities(from_relay);
+		CREATE INDEX IF NOT EXISTS idx_activities_in_reply_to ON activities(in_reply_to);
 	`
 
 	// Likes/favorites table
@@ -750,8 +753,65 @@ func (db *DB) MigratePerformanceIndexes() error {
 		log.Printf("Warning: Failed to create idx_activities_from_relay: %v", err)
 	}
 
+	// Add in_reply_to column to activities for faster reply queries (avoids LIKE on raw_json)
+	_, err = db.db.Exec(`ALTER TABLE activities ADD COLUMN in_reply_to TEXT`)
+	if err != nil {
+		// Column likely already exists, which is fine
+		if !strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("Note: in_reply_to column may already exist: %v", err)
+		}
+	} else {
+		log.Println("Added in_reply_to column to activities table")
+	}
+
+	// Create index on in_reply_to for fast reply lookups
+	_, err = db.db.Exec(`CREATE INDEX IF NOT EXISTS idx_activities_in_reply_to ON activities(in_reply_to)`)
+	if err != nil {
+		log.Printf("Warning: Failed to create idx_activities_in_reply_to: %v", err)
+	}
+
+	// Backfill in_reply_to from raw_json for existing activities
+	db.backfillActivitiesInReplyTo()
+
 	log.Println("Performance indexes migration complete")
 	return nil
+}
+
+// backfillActivitiesInReplyTo extracts inReplyTo from raw_json and populates the in_reply_to column
+func (db *DB) backfillActivitiesInReplyTo() {
+	// Only backfill rows where in_reply_to is NULL but raw_json contains inReplyTo
+	rows, err := db.db.Query(`
+		SELECT id, raw_json FROM activities
+		WHERE in_reply_to IS NULL
+		AND activity_type = 'Create'
+		AND (raw_json LIKE '%"inReplyTo":%' OR raw_json LIKE '%"inReplyTo" :%')
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to query activities for in_reply_to backfill: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	updated := 0
+	for rows.Next() {
+		var id, rawJSON string
+		if err := rows.Scan(&id, &rawJSON); err != nil {
+			continue
+		}
+
+		// Extract inReplyTo from JSON
+		inReplyTo := extractInReplyToFromJSON(rawJSON)
+		if inReplyTo != "" {
+			_, err := db.db.Exec(`UPDATE activities SET in_reply_to = ? WHERE id = ?`, inReplyTo, id)
+			if err == nil {
+				updated++
+			}
+		}
+	}
+
+	if updated > 0 {
+		log.Printf("Backfilled in_reply_to for %d activities", updated)
+	}
 }
 
 // seedDefaultInfoBoxes creates default info boxes on first run

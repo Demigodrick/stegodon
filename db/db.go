@@ -996,7 +996,7 @@ func (db *DB) CleanupOrphanedFollows() error {
 
 // Activity queries
 const (
-	sqlInsertActivity      = `INSERT INTO activities(id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at, from_relay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	sqlInsertActivity      = `INSERT INTO activities(id, activity_uri, activity_type, actor_uri, object_uri, in_reply_to, raw_json, processed, local, created_at, from_relay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	sqlUpdateActivity      = `UPDATE activities SET raw_json = ?, processed = ?, object_uri = ? WHERE id = ?`
 	sqlSelectActivityByURI = `SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at FROM activities WHERE activity_uri = ?`
 )
@@ -1009,6 +1009,7 @@ func (db *DB) CreateActivity(activity *domain.Activity) error {
 			activity.ActivityType,
 			activity.ActorURI,
 			activity.ObjectURI,
+			activity.InReplyTo,
 			activity.RawJSON,
 			activity.Processed,
 			activity.Local,
@@ -3197,16 +3198,14 @@ func (db *DB) scanNotesWithReplyInfo(rows *sql.Rows) (error, *[]domain.Note) {
 // This searches the raw_json field for "inReplyTo":"<uri>" patterns
 // It supports both exact URI matches and partial matches (for notes without stored object_uri)
 func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Activity) {
-	// Search for activities where the inReplyTo field matches the parentURI
-	// We search in raw_json since inReplyTo is nested in the object
+	// Search for activities where in_reply_to matches the parentURI (using indexed column)
 	rows, err := db.db.Query(`
 		SELECT id, activity_uri, activity_type, actor_uri, object_uri, raw_json, processed, local, created_at, COALESCE(like_count, 0), COALESCE(boost_count, 0)
 		FROM activities
 		WHERE activity_type = 'Create'
-		AND (raw_json LIKE ? OR raw_json LIKE ?)
+		AND in_reply_to = ?
 		ORDER BY created_at ASC`,
-		`%"inReplyTo":"`+parentURI+`"%`,
-		`%"inReplyTo": "`+parentURI+`"%`) // Handle optional space after colon
+		parentURI)
 	if err != nil {
 		return err, nil
 	}
@@ -3229,20 +3228,20 @@ func (db *DB) ReadActivitiesByInReplyTo(parentURI string) (error, *[]domain.Acti
 // CountActivitiesByInReplyTo counts Create activities that are replies to the given URI
 func (db *DB) CountActivitiesByInReplyTo(parentURI string) (int, error) {
 	var count int
-	// Count activities that reply to parentURI, excluding duplicates of local notes
-	// A duplicate is an activity whose object_uri matches a local note (by object_uri or /notes/{uuid} pattern)
+	// Count activities that reply to parentURI using indexed in_reply_to column
+	// Excludes duplicates of local notes (activities whose object_uri matches a local note
+	// either by exact object_uri match or by /notes/{uuid} pattern in the object_uri)
 	err := db.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM activities a
 		WHERE a.activity_type = 'Create'
-		AND (a.raw_json LIKE ? OR a.raw_json LIKE ?)
+		AND a.in_reply_to = ?
 		AND NOT EXISTS (
 			SELECT 1 FROM notes n
 			WHERE (n.object_uri = a.object_uri AND n.object_uri IS NOT NULL AND n.object_uri != '')
 			   OR (a.object_uri LIKE '%/notes/' || n.id || '%')
 		)`,
-		`%"inReplyTo":"`+parentURI+`"%`,
-		`%"inReplyTo": "`+parentURI+`"%`).Scan(&count)
+		parentURI).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

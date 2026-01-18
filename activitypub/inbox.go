@@ -148,8 +148,9 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 	// Store activity in database (except for Announce which may need special handling for relays)
 	database := deps.Database
 
-	// Extract ObjectURI from the activity's object field
+	// Extract ObjectURI and InReplyTo from the activity's object field
 	objectURI := ""
+	inReplyTo := ""
 	if activity.Object != nil {
 		switch obj := activity.Object.(type) {
 		case string:
@@ -159,6 +160,10 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			// Object is a full object (like in Create, Update)
 			if id, ok := obj["id"].(string); ok {
 				objectURI = id
+			}
+			// Extract inReplyTo for indexed reply lookups
+			if reply, ok := obj["inReplyTo"].(string); ok {
+				inReplyTo = reply
 			}
 		}
 	}
@@ -186,6 +191,7 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 			ActivityType: activity.Type,
 			ActorURI:     activity.Actor,
 			ObjectURI:    objectURI,
+			InReplyTo:    inReplyTo,
 			RawJSON:      string(body),
 			Processed:    false,
 			Local:        false,
@@ -1016,6 +1022,12 @@ func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string
 		return fmt.Errorf("failed to marshal relay-forwarded object: %w", err)
 	}
 
+	// Extract inReplyTo for indexed reply lookups
+	relayInReplyTo := ""
+	if reply, ok := objectContent["inReplyTo"].(string); ok {
+		relayInReplyTo = reply
+	}
+
 	// Store as a Create activity so it shows in the timeline
 	activity := &domain.Activity{
 		Id:           uuid.New(),
@@ -1023,6 +1035,7 @@ func handleRelayAnnounce(announceID, objectURI string, embeddedObject map[string
 		ActivityType: "Create",   // Store as Create so it shows in timeline
 		ActorURI:     actorURI,
 		ObjectURI:    objectURI,
+		InReplyTo:    relayInReplyTo,
 		RawJSON:      string(rawJSON),
 		Processed:    true,
 		Local:        false,
@@ -1217,8 +1230,9 @@ func handleUpdateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 
 	// Parse the object to determine what type it is
 	var objectType struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		InReplyTo string `json:"inReplyTo"`
 	}
 	if err := json.Unmarshal(update.Object, &objectType); err != nil {
 		return fmt.Errorf("failed to parse Update object: %w", err)
@@ -1254,6 +1268,7 @@ func handleUpdateActivityWithDeps(body []byte, username string, deps *InboxDeps)
 				ActivityType: "Create",  // Store as Create so it shows in timeline
 				ActorURI:     update.Actor,
 				ObjectURI:    objectType.ID,
+				InReplyTo:    objectType.InReplyTo,
 				RawJSON:      string(body),
 				Processed:    true,
 				Local:        false,

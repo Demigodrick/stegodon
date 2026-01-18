@@ -56,6 +56,7 @@ type Activity struct {
 	ActivityType string // Follow, Create, Like, Announce, Undo, etc.
 	ActorURI     string
 	ObjectURI    string
+	InReplyTo    string // For Create activities, the URI this is a reply to (indexed for fast lookups)
 	RawJSON      string
 	Processed    bool
 	CreatedAt    time.Time
