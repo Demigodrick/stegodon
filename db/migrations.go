@@ -56,6 +56,7 @@ const (
 		activity_type TEXT NOT NULL,
 		actor_uri TEXT NOT NULL,
 		object_uri TEXT,
+		object_url TEXT,
 		in_reply_to TEXT,
 		raw_json TEXT NOT NULL,
 		processed INTEGER DEFAULT 0,
@@ -773,6 +774,20 @@ func (db *DB) MigratePerformanceIndexes() error {
 	// Backfill in_reply_to from raw_json for existing activities
 	db.backfillActivitiesInReplyTo()
 
+	// Add object_url column to activities for human-readable web links (vs object_uri which is the AP id)
+	_, err = db.db.Exec(`ALTER TABLE activities ADD COLUMN object_url TEXT`)
+	if err != nil {
+		// Column likely already exists, which is fine
+		if !strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("Note: object_url column may already exist: %v", err)
+		}
+	} else {
+		log.Println("Added object_url column to activities table")
+	}
+
+	// Backfill object_url from raw_json for existing activities
+	db.backfillActivitiesObjectURL()
+
 	log.Println("Performance indexes migration complete")
 	return nil
 }
@@ -812,6 +827,59 @@ func (db *DB) backfillActivitiesInReplyTo() {
 	if updated > 0 {
 		log.Printf("Backfilled in_reply_to for %d activities", updated)
 	}
+}
+
+// backfillActivitiesObjectURL extracts url from raw_json and populates the object_url column
+func (db *DB) backfillActivitiesObjectURL() {
+	// Only backfill rows where object_url is NULL but raw_json contains url
+	rows, err := db.db.Query(`
+		SELECT id, raw_json FROM activities
+		WHERE object_url IS NULL
+		AND activity_type = 'Create'
+		AND raw_json LIKE '%"url":%'
+	`)
+	if err != nil {
+		log.Printf("Warning: Failed to query activities for object_url backfill: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	updated := 0
+	for rows.Next() {
+		var id, rawJSON string
+		if err := rows.Scan(&id, &rawJSON); err != nil {
+			continue
+		}
+
+		// Extract url from JSON
+		objectURL := extractObjectURLFromJSON(rawJSON)
+		if objectURL != "" {
+			_, err := db.db.Exec(`UPDATE activities SET object_url = ? WHERE id = ?`, objectURL, id)
+			if err == nil {
+				updated++
+			}
+		}
+	}
+
+	if updated > 0 {
+		log.Printf("Backfilled object_url for %d activities", updated)
+	}
+}
+
+// extractObjectURLFromJSON extracts the object.url field from ActivityPub JSON
+func extractObjectURLFromJSON(rawJSON string) string {
+	var activity map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &activity); err != nil {
+		return ""
+	}
+
+	// Check if object is a map with a url field
+	if obj, ok := activity["object"].(map[string]any); ok {
+		if url, ok := obj["url"].(string); ok {
+			return url
+		}
+	}
+	return ""
 }
 
 // seedDefaultInfoBoxes creates default info boxes on first run

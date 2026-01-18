@@ -647,12 +647,18 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 					}
 				}
 
+				// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+				postURL := activity.ObjectURL
+				if postURL == "" {
+					postURL = activity.ObjectURI
+				}
+
 				replies = append(replies, PostView{
 					NoteId:      activity.Id.String(),
 					Username:    replyUsername,
 					UserDomain:  replyDomain,
 					ProfileURL:  replyProfileURL,
-					PostURL:     activity.ObjectURI,
+					PostURL:     postURL,
 					IsRemote:    true,
 					Message:     replyContent,
 					MessageHTML: template.HTML(replyMessageHTML),
