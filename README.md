@@ -99,6 +99,7 @@ STEGODON_SSLDOMAIN=yourdomain.com # Your public domain (required for ActivityPub
 # Access control
 STEGODON_SINGLE=true              # Single-user mode
 STEGODON_CLOSED=true              # Closed registration
+STEGODON_SSH_ONLY=true            # SSH-only mode (disables web UI)
 
 # Customization
 STEGODON_NODE_DESCRIPTION="My personal microblog server"  # NodeInfo description
@@ -110,6 +111,14 @@ STEGODON_WITH_JOURNALD=true       # Send logs to systemd journald
 # Profiling (development/debugging)
 STEGODON_WITH_PPROF=true          # Enable pprof profiler on localhost:6060
 ```
+
+**SSH-Only Mode:**
+
+When `STEGODON_SSH_ONLY=true`, the web UI is disabled but RSS feeds and ActivityPub still work. This mode:
+- Disables web UI routes (no homepage, profile pages, or tag pages)
+- Keeps RSS feeds and ActivityPub endpoints active
+- Useful when you want federation and RSS but no public web interface
+- TUI access via SSH remains fully functional
 
 **File locations:**
 - Config: `./config.yaml` -> `~/.config/stegodon/config.yaml` -> embedded defaults
