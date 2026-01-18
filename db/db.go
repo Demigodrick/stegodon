@@ -3958,3 +3958,221 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 	}
 	return err
 }
+
+// ReadGlobalTimelinePosts returns a unified global timeline combining local notes and all remote activities
+// This shows all posts from known accounts to the server, including likes, boosts, replies, etc.
+func (db *DB) ReadGlobalTimelinePosts(limit int, offset int) (error, *[]domain.HomePost) {
+	var posts []domain.HomePost
+
+	// Fetch all local notes (excluding replies)
+	localRows, err := db.db.Query(`
+		SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.object_uri,
+		       COALESCE(notes.reply_count, 0), COALESCE(notes.like_count, 0), COALESCE(notes.boost_count, 0)
+		FROM notes
+		INNER JOIN accounts ON accounts.id = notes.user_id
+		WHERE (notes.in_reply_to_uri IS NULL OR notes.in_reply_to_uri = '')
+		ORDER BY notes.created_at DESC
+		LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return err, nil
+	}
+	defer localRows.Close()
+
+	for localRows.Next() {
+		var idStr string
+		var username string
+		var message string
+		var createdAtStr string
+		var objectURI sql.NullString
+		var replyCount int
+		var likeCount int
+		var boostCount int
+
+		if err := localRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount, &likeCount, &boostCount); err != nil {
+			return err, &posts
+		}
+
+		noteId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		uri := ""
+		if objectURI.Valid {
+			uri = objectURI.String
+		}
+
+		posts = append(posts, domain.HomePost{
+			ID:         noteId,
+			Author:     username,
+			Content:    message,
+			Time:       parsedTime,
+			ObjectURI:  uri,
+			IsLocal:    true,
+			NoteID:     noteId,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+		})
+	}
+	if err = localRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Fetch all remote activities (excluding replies)
+	remoteRows, err := db.db.Query(`
+		SELECT a.id, a.actor_uri, a.object_uri, COALESCE(a.object_url, ''), a.raw_json, a.created_at,
+		       COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
+		FROM activities a
+		WHERE a.activity_type = 'Create' AND a.local = 0
+		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
+		ORDER BY a.created_at DESC
+		LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return err, &posts
+	}
+	defer remoteRows.Close()
+
+	for remoteRows.Next() {
+		var idStr string
+		var actorURI string
+		var objectURI string
+		var objectURL string
+		var rawJSON string
+		var createdAtStr string
+		var replyCount int
+		var likeCount int
+		var boostCount int
+
+		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &replyCount, &likeCount, &boostCount); err != nil {
+			return err, &posts
+		}
+
+		activityId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		// Extract content from raw JSON
+		content := extractContentFromJSON(rawJSON)
+
+		// Extract author info from actorURI (format: https://domain/users/username)
+		author := extractAuthorFromActorURI(actorURI)
+
+		posts = append(posts, domain.HomePost{
+			ID:         activityId,
+			Author:     author,
+			Content:    content,
+			Time:       parsedTime,
+			ObjectURI:  objectURI,
+			ObjectURL:  objectURL,
+			IsLocal:    false,
+			NoteID:     uuid.Nil,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+		})
+	}
+	if err = remoteRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Sort combined posts by time (newest first)
+	sortPostsByTime(posts)
+
+	return nil, &posts
+}
+
+// CountGlobalTimelinePosts returns the total count of posts for the global timeline
+func (db *DB) CountGlobalTimelinePosts() (int, error) {
+	// Count local posts (excluding replies)
+	var localCount int
+	err := db.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM notes
+		WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = '')`).Scan(&localCount)
+	if err != nil {
+		return 0, err
+	}
+
+	// Count remote activities (excluding replies)
+	var remoteCount int
+	err = db.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM activities
+		WHERE activity_type = 'Create' AND local = 0
+		AND raw_json NOT LIKE '%"inReplyTo":"http%'`).Scan(&remoteCount)
+	if err != nil {
+		return 0, err
+	}
+
+	return localCount + remoteCount, nil
+}
+
+// ============================================================================
+// Ban Management
+// ============================================================================
+
+const (
+	sqlCreateBan      = `INSERT INTO bans(id, username, ip_address, public_key_hash, reason, banned_at) VALUES (?, ?, ?, ?, ?, ?)`
+	sqlReadAllBans    = `SELECT id, username, ip_address, public_key_hash, reason, banned_at FROM bans ORDER BY banned_at DESC`
+	sqlDeleteBan      = `DELETE FROM bans WHERE id = ?`
+	sqlCheckIPBanned  = `SELECT COUNT(*) FROM bans WHERE ip_address = ?`
+	sqlCheckKeyBanned = `SELECT COUNT(*) FROM bans WHERE public_key_hash = ?`
+)
+
+// CreateBan adds a new ban record with IP address and public key hash
+func (db *DB) CreateBan(id, username, ipAddress, publicKeyHash, reason string) error {
+	_, err := db.db.Exec(sqlCreateBan, id, username, ipAddress, publicKeyHash, reason, time.Now())
+	return err
+}
+
+// ReadAllBans returns all ban records
+func (db *DB) ReadAllBans() (error, *[]domain.Ban) {
+	rows, err := db.db.Query(sqlReadAllBans)
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	var bans []domain.Ban
+	for rows.Next() {
+		var ban domain.Ban
+		var bannedAtStr string
+		err := rows.Scan(&ban.Id, &ban.Username, &ban.IPAddress, &ban.PublicKeyHash, &ban.Reason, &bannedAtStr)
+		if err != nil {
+			log.Printf("Error scanning ban: %v", err)
+			continue
+		}
+		ban.BannedAt, _ = parseTimestamp(bannedAtStr)
+		bans = append(bans, ban)
+	}
+
+	return nil, &bans
+}
+
+// DeleteBan removes a ban record by ID
+func (db *DB) DeleteBan(id string) error {
+	_, err := db.db.Exec(sqlDeleteBan, id)
+	return err
+}
+
+// IsIPBanned checks if an IP address is banned
+func (db *DB) IsIPBanned(ipAddress string) bool {
+	var count int
+	err := db.db.QueryRow(sqlCheckIPBanned, ipAddress).Scan(&count)
+	if err != nil {
+		log.Printf("Error checking IP ban: %v", err)
+		return false
+	}
+	return count > 0
+}
+
+// IsPublicKeyBanned checks if a public key hash is banned
+func (db *DB) IsPublicKeyBanned(publicKeyHash string) bool {
+	var count int
+	err := db.db.QueryRow(sqlCheckKeyBanned, publicKeyHash).Scan(&count)
+	if err != nil {
+		log.Printf("Error checking public key ban: %v", err)
+		return false
+	}
+	return count > 0
+}

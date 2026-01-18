@@ -120,7 +120,7 @@ type usersLoadedMsg struct {
 }
 
 type muteUserMsg struct{}
-type kickUserMsg struct{}
+type banUserMsg struct{}
 
 type infoBoxesLoadedMsg struct {
 	boxes []domain.InfoBox
@@ -163,14 +163,39 @@ func muteUser(userId uuid.UUID) tea.Cmd {
 	}
 }
 
-func kickUser(userId uuid.UUID) tea.Cmd {
+func banUser(userId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		err := database.DeleteAccount(userId)
-		if err != nil {
-			log.Printf("Failed to kick user: %v", err)
+
+		// Get account info before deleting
+		err, account := database.ReadAccById(userId)
+		if err != nil || account == nil {
+			log.Printf("Failed to read account for ban: %v", err)
+			return banUserMsg{}
 		}
-		return kickUserMsg{}
+
+		// Create ban record with public key hash
+		// IP address will be empty for now - we don't track last login IP yet
+		// Public key hash is the primary ban mechanism
+		publicKeyHash := account.Publickey // This is already the SHA256 hash
+		err = database.CreateBan(
+			account.Id.String(),
+			account.Username,
+			"", // IP address - empty for now
+			publicKeyHash,
+			"Banned by administrator",
+		)
+		if err != nil {
+			log.Printf("Failed to create ban record: %v", err)
+		}
+
+		// Delete the account
+		err = database.DeleteAccount(userId)
+		if err != nil {
+			log.Printf("Failed to delete banned account: %v", err)
+		}
+
+		return banUserMsg{}
 	}
 }
 
@@ -273,8 +298,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Error = ""
 		return m, loadUsers()
 
-	case kickUserMsg:
-		m.Status = "User kicked successfully"
+	case banUserMsg:
+		m.Status = "User banned successfully"
 		m.Error = ""
 		return m, loadUsers()
 
@@ -436,18 +461,18 @@ func (m Model) handleUsersKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 			return m, muteUser(selectedUser.Id)
 		}
-	case "K":
+	case "B":
 		if len(m.Users) > 0 && m.Selected < len(m.Users) {
 			selectedUser := m.Users[m.Selected]
 			if selectedUser.IsAdmin {
-				m.Error = "Cannot kick admin user"
+				m.Error = "Cannot ban admin user"
 				return m, nil
 			}
 			if selectedUser.Id == m.AdminId {
-				m.Error = "Cannot kick yourself"
+				m.Error = "Cannot ban yourself"
 				return m, nil
 			}
-			return m, kickUser(selectedUser.Id)
+			return m, banUser(selectedUser.Id)
 		}
 	}
 	return m, nil
@@ -811,7 +836,7 @@ func (m Model) renderUsersView() string {
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • K: kick • esc: back"))
+	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • B: ban • esc: back"))
 
 	return s.String()
 }

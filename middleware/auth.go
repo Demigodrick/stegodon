@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"log"
+	"strings"
 
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -13,6 +14,32 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 	return func(h ssh.Handler) ssh.Handler {
 		return func(s ssh.Session) {
 			database := db.GetDB()
+
+			// Check if IP or public key is banned
+			remoteAddr := s.RemoteAddr().String()
+			// Extract just the IP (remove port)
+			ip := remoteAddr
+			if colonIndex := strings.LastIndex(remoteAddr, ":"); colonIndex != -1 {
+				ip = remoteAddr[:colonIndex]
+			}
+
+			// Check IP ban
+			if database.IsIPBanned(ip) {
+				log.Printf("Blocked connection from banned IP: %s", ip)
+				s.Write([]byte("You have been banned from this server.\n"))
+				s.Close()
+				return
+			}
+
+			// Check public key ban
+			publicKeyHash := util.PkToHash(util.PublicKeyToString(s.PublicKey()))
+			if database.IsPublicKeyBanned(publicKeyHash) {
+				log.Printf("Blocked connection from banned public key: %s", publicKeyHash[:16])
+				s.Write([]byte("You have been banned from this server.\n"))
+				s.Close()
+				return
+			}
+
 			found, acc := database.ReadAccBySession(s)
 
 			switch {
