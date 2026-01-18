@@ -53,6 +53,15 @@ func (m *mockDatabase) CreateNote(userId interface{}, message string) (interface
 	return m.createdNoteID, nil
 }
 
+func (m *mockDatabase) ReadNoteIdWithReplyInfo(id interface{}) (error, *domain.Note) {
+	noteId := id.(uuid.UUID)
+	return nil, &domain.Note{
+		Id:        noteId,
+		CreatedBy: "testuser",
+		Message:   "test message",
+	}
+}
+
 func (m *mockDatabase) ReadHomeTimelinePosts(accountId interface{}, limit int) (error, *[]domain.HomePost) {
 	posts := m.notes
 	if len(posts) > limit {

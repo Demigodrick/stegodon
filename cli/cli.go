@@ -18,6 +18,7 @@ type Session interface {
 // Database interface for CLI operations
 type Database interface {
 	CreateNote(userId interface{}, message string) (interface{}, error)
+	ReadNoteIdWithReplyInfo(id interface{}) (error, *domain.Note)
 	ReadHomeTimelinePosts(accountId interface{}, limit int) (error, *[]domain.HomePost)
 	ReadNotificationsByAccountId(accountId interface{}, limit int) (error, *[]domain.Notification)
 	CountUnreadNotifications(accountId interface{}) (int, error)

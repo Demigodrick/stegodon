@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/deemkeen/stegodon/activitypub"
 	"github.com/deemkeen/stegodon/util"
 	"github.com/google/uuid"
 )
@@ -60,6 +62,28 @@ func (h *Handler) handlePost(args []string) error {
 		h.output.Error(err)
 		return err
 	}
+
+	// Federate the note via ActivityPub (background task)
+	go func() {
+		// Only federate if ActivityPub is enabled
+		if !h.conf.Conf.WithAp {
+			return
+		}
+
+		// Get the created note from database
+		err, createdNote := h.db.ReadNoteIdWithReplyInfo(noteId)
+		if err != nil {
+			log.Printf("CLI: Failed to read created note for federation: %v", err)
+			return
+		}
+
+		// Send Create activity to all followers
+		if err := activitypub.SendCreate(createdNote, h.account, h.conf); err != nil {
+			log.Printf("CLI: Failed to federate note: %v", err)
+		} else {
+			log.Printf("CLI: Note federated successfully for %s", h.account.Username)
+		}
+	}()
 
 	// Output response
 	if h.output.IsJSON() {
