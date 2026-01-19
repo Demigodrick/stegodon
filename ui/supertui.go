@@ -566,38 +566,50 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Route keyboard input ONLY to active model
-	if _, ok := msg.(tea.KeyMsg); ok {
-		switch m.state {
-		case common.CreateUserView:
-			m.newUserModel, cmd = m.newUserModel.Update(msg)
-		case common.CreateNoteView:
-			m.createModel, cmd = m.createModel.Update(msg)
-		case common.HomeTimelineView:
-			m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
-		case common.MyPostsView:
-			m.myPostsModel, cmd = m.myPostsModel.Update(msg)
-		case common.GlobalPostsView:
-			m.globalPostsModel, cmd = m.globalPostsModel.Update(msg)
-		case common.FollowUserView:
-			m.followModel, cmd = m.followModel.Update(msg)
-		case common.FollowersView:
-			m.followersModel, cmd = m.followersModel.Update(msg)
-		case common.FollowingView:
-			m.followingModel, cmd = m.followingModel.Update(msg)
-		case common.LocalUsersView:
-			m.localUsersModel, cmd = m.localUsersModel.Update(msg)
-		case common.AdminPanelView:
-			m.adminModel, cmd = m.adminModel.Update(msg)
-		case common.RelayManagementView:
-			m.relayModel, cmd = m.relayModel.Update(msg)
-		case common.AccountSettingsView:
-			m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
-		case common.ThreadView:
-			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
-		case common.NotificationsView:
-			m.notificationsModel, cmd = m.notificationsModel.Update(msg)
-		}
+	// Route messages to active model
+	// This includes keyboard input AND internal messages (like postsLoadedMsg from async commands)
+	switch m.state {
+	case common.CreateUserView:
+		m.newUserModel, cmd = m.newUserModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.CreateNoteView:
+		m.createModel, cmd = m.createModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.HomeTimelineView:
+		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.MyPostsView:
+		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.GlobalPostsView:
+		m.globalPostsModel, cmd = m.globalPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowUserView:
+		m.followModel, cmd = m.followModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowersView:
+		m.followersModel, cmd = m.followersModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowingView:
+		m.followingModel, cmd = m.followingModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.LocalUsersView:
+		m.localUsersModel, cmd = m.localUsersModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.AdminPanelView:
+		m.adminModel, cmd = m.adminModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.RelayManagementView:
+		m.relayModel, cmd = m.relayModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.AccountSettingsView:
+		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.ThreadView:
+		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.NotificationsView:
+		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 

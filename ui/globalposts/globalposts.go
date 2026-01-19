@@ -54,14 +54,18 @@ var (
 )
 
 type Model struct {
-	AccountId   uuid.UUID
-	Posts       []domain.GlobalTimelinePost
-	Offset      int  // Pagination offset
-	Selected    int  // Currently selected post index
-	Width       int
-	Height      int
-	isActive    bool // Track if this view is currently visible
-	LocalDomain string
+	AccountId          uuid.UUID
+	Posts              []domain.GlobalTimelinePost
+	Offset             int  // Pagination offset
+	Selected           int  // Currently selected post index
+	Width              int
+	Height             int
+	isActive           bool     // Track if this view is currently visible
+	showingURL         bool     // Track if URL is displayed instead of content
+	showingEngagement  bool     // Track if engagement info (likes/boosts) is displayed
+	engagementLikers   []string // List of users who liked the selected post
+	engagementBoosters []string // List of users who boosted the selected post
+	LocalDomain        string
 }
 
 func InitialModel(accountId uuid.UUID, width, height int, localDomain string) Model {
@@ -94,10 +98,12 @@ func tickRefresh() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case common.DeactivateViewMsg:
+		log.Printf("[GLOBALPOSTS] View deactivated")
 		m.isActive = false
 		return m, nil
 
 	case common.ActivateViewMsg:
+		log.Printf("[GLOBALPOSTS] View activated, loading posts")
 		m.isActive = true
 		m.Selected = 0
 		m.Offset = 0
@@ -105,6 +111,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case common.SessionState:
 		if msg == common.UpdateNoteList {
+			log.Printf("[GLOBALPOSTS] UpdateNoteList received, reloading")
 			return m, loadGlobalPosts()
 		}
 		return m, nil
@@ -116,15 +123,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case postsLoadedMsg:
+		log.Printf("[GLOBALPOSTS] postsLoadedMsg received with %d posts", len(msg.posts))
 		m.Posts = msg.posts
 		if m.Selected >= len(m.Posts) {
 			m.Selected = max(0, len(m.Posts)-1)
 		}
 		m.Offset = m.Selected
+		log.Printf("[GLOBALPOSTS] Model now has %d posts, Selected=%d, Offset=%d", len(m.Posts), m.Selected, m.Offset)
 
 		if m.isActive {
 			return m, tickRefresh()
 		}
+		return m, nil
+
+	case engagementInfoMsg:
+		m.engagementLikers = msg.likers
+		m.engagementBoosters = msg.boosters
 		return m, nil
 
 	case tea.KeyMsg:
@@ -134,10 +148,130 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.Selected--
 				m.Offset = m.Selected
 			}
+			m.showingURL = false
+			m.showingEngagement = false
 		case "down", "j":
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts)-1 {
 				m.Selected++
 				m.Offset = m.Selected
+			}
+			m.showingURL = false
+			m.showingEngagement = false
+		case "o":
+			// Toggle between showing content and URL
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				displayURL := selectedPost.PostURL
+				if util.IsURL(displayURL) {
+					m.showingURL = !m.showingURL
+				}
+			}
+		case "r":
+			// Reply to selected post
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				// Construct reply URI - for remote posts use PostURL, for local construct from NoteId
+				replyURI := selectedPost.PostURL
+				if !selectedPost.IsRemote && replyURI == "" {
+					replyURI = "local:" + selectedPost.NoteId
+				}
+
+				if replyURI != "" {
+					preview := selectedPost.Message
+					if idx := strings.Index(preview, "\n"); idx > 0 {
+						preview = preview[:idx]
+					}
+					return m, func() tea.Msg {
+						return common.ReplyToNoteMsg{
+							NoteURI: replyURI,
+							Author:  selectedPost.Username,
+							Preview: preview,
+						}
+					}
+				}
+			}
+		case "enter":
+			// Open thread view for selected post
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				// Skip if no replies
+				if selectedPost.ReplyCount == 0 {
+					return m, nil
+				}
+
+				noteURI := selectedPost.PostURL
+				var noteID uuid.UUID
+				if !selectedPost.IsRemote {
+					// Parse UUID from NoteId string for local posts
+					if id, err := uuid.Parse(selectedPost.NoteId); err == nil {
+						noteID = id
+						if noteURI == "" {
+							noteURI = "local:" + selectedPost.NoteId
+						}
+					}
+				}
+
+				if noteURI != "" {
+					return m, func() tea.Msg {
+						return common.ViewThreadMsg{
+							NoteURI:   noteURI,
+							NoteID:    noteID,
+							Author:    selectedPost.Username,
+							Content:   selectedPost.Message,
+							CreatedAt: selectedPost.CreatedAt,
+							IsLocal:   !selectedPost.IsRemote,
+						}
+					}
+				}
+			}
+		case "l":
+			// Like/unlike the selected post
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				noteURI := selectedPost.PostURL
+				var noteID uuid.UUID
+				if !selectedPost.IsRemote {
+					if id, err := uuid.Parse(selectedPost.NoteId); err == nil {
+						noteID = id
+						if noteURI == "" {
+							noteURI = "local:" + selectedPost.NoteId
+						}
+					}
+				}
+
+				if noteURI != "" || noteID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.LikeNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  noteID,
+							IsLocal: !selectedPost.IsRemote,
+						}
+					}
+				}
+			}
+		case "i":
+			// Toggle engagement info display
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				if selectedPost.LikeCount > 0 || selectedPost.BoostCount > 0 {
+					m.showingEngagement = !m.showingEngagement
+					if m.showingEngagement {
+						return m, loadEngagementInfoGlobal(selectedPost)
+					}
+				}
+			}
+		case "f":
+			// Follow user (for remote users only) - navigate to follow view
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				if selectedPost.IsRemote && selectedPost.UserDomain != "" {
+					// Navigate to follow view where user can enter the handle
+					log.Printf("[GLOBALPOSTS] Navigating to follow view for remote user: @%s@%s",
+						strings.TrimPrefix(selectedPost.Username, "@"), selectedPost.UserDomain)
+					return m, func() tea.Msg {
+						return common.SessionState(common.FollowUserView)
+					}
+				}
 			}
 		}
 	}
@@ -193,18 +327,88 @@ func (m Model) View() string {
 				timeFormatted := selectedBg.Render(selectedTimeStyle.Render(timeStr))
 				authorFormatted := selectedBg.Render(selectedAuthorStyle.Render(author))
 
-				processedContent := post.Message
-				if !post.IsRemote {
-					processedContent = util.UnescapeHTML(processedContent)
-					processedContent = util.MarkdownLinksToTerminal(processedContent)
-				}
-				highlightedContent := util.HighlightHashtagsTerminal(processedContent)
-				highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
+				// Show engagement info if toggled
+				if m.showingEngagement {
+					var engagementText strings.Builder
+					hasContent := false
 
-				contentFormatted := selectedBg.Render(selectedContentStyle.Render(highlightedContent))
-				s.WriteString(timeFormatted + "\n")
-				s.WriteString(authorFormatted + "\n")
-				s.WriteString(contentFormatted)
+					if len(m.engagementLikers) > 0 {
+						hasContent = true
+						engagementText.WriteString("⭐ Liked by:\n")
+						for idx, liker := range m.engagementLikers {
+							if idx < 10 {
+								engagementText.WriteString(fmt.Sprintf("  @%s\n", liker))
+							}
+						}
+						if len(m.engagementLikers) > 10 {
+							engagementText.WriteString(fmt.Sprintf("  ...and %d more\n", len(m.engagementLikers)-10))
+						}
+					}
+
+					if len(m.engagementBoosters) > 0 {
+						hasContent = true
+						if len(m.engagementLikers) > 0 {
+							engagementText.WriteString("\n")
+						}
+						engagementText.WriteString("🔁 Boosted by:\n")
+						for idx, booster := range m.engagementBoosters {
+							if idx < 10 {
+								engagementText.WriteString(fmt.Sprintf("  @%s\n", booster))
+							}
+						}
+						if len(m.engagementBoosters) > 10 {
+							engagementText.WriteString(fmt.Sprintf("  ...and %d more\n", len(m.engagementBoosters)-10))
+						}
+					}
+
+					if !hasContent {
+						engagementText.WriteString("No engagement information available yet.\n")
+						engagementText.WriteString("(Likes and boosts by local users will appear here)")
+					}
+
+					engagementText.WriteString("\n\n(Press 'i' to toggle back)")
+
+					contentStyleBg := lipgloss.NewStyle().
+						Background(lipgloss.Color(common.COLOR_ACCENT)).
+						Foreground(lipgloss.Color(common.COLOR_WHITE)).
+						Width(contentWidth)
+					contentFormatted := contentStyleBg.Render(engagementText.String())
+
+					s.WriteString(timeFormatted + "\n")
+					s.WriteString(authorFormatted + "\n")
+					s.WriteString(contentFormatted)
+				} else if m.showingURL {
+					// Show URL instead of content
+					displayURL := post.PostURL
+					if util.IsURL(displayURL) {
+						osc8Link := util.FormatClickableURL(displayURL, common.MaxContentTruncateWidth, "🔗 ")
+						hintText := "(Cmd+click to open, press 'o' to toggle back)"
+
+						contentStyleBg := lipgloss.NewStyle().
+							Background(lipgloss.Color(common.COLOR_ACCENT)).
+							Foreground(lipgloss.Color(common.COLOR_WHITE)).
+							Width(contentWidth)
+						contentFormatted := contentStyleBg.Render(osc8Link + "\n\n" + hintText)
+
+						s.WriteString(timeFormatted + "\n")
+						s.WriteString(authorFormatted + "\n")
+						s.WriteString(contentFormatted)
+					}
+				} else {
+					// Normal content display
+					processedContent := post.Message
+					if !post.IsRemote {
+						processedContent = util.UnescapeHTML(processedContent)
+						processedContent = util.MarkdownLinksToTerminal(processedContent)
+					}
+					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
+					highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
+
+					contentFormatted := selectedBg.Render(selectedContentStyle.Render(highlightedContent))
+					s.WriteString(timeFormatted + "\n")
+					s.WriteString(authorFormatted + "\n")
+					s.WriteString(contentFormatted)
+				}
 			} else {
 				unselectedStyle := lipgloss.NewStyle().
 					Width(contentWidth)
@@ -244,17 +448,60 @@ type postsLoadedMsg struct {
 	posts []domain.GlobalTimelinePost
 }
 
+// engagementInfoMsg is sent when engagement info is loaded
+type engagementInfoMsg struct {
+	likers   []string
+	boosters []string
+}
+
 // loadGlobalPosts loads the global timeline
 func loadGlobalPosts() tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
+		log.Printf("[GLOBALPOSTS] Calling ReadGlobalTimelinePosts with limit=%d, offset=0", common.HomeTimelinePostLimit)
 		err, posts := database.ReadGlobalTimelinePosts(common.HomeTimelinePostLimit, 0)
 		if err != nil {
-			log.Printf("Failed to load global timeline: %v", err)
+			log.Printf("[GLOBALPOSTS] ERROR loading global timeline: %v", err)
 			return postsLoadedMsg{posts: []domain.GlobalTimelinePost{}}
 		}
 
+		log.Printf("[GLOBALPOSTS] SUCCESS: Loaded %d posts", len(posts))
+		for i, post := range posts {
+			if i < 3 {
+				msgPreview := post.Message
+				if len(msgPreview) > 30 {
+					msgPreview = msgPreview[:30]
+				}
+				log.Printf("[GLOBALPOSTS] Post %d: user=%s, isRemote=%v, msg=%s", i, post.Username, post.IsRemote, msgPreview)
+			}
+		}
 		return postsLoadedMsg{posts: posts}
+	}
+}
+
+// loadEngagementInfoGlobal loads the list of users who liked and boosted a post
+func loadEngagementInfoGlobal(post domain.GlobalTimelinePost) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		var likers []string
+		var boosters []string
+
+		// For local posts, use NoteID
+		if !post.IsRemote && post.NoteId != "" {
+			if noteID, err := uuid.Parse(post.NoteId); err == nil {
+				likers, _ = database.ReadLikersInfoByNoteId(noteID)
+				boosters, _ = database.ReadBoostersInfoByNoteId(noteID)
+			}
+		} else if post.PostURL != "" {
+			// For remote posts, use PostURL as ObjectURI
+			likers, _ = database.ReadLikersInfoByObjectURI(post.PostURL)
+			boosters, _ = database.ReadBoostersInfoByObjectURI(post.PostURL)
+		}
+
+		return engagementInfoMsg{
+			likers:   likers,
+			boosters: boosters,
+		}
 	}
 }
 
