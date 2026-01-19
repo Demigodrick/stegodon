@@ -53,10 +53,13 @@
             <div class="main-content">
                 <div class="content-wrapper">
                     <div class="timeline">
-                        <h2>global timeline</h2>
-                        <div class="timeline-nav">
-                            <a href="/" class="timeline-link">local</a> |
-                            <a href="/global" class="timeline-link active">global</a>
+                        <div class="timeline-header">
+                            <h2>global timeline</h2>
+                            <div class="timeline-nav">
+                                <a href="/" class="timeline-link">local</a>
+                                <span class="timeline-separator">•</span>
+                                <a href="/global" class="timeline-link active">global</a>
+                            </div>
                         </div>
                         {{if .ServerMessage}}
                         <div class="server-message">
