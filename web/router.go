@@ -68,6 +68,13 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 			HandleIndex(c, conf)
 		})
 
+		// Global timeline (optional feature)
+		if conf.Conf.ShowGlobal {
+			g.GET("/global", func(c *gin.Context) {
+				HandleGlobalTimeline(c, conf)
+			})
+		}
+
 		g.GET("/u/:username", func(c *gin.Context) {
 			HandleProfile(c, conf)
 		})

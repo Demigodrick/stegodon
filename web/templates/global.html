@@ -1,4 +1,4 @@
-{{define "index.html"}}
+{{define "global.html"}}
 <!doctype html>
 <html lang="en">
     <head>
@@ -53,10 +53,10 @@
             <div class="main-content">
                 <div class="content-wrapper">
                     <div class="timeline">
-                        <h2>local timeline</h2>
+                        <h2>global timeline</h2>
                         <div class="timeline-nav">
-                            <a href="/" class="timeline-link active">local</a>
-                            {{if .ShowGlobal}} | <a href="/global" class="timeline-link">global</a>{{end}}
+                            <a href="/" class="timeline-link">local</a> |
+                            <a href="/global" class="timeline-link active">global</a>
                         </div>
                         {{if .ServerMessage}}
                         <div class="server-message">
@@ -68,8 +68,16 @@
                     {{if .Posts}} {{range .Posts}}
                     <div class="post">
                         <div class="post-meta">
-                            <a href="/u/{{.Username}}" class="post-author">@{{.Username}}</a>
-                            <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                            {{if .IsRemote}}
+                                <a href="{{.ProfileURL}}" class="post-author remote-author" target="_blank" rel="noopener noreferrer">{{.Username}}</a>
+                            {{else}}
+                                <a href="{{.ProfileURL}}" class="post-author">@{{.Username}}</a>
+                            {{end}}
+                            {{if .PostURL}}
+                                <a href="{{.PostURL}}" class="post-permalink" target="_blank" rel="noopener noreferrer">#</a>
+                            {{else}}
+                                <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                            {{end}}
                         </div>
                         <div class="post-content">
                             <p class="post-time">{{.TimeAgo}}</p>
@@ -87,7 +95,13 @@
                                     <span class="icon">🔁</span> {{.BoostCount}}
                                 </span>
                             {{end}}
-                            {{if gt .ReplyCount 0}}<a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
+                            {{if gt .ReplyCount 0}}
+                                {{if .PostURL}}
+                                    <a href="{{.PostURL}}" class="reply-count" target="_blank" rel="noopener noreferrer"><span class="icon">💬</span> {{.ReplyCount}}</a>
+                                {{else}}
+                                    <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>
+                                {{end}}
+                            {{end}}
                         </div>
                         {{end}}
                     </div>
@@ -95,14 +109,14 @@
                     <div class="pagination">
                         <div>
                             {{if .HasPrev}}
-                            <a href="/?page={{.PrevPage}}">← previous</a>
+                            <a href="/global?page={{.PrevPage}}">← previous</a>
                             {{else}}
                             <span>← previous</span>
                             {{end}}
                         </div>
                         <div>
                             {{if .HasNext}}
-                            <a href="/?page={{.NextPage}}">next →</a>
+                            <a href="/global?page={{.NextPage}}">next →</a>
                             {{else}}
                             <span>next →</span>
                             {{end}}
@@ -166,7 +180,7 @@
                     e.preventDefault();
                     const type = trigger.dataset.type;
                     const noteId = trigger.dataset.noteId;
-                    
+
                     if (type === "likes") {
                         await showEngagement("Liked by", noteId, "likes");
                     } else if (type === "boosts") {
@@ -179,15 +193,15 @@
                 modalTitle.textContent = title;
                 modalBody.innerHTML = "Loading...";
                 modal.style.display = "flex";
-                
+
                 try {
                     const response = await fetch(`/api/engagement/${noteId}/${type}`);
                     const data = await response.json();
-                    
+
                     if (data.users && data.users.length > 0) {
                         const userList = data.users.map(user => {
                             let displayName, userUrl;
-                            
+
                             // Check if this is a remote user (contains @domain)
                             const parts = user.split("@").filter(p => p); // Remove empty strings
                             if (parts.length === 2) {
@@ -199,7 +213,7 @@
                                 displayName = `@${user}`;
                                 userUrl = `/u/${user}`;
                             }
-                            
+
                             return `<div class="engagement-user"><a href="${userUrl}" class="user-link" target="_blank" rel="noopener noreferrer">${displayName}</a></div>`;
                         }).join("");
                         modalBody.innerHTML = userList;

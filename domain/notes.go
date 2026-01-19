@@ -12,6 +12,21 @@ type SaveNote struct {
 	InReplyToURI string // URI of parent post (empty for top-level posts)
 }
 
+// GlobalTimelinePost represents a post in the global timeline (local + federated)
+type GlobalTimelinePost struct {
+	NoteId      string
+	Username    string
+	UserDomain  string
+	ProfileURL  string
+	PostURL     string
+	IsRemote    bool
+	Message     string
+	CreatedAt   time.Time
+	ReplyCount  int
+	LikeCount   int
+	BoostCount  int
+}
+
 type Note struct {
 	Id        uuid.UUID
 	CreatedBy string

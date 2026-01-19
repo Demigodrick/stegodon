@@ -314,18 +314,19 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 		}
 	}
 
-	data := IndexPageData{
-		Title:         "Home",
-		Host:          host,
-		SSHPort:       conf.Conf.SshPort,
-		Version:       util.GetVersion(),
-		Posts:         posts,
-		HasPrev:       page > 1,
-		HasNext:       end < totalPosts,
-		PrevPage:      page - 1,
-		NextPage:      page + 1,
-		InfoBoxes:     infoBoxViews,
-		ServerMessage: loadServerMessageForWeb(),
+	data := gin.H{
+		"Title":         "Home",
+		"Host":          host,
+		"SSHPort":       conf.Conf.SshPort,
+		"Version":       util.GetVersion(),
+		"Posts":         posts,
+		"HasPrev":       page > 1,
+		"HasNext":       end < totalPosts,
+		"PrevPage":      page - 1,
+		"NextPage":      page + 1,
+		"InfoBoxes":     infoBoxViews,
+		"ServerMessage": loadServerMessageForWeb(),
+		"ShowGlobal":    conf.Conf.ShowGlobal,
 	}
 
 	c.HTML(200, "index.html", data)
@@ -714,6 +715,106 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 	}
 
 	c.HTML(200, "post.html", data)
+}
+
+func HandleGlobalTimeline(c *gin.Context, conf *util.AppConfig) {
+	database := db.GetDB()
+
+	// Pagination
+	page := 1
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	postsPerPage := 20
+	offset := (page - 1) * postsPerPage
+
+	// Get global timeline posts (local + federated)
+	err, posts := database.ReadGlobalTimelinePosts(postsPerPage, offset)
+	if err != nil {
+		log.Printf("Failed to read global timeline: %v", err)
+		c.HTML(500, "base.html", gin.H{"Title": "Error", "Error": "Failed to load global timeline"})
+		return
+	}
+
+	// Get total count for pagination
+	totalPosts, err := database.CountGlobalTimelinePosts()
+	if err != nil {
+		log.Printf("Failed to count global timeline posts: %v", err)
+		totalPosts = len(posts)
+	}
+
+	// Convert to PostView
+	postViews := make([]PostView, 0, len(posts))
+	for _, post := range posts {
+		// Process message HTML
+		messageHTML := util.MarkdownLinksToHTML(post.Message)
+		messageHTML = util.HighlightHashtagsHTML(messageHTML)
+		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
+
+		postView := PostView{
+			NoteId:      post.NoteId,
+			Username:    post.Username,
+			UserDomain:  post.UserDomain,
+			ProfileURL:  post.ProfileURL,
+			PostURL:     post.PostURL,
+			IsRemote:    post.IsRemote,
+			Message:     post.Message,
+			MessageHTML: template.HTML(messageHTML),
+			TimeAgo:     formatTimeAgo(post.CreatedAt),
+			CreatedAt:   post.CreatedAt,
+			ReplyCount:  post.ReplyCount,
+			LikeCount:   post.LikeCount,
+			BoostCount:  post.BoostCount,
+		}
+		postViews = append(postViews, postView)
+	}
+
+	// Use SSLDomain if federation is enabled, otherwise use Host
+	host := conf.Conf.Host
+	if conf.Conf.WithAp {
+		host = conf.Conf.SslDomain
+	}
+
+	// Load info boxes
+	var infoBoxViews []InfoBoxView
+	err, infoBoxes := database.ReadEnabledInfoBoxes()
+	if err == nil && infoBoxes != nil {
+		for _, box := range *infoBoxes {
+			content := util.ReplacePlaceholders(box.Content, conf.Conf.SshPort)
+			htmlContent := convertMarkdownToHTML(content)
+			titleHTML := convertMarkdownToHTML(box.Title)
+			infoBoxViews = append(infoBoxViews, InfoBoxView{
+				Title:       box.Title,
+				TitleHTML:   template.HTML(titleHTML),
+				ContentHTML: template.HTML(htmlContent),
+			})
+		}
+	}
+
+	end := offset + postsPerPage
+	if end > totalPosts {
+		end = totalPosts
+	}
+
+	data := gin.H{
+		"Title":         "Global Timeline",
+		"Host":          host,
+		"SSHPort":       conf.Conf.SshPort,
+		"Version":       util.GetVersion(),
+		"Posts":         postViews,
+		"HasPrev":       page > 1,
+		"HasNext":       end < totalPosts,
+		"PrevPage":      page - 1,
+		"NextPage":      page + 1,
+		"InfoBoxes":     infoBoxViews,
+		"ServerMessage": loadServerMessageForWeb(),
+		"ShowGlobal":    conf.Conf.ShowGlobal,
+	}
+
+	c.HTML(200, "global.html", data)
 }
 
 func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {

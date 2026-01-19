@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -3957,4 +3958,120 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 		_, err = db.db.Exec(sqlInsertServerMessage, message, enabledInt, webEnabledInt, timestamp)
 	}
 	return err
+}
+
+// ============================================================================
+// Global Timeline (Local + Federated Posts)
+// ============================================================================
+
+// ReadGlobalTimelinePosts returns posts for the global timeline (local notes + remote activities)
+// excluding replies
+func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.GlobalTimelinePost) {
+	var posts []domain.GlobalTimelinePost
+
+	// Get local posts (excluding replies)
+	localRows, err := db.db.Query(`
+		SELECT n.id, a.username, '', '/u/' || a.username, '', 0, n.message, n.created_at, 
+		       COALESCE(n.reply_count, 0), COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
+		FROM notes n
+		INNER JOIN accounts a ON a.id = n.user_id
+		WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
+		ORDER BY n.created_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return err, nil
+	}
+	defer localRows.Close()
+
+	for localRows.Next() {
+		var post domain.GlobalTimelinePost
+		var createdAtStr string
+		err := localRows.Scan(&post.NoteId, &post.Username, &post.UserDomain, &post.ProfileURL,
+			&post.PostURL, &post.IsRemote, &post.Message, &createdAtStr,
+			&post.ReplyCount, &post.LikeCount, &post.BoostCount)
+		if err != nil {
+			return err, posts
+		}
+		post.CreatedAt, _ = parseTimestamp(createdAtStr)
+		posts = append(posts, post)
+	}
+
+	// Get remote posts (excluding replies)
+	remoteRows, err := db.db.Query(`
+		SELECT a.id, ra.username, ra.domain, ra.actor_uri, COALESCE(a.object_url, a.object_uri), 
+		       1, a.raw_json, a.created_at,
+		       COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
+		FROM activities a
+		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
+		WHERE a.activity_type = 'Create' 
+		AND a.local = 0
+		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
+		ORDER BY a.created_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return err, posts
+	}
+	defer remoteRows.Close()
+
+	for remoteRows.Next() {
+		var post domain.GlobalTimelinePost
+		var rawJSON, createdAtStr, actorURI string
+		err := remoteRows.Scan(&post.NoteId, &post.Username, &post.UserDomain, &actorURI,
+			&post.PostURL, &post.IsRemote, &rawJSON, &createdAtStr,
+			&post.ReplyCount, &post.LikeCount, &post.BoostCount)
+		if err != nil {
+			return err, posts
+		}
+		post.CreatedAt, _ = parseTimestamp(createdAtStr)
+		post.Message = extractContentFromJSON(rawJSON)
+		// Use the actor_uri as profile URL (it has the correct format for each server)
+		post.ProfileURL = actorURI
+		// Format username as @user@domain for display
+		post.Username = fmt.Sprintf("@%s@%s", post.Username, post.UserDomain)
+		posts = append(posts, post)
+	}
+
+	// Sort all posts by creation time (newest first)
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].CreatedAt.After(posts[j].CreatedAt)
+	})
+
+	// Apply pagination after sorting
+	start := offset
+	end := offset + limit
+	if start > len(posts) {
+		return nil, []domain.GlobalTimelinePost{}
+	}
+	if end > len(posts) {
+		end = len(posts)
+	}
+
+	return nil, posts[start:end]
+}
+
+// CountGlobalTimelinePosts returns the total count of posts in the global timeline
+func (db *DB) CountGlobalTimelinePosts() (int, error) {
+	var localCount, remoteCount int
+
+	// Count local posts (excluding replies)
+	err := db.db.QueryRow(`
+		SELECT COUNT(*) FROM notes
+		WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = '')
+	`).Scan(&localCount)
+	if err != nil {
+		return 0, err
+	}
+
+	// Count remote posts (excluding replies)
+	err = db.db.QueryRow(`
+		SELECT COUNT(*) FROM activities
+		WHERE activity_type = 'Create' 
+		AND local = 0
+		AND raw_json NOT LIKE '%"inReplyTo":"http%'
+	`).Scan(&remoteCount)
+	if err != nil {
+		return 0, err
+	}
+
+	return localCount + remoteCount, nil
 }

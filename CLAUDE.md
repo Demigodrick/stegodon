@@ -43,6 +43,8 @@ Environment variables:
 - `STEGODON_CLOSED` - Close registration (default: false)
 - `STEGODON_SSH_ONLY` - SSH-only mode, disables web UI but keeps RSS/ActivityPub (default: false)
 - `STEGODON_NODE_DESCRIPTION` - NodeInfo description
+- `STEGODON_MAX_CHARS` - Maximum note length (default: 150, max: 300)
+- `STEGODON_SHOW_GLOBAL` - Show global timeline in TUI and web (default: false)
 - `STEGODON_WITH_JOURNALD` - Linux journald logging (default: false)
 - `STEGODON_WITH_PPROF` - Enable pprof on localhost:6060 (default: false)
 
