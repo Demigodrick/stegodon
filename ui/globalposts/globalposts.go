@@ -98,12 +98,10 @@ func tickRefresh() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case common.DeactivateViewMsg:
-		log.Printf("[GLOBALPOSTS] View deactivated")
 		m.isActive = false
 		return m, nil
 
 	case common.ActivateViewMsg:
-		log.Printf("[GLOBALPOSTS] View activated, loading posts")
 		m.isActive = true
 		m.Selected = 0
 		m.Offset = 0
@@ -111,7 +109,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case common.SessionState:
 		if msg == common.UpdateNoteList {
-			log.Printf("[GLOBALPOSTS] UpdateNoteList received, reloading")
 			return m, loadGlobalPosts()
 		}
 		return m, nil
@@ -123,13 +120,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case postsLoadedMsg:
-		log.Printf("[GLOBALPOSTS] postsLoadedMsg received with %d posts", len(msg.posts))
 		m.Posts = msg.posts
 		if m.Selected >= len(m.Posts) {
 			m.Selected = max(0, len(m.Posts)-1)
 		}
 		m.Offset = m.Selected
-		log.Printf("[GLOBALPOSTS] Model now has %d posts, Selected=%d, Offset=%d", len(m.Posts), m.Selected, m.Offset)
 
 		if m.isActive {
 			return m, tickRefresh()
@@ -266,8 +261,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				selectedPost := m.Posts[m.Selected]
 				if selectedPost.IsRemote && selectedPost.UserDomain != "" {
 					// Navigate to follow view where user can enter the handle
-					log.Printf("[GLOBALPOSTS] Navigating to follow view for remote user: @%s@%s",
-						strings.TrimPrefix(selectedPost.Username, "@"), selectedPost.UserDomain)
 					return m, func() tea.Msg {
 						return common.SessionState(common.FollowUserView)
 					}
@@ -458,23 +451,12 @@ type engagementInfoMsg struct {
 func loadGlobalPosts() tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		log.Printf("[GLOBALPOSTS] Calling ReadGlobalTimelinePosts with limit=%d, offset=0", common.HomeTimelinePostLimit)
 		err, posts := database.ReadGlobalTimelinePosts(common.HomeTimelinePostLimit, 0)
 		if err != nil {
-			log.Printf("[GLOBALPOSTS] ERROR loading global timeline: %v", err)
+			log.Printf("Failed to load global timeline: %v", err)
 			return postsLoadedMsg{posts: []domain.GlobalTimelinePost{}}
 		}
 
-		log.Printf("[GLOBALPOSTS] SUCCESS: Loaded %d posts", len(posts))
-		for i, post := range posts {
-			if i < 3 {
-				msgPreview := post.Message
-				if len(msgPreview) > 30 {
-					msgPreview = msgPreview[:30]
-				}
-				log.Printf("[GLOBALPOSTS] Post %d: user=%s, isRemote=%v, msg=%s", i, post.Username, post.IsRemote, msgPreview)
-			}
-		}
 		return postsLoadedMsg{posts: posts}
 	}
 }
