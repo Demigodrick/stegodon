@@ -370,7 +370,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case banUserMsg:
 		m.Status = "User banned successfully"
 		m.Error = ""
-		return m, loadUsers()
+		// Reload both users and bans lists to reflect the change
+		return m, tea.Batch(loadUsers(), loadBans())
 
 	case infoBoxesLoadedMsg:
 		m.InfoBoxes = msg.boxes
@@ -416,7 +417,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case unbanUserMsg:
 		m.Status = "User unbanned successfully"
 		m.Error = ""
-		return m, loadBans()
+		// Reload both users and bans lists to reflect the change
+		return m, tea.Batch(loadUsers(), loadBans())
 
 	case tea.KeyMsg:
 		m.Status = ""
