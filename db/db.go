@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -4053,119 +4052,113 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 // ============================================================================
 
 // ReadGlobalTimelinePosts returns posts for the global timeline (local notes + remote activities)
-// excluding replies
-func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.GlobalTimelinePost) {
-	var posts []domain.GlobalTimelinePost
+// excluding replies. Uses UNION ALL for efficient SQL-level sorting and pagination.
+func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.GlobalTimelinePost) {
+	// Use UNION ALL to combine local and remote posts with SQL-level sorting and pagination
+	rows, err := db.db.Query(`
+		SELECT
+			id, username, user_domain, profile_url, object_uri, object_url,
+			is_remote, message, created_at, reply_count, like_count, boost_count
+		FROM (
+			-- Local posts (excluding replies)
+			SELECT
+				n.id as id,
+				a.username as username,
+				'' as user_domain,
+				'/u/' || a.username as profile_url,
+				COALESCE(n.object_uri, '') as object_uri,
+				'' as object_url,
+				0 as is_remote,
+				n.message as message,
+				n.created_at as created_at,
+				COALESCE(n.reply_count, 0) as reply_count,
+				COALESCE(n.like_count, 0) as like_count,
+				COALESCE(n.boost_count, 0) as boost_count
+			FROM notes n
+			INNER JOIN accounts a ON a.id = n.user_id
+			WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
 
-	// Fetch more posts than needed to ensure we have enough after sorting and pagination
-	// Fetch enough to cover the offset + limit, multiplied by 2 to account for interleaving
-	fetchLimit := (offset + limit) * 2
+			UNION ALL
 
-	// Get local posts (excluding replies)
-	localRows, err := db.db.Query(`
-		SELECT n.id, a.username, '', '/u/' || a.username, '', 0, n.message, n.created_at,
-		       COALESCE(n.reply_count, 0), COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
-		FROM notes n
-		INNER JOIN accounts a ON a.id = n.user_id
-		WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
-		ORDER BY n.created_at DESC
-		LIMIT ?`, fetchLimit)
+			-- Remote posts (excluding replies, using indexed in_reply_to column)
+			SELECT
+				act.id as id,
+				ra.username as username,
+				ra.domain as user_domain,
+				ra.actor_uri as profile_url,
+				COALESCE(act.object_uri, '') as object_uri,
+				COALESCE(act.object_url, '') as object_url,
+				1 as is_remote,
+				act.raw_json as message,
+				act.created_at as created_at,
+				COALESCE(act.reply_count, 0) as reply_count,
+				COALESCE(act.like_count, 0) as like_count,
+				COALESCE(act.boost_count, 0) as boost_count
+			FROM activities act
+			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
+			WHERE act.activity_type = 'Create'
+			AND act.local = 0
+			AND (act.in_reply_to IS NULL OR act.in_reply_to = '')
+		) combined
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return err, nil
 	}
-	defer localRows.Close()
+	defer rows.Close()
 
-	for localRows.Next() {
+	var posts []domain.GlobalTimelinePost
+	for rows.Next() {
 		var post domain.GlobalTimelinePost
-		var createdAtStr string
-		err := localRows.Scan(&post.NoteId, &post.Username, &post.UserDomain, &post.ProfileURL,
-			&post.PostURL, &post.IsRemote, &post.Message, &createdAtStr,
-			&post.ReplyCount, &post.LikeCount, &post.BoostCount)
+		var createdAtStr, message string
+		var isRemoteInt int
+		err := rows.Scan(
+			&post.NoteId, &post.Username, &post.UserDomain, &post.ProfileURL,
+			&post.ObjectURI, &post.ObjectURL, &isRemoteInt, &message, &createdAtStr,
+			&post.ReplyCount, &post.LikeCount, &post.BoostCount,
+		)
 		if err != nil {
-			return err, posts
+			return err, &posts
 		}
+		post.IsRemote = isRemoteInt == 1
 		post.CreatedAt, _ = parseTimestamp(createdAtStr)
+
+		if post.IsRemote {
+			// For remote posts, extract content from raw JSON
+			post.Message = extractContentFromJSON(message)
+			// Format username as @user@domain for display
+			post.Username = fmt.Sprintf("@%s@%s", post.Username, post.UserDomain)
+			// Convert ActivityPub object URI to HTML URL for display
+			if post.ObjectURL == "" {
+				post.ObjectURL = convertActivityPubURLToHTML(post.ObjectURI, post.ProfileURL)
+			}
+		} else {
+			post.Message = message
+		}
 		posts = append(posts, post)
 	}
 
-	// Get remote posts (excluding replies)
-	remoteRows, err := db.db.Query(`
-		SELECT a.id, ra.username, ra.domain, ra.actor_uri, a.object_uri,
-		       1, a.raw_json, a.created_at,
-		       COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
-		FROM activities a
-		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
-		WHERE a.activity_type = 'Create'
-		AND a.local = 0
-		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
-		ORDER BY a.created_at DESC
-		LIMIT ?`, fetchLimit)
-	if err != nil {
-		return err, posts
-	}
-	defer remoteRows.Close()
-
-	for remoteRows.Next() {
-		var post domain.GlobalTimelinePost
-		var rawJSON, createdAtStr, actorURI, objectURI string
-		err := remoteRows.Scan(&post.NoteId, &post.Username, &post.UserDomain, &actorURI,
-			&objectURI, &post.IsRemote, &rawJSON, &createdAtStr,
-			&post.ReplyCount, &post.LikeCount, &post.BoostCount)
-		if err != nil {
-			return err, posts
-		}
-		post.CreatedAt, _ = parseTimestamp(createdAtStr)
-		post.Message = extractContentFromJSON(rawJSON)
-		// Use the actor_uri as profile URL (it has the correct format for each server)
-		post.ProfileURL = actorURI
-		// Format username as @user@domain for display
-		post.Username = fmt.Sprintf("@%s@%s", post.Username, post.UserDomain)
-		// Convert ActivityPub object URI to HTML URL for Stegodon servers
-		post.PostURL = convertActivityPubURLToHTML(objectURI, actorURI)
-		posts = append(posts, post)
+	if err = rows.Err(); err != nil {
+		return err, &posts
 	}
 
-	// Sort all posts by creation time (newest first)
-	sort.Slice(posts, func(i, j int) bool {
-		return posts[i].CreatedAt.After(posts[j].CreatedAt)
-	})
-
-	// Apply pagination after sorting
-	start := offset
-	end := offset + limit
-	if start > len(posts) {
-		return nil, []domain.GlobalTimelinePost{}
-	}
-	if end > len(posts) {
-		end = len(posts)
-	}
-
-	return nil, posts[start:end]
+	return nil, &posts
 }
 
 // CountGlobalTimelinePosts returns the total count of posts in the global timeline
 func (db *DB) CountGlobalTimelinePosts() (int, error) {
-	var localCount, remoteCount int
+	var count int
 
-	// Count local posts (excluding replies)
+	// Count both local and remote posts (excluding replies) in a single query
 	err := db.db.QueryRow(`
-		SELECT COUNT(*) FROM notes
-		WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = '')
-	`).Scan(&localCount)
+		SELECT
+			(SELECT COUNT(*) FROM notes WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = ''))
+			+
+			(SELECT COUNT(*) FROM activities WHERE activity_type = 'Create' AND local = 0 AND (in_reply_to IS NULL OR in_reply_to = ''))
+	`).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 
-	// Count remote posts (excluding replies)
-	err = db.db.QueryRow(`
-		SELECT COUNT(*) FROM activities
-		WHERE activity_type = 'Create' 
-		AND local = 0
-		AND raw_json NOT LIKE '%"inReplyTo":"http%'
-	`).Scan(&remoteCount)
-	if err != nil {
-		return 0, err
-	}
-
-	return localCount + remoteCount, nil
+	return count, nil
 }

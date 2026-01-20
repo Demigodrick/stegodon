@@ -154,9 +154,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.showingEngagement = false
 		case "o":
 			// Toggle between showing content and URL
+			// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
 				selectedPost := m.Posts[m.Selected]
-				displayURL := selectedPost.PostURL
+				displayURL := selectedPost.ObjectURL
+				if displayURL == "" {
+					displayURL = selectedPost.ObjectURI
+				}
 				if util.IsURL(displayURL) {
 					m.showingURL = !m.showingURL
 				}
@@ -165,8 +169,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Reply to selected post
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
 				selectedPost := m.Posts[m.Selected]
-				// Construct reply URI - for remote posts use PostURL, for local construct from NoteId
-				replyURI := selectedPost.PostURL
+				// Construct reply URI - use ObjectURI (ActivityPub canonical ID) for proper federation
+				replyURI := selectedPost.ObjectURI
 				if !selectedPost.IsRemote && replyURI == "" {
 					replyURI = "local:" + selectedPost.NoteId
 				}
@@ -194,7 +198,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, nil
 				}
 
-				noteURI := selectedPost.PostURL
+				// Use ObjectURI (ActivityPub canonical ID) for thread lookup
+				noteURI := selectedPost.ObjectURI
 				var noteID uuid.UUID
 				if !selectedPost.IsRemote {
 					// Parse UUID from NoteId string for local posts
@@ -223,10 +228,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Like/unlike the selected post
 			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
 				selectedPost := m.Posts[m.Selected]
-				noteURI := selectedPost.PostURL // For remote posts, this is the ObjectURI
+				// Use ObjectURI (ActivityPub canonical ID) for proper federation
+				noteURI := selectedPost.ObjectURI
 				var noteID uuid.UUID
 
-				// For local posts without PostURL, use local: prefix with NoteId
+				// For local posts without ObjectURI, use local: prefix with NoteId
 				if !selectedPost.IsRemote && selectedPost.NoteId != "" {
 					if id, err := uuid.Parse(selectedPost.NoteId); err == nil {
 						noteID = id
@@ -375,7 +381,11 @@ func (m Model) View() string {
 					s.WriteString(contentFormatted)
 				} else if m.showingURL {
 					// Show URL instead of content
-					displayURL := post.PostURL
+					// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)
+					displayURL := post.ObjectURL
+					if displayURL == "" {
+						displayURL = post.ObjectURI
+					}
 					if util.IsURL(displayURL) {
 						osc8Link := util.FormatClickableURL(displayURL, common.MaxContentTruncateWidth, "🔗 ")
 						hintText := "(Cmd+click to open, press 'o' to toggle back)"
@@ -459,8 +469,11 @@ func loadGlobalPosts() tea.Cmd {
 			log.Printf("Failed to load global timeline: %v", err)
 			return postsLoadedMsg{posts: []domain.GlobalTimelinePost{}}
 		}
+		if posts == nil {
+			return postsLoadedMsg{posts: []domain.GlobalTimelinePost{}}
+		}
 
-		return postsLoadedMsg{posts: posts}
+		return postsLoadedMsg{posts: *posts}
 	}
 }
 
@@ -477,10 +490,10 @@ func loadEngagementInfoGlobal(post domain.GlobalTimelinePost) tea.Cmd {
 				likers, _ = database.ReadLikersInfoByNoteId(noteID)
 				boosters, _ = database.ReadBoostersInfoByNoteId(noteID)
 			}
-		} else if post.PostURL != "" {
-			// For remote posts, use PostURL as ObjectURI
-			likers, _ = database.ReadLikersInfoByObjectURI(post.PostURL)
-			boosters, _ = database.ReadBoostersInfoByObjectURI(post.PostURL)
+		} else if post.ObjectURI != "" {
+			// For remote posts, use ObjectURI (ActivityPub canonical ID)
+			likers, _ = database.ReadLikersInfoByObjectURI(post.ObjectURI)
+			boosters, _ = database.ReadBoostersInfoByObjectURI(post.ObjectURI)
 		}
 
 		return engagementInfoMsg{

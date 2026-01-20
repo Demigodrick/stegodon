@@ -738,28 +738,37 @@ func HandleGlobalTimeline(c *gin.Context, conf *util.AppConfig) {
 		c.HTML(500, "base.html", gin.H{"Title": "Error", "Error": "Failed to load global timeline"})
 		return
 	}
+	if posts == nil {
+		posts = &[]domain.GlobalTimelinePost{}
+	}
 
 	// Get total count for pagination
 	totalPosts, err := database.CountGlobalTimelinePosts()
 	if err != nil {
 		log.Printf("Failed to count global timeline posts: %v", err)
-		totalPosts = len(posts)
+		totalPosts = len(*posts)
 	}
 
 	// Convert to PostView
-	postViews := make([]PostView, 0, len(posts))
-	for _, post := range posts {
+	postViews := make([]PostView, 0, len(*posts))
+	for _, post := range *posts {
 		// Process message HTML
 		messageHTML := util.MarkdownLinksToHTML(post.Message)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
+
+		// Prefer ObjectURL (web-friendly) for display, fall back to ObjectURI
+		displayURL := post.ObjectURL
+		if displayURL == "" {
+			displayURL = post.ObjectURI
+		}
 
 		postView := PostView{
 			NoteId:      post.NoteId,
 			Username:    post.Username,
 			UserDomain:  post.UserDomain,
 			ProfileURL:  post.ProfileURL,
-			PostURL:     post.PostURL,
+			PostURL:     displayURL,
 			IsRemote:    post.IsRemote,
 			Message:     post.Message,
 			MessageHTML: template.HTML(messageHTML),

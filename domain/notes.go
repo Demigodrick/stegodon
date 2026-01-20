@@ -18,7 +18,8 @@ type GlobalTimelinePost struct {
 	Username    string
 	UserDomain  string
 	ProfileURL  string
-	PostURL     string
+	ObjectURI   string // ActivityPub object id (canonical URI, for replies/likes)
+	ObjectURL   string // ActivityPub object url (human-readable web UI link, preferred for display)
 	IsRemote    bool
 	Message     string
 	CreatedAt   time.Time
