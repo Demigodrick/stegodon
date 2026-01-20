@@ -68,6 +68,13 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 			HandleIndex(c, conf)
 		})
 
+		// Global timeline (optional feature)
+		if conf.Conf.ShowGlobal {
+			g.GET("/global", func(c *gin.Context) {
+				HandleGlobalTimeline(c, conf)
+			})
+		}
+
 		g.GET("/u/:username", func(c *gin.Context) {
 			HandleProfile(c, conf)
 		})
@@ -87,7 +94,71 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 			HandleTagFeed(c, conf)
 		})
 
-		// API endpoint for engagement data
+		// API endpoint for engagement data (local posts by note ID)
+		g.GET("/api/engagement/note-id/:noteid/:type", func(c *gin.Context) {
+			noteIdStr := c.Param("noteid")
+			engagementType := c.Param("type")
+
+			noteId, err := uuid.Parse(noteIdStr)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Invalid note ID"})
+				return
+			}
+
+			database := db.GetDB()
+			var users []string
+
+			if engagementType == "likes" {
+				users, _ = database.ReadLikersInfoByNoteId(noteId)
+			} else if engagementType == "boosts" {
+				users, _ = database.ReadBoostersInfoByNoteId(noteId)
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid engagement type"})
+				return
+			}
+
+			if users == nil {
+				users = []string{}
+			}
+
+			c.JSON(200, gin.H{"users": users})
+		})
+
+		// API endpoint for engagement data (remote posts by object URI - using query param)
+		g.GET("/api/engagement/by-uri/:type", func(c *gin.Context) {
+			objectURI := c.Query("uri")
+			engagementType := c.Param("type")
+
+			if objectURI == "" {
+				c.JSON(400, gin.H{"error": "Missing uri parameter"})
+				return
+			}
+
+			database := db.GetDB()
+			var users []string
+			var err error
+
+			if engagementType == "likes" {
+				users, err = database.ReadLikersInfoByObjectURI(objectURI)
+			} else if engagementType == "boosts" {
+				users, err = database.ReadBoostersInfoByObjectURI(objectURI)
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid engagement type"})
+				return
+			}
+
+			if err != nil {
+				log.Printf("Failed to read engagement info for %s: %v", objectURI, err)
+			}
+
+			if users == nil {
+				users = []string{}
+			}
+
+			c.JSON(200, gin.H{"users": users})
+		})
+
+		// Legacy API endpoint for engagement data (backward compatibility with index.html)
 		g.GET("/api/engagement/:noteid/:type", func(c *gin.Context) {
 			noteIdStr := c.Param("noteid")
 			engagementType := c.Param("type")
