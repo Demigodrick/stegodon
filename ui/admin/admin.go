@@ -24,6 +24,7 @@ const (
 	UsersView
 	InfoBoxesView
 	ServerMessageView
+	BansView
 )
 
 type Model struct {
@@ -54,6 +55,11 @@ type Model struct {
 	EditingServerMsg bool
 	ServerMsgInput   textarea.Model // Textarea for server message
 
+	// Ban management
+	Bans         []domain.Ban
+	BanSelected  int
+	BanOffset    int
+
 	Width  int
 	Height int
 	Status string
@@ -80,7 +86,7 @@ func InitialModel(adminId uuid.UUID, width, height int) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadUsers(), loadInfoBoxes(), loadServerMessage())
+	return tea.Batch(loadUsers(), loadInfoBoxes(), loadServerMessage(), loadBans())
 }
 
 // createTextarea creates a new textarea with standard settings
@@ -120,7 +126,7 @@ type usersLoadedMsg struct {
 }
 
 type muteUserMsg struct{}
-type kickUserMsg struct{}
+type banUserMsg struct{}
 
 type infoBoxesLoadedMsg struct {
 	boxes []domain.InfoBox
@@ -135,6 +141,12 @@ type serverMessageLoadedMsg struct {
 }
 
 type serverMessageSavedMsg struct{}
+
+type bansLoadedMsg struct {
+	bans []domain.Ban
+}
+
+type unbanUserMsg struct{}
 
 // User management commands
 func loadUsers() tea.Cmd {
@@ -163,14 +175,37 @@ func muteUser(userId uuid.UUID) tea.Cmd {
 	}
 }
 
-func kickUser(userId uuid.UUID) tea.Cmd {
+func banUser(userId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
-		err := database.DeleteAccount(userId)
-		if err != nil {
-			log.Printf("Failed to kick user: %v", err)
+
+		// Get account info for ban record
+		err, account := database.ReadAccById(userId)
+		if err != nil || account == nil {
+			log.Printf("Failed to read account for ban: %v", err)
+			return banUserMsg{}
 		}
-		return kickUserMsg{}
+
+		// Create ban record with public key hash and last known IP
+		publicKeyHash := account.Publickey // This is already the SHA256 hash
+		err = database.CreateBan(
+			account.Id.String(),
+			account.Username,
+			account.LastIP, // Use the last known IP address
+			publicKeyHash,
+			"Banned by administrator",
+		)
+		if err != nil {
+			log.Printf("Failed to create ban record: %v", err)
+		}
+
+		// Set the banned flag on the account (keep the account for tracking)
+		err = database.BanAccount(userId)
+		if err != nil {
+			log.Printf("Failed to ban account: %v", err)
+		}
+
+		return banUserMsg{}
 	}
 }
 
@@ -232,6 +267,65 @@ func toggleInfoBox(id uuid.UUID) tea.Cmd {
 	}
 }
 
+// Ban management commands
+func loadBans() tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+		err, bans := database.ReadAllBans()
+		if err != nil {
+			log.Printf("Failed to load bans: %v", err)
+			return bansLoadedMsg{bans: []domain.Ban{}}
+		}
+		if bans == nil {
+			return bansLoadedMsg{bans: []domain.Ban{}}
+		}
+		return bansLoadedMsg{bans: *bans}
+	}
+}
+
+func unbanUser(banId string) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+
+		// Parse the ban ID as a UUID to unban the account
+		accountId, parseErr := uuid.Parse(banId)
+		if parseErr == nil {
+			// Clear the banned flag on the account
+			err := database.UnbanAccount(accountId)
+			if err != nil {
+				log.Printf("Failed to unban account: %v", err)
+			}
+		}
+
+		// Delete the ban record
+		err := database.DeleteBan(banId)
+		if err != nil {
+			log.Printf("Failed to delete ban record: %v", err)
+		}
+		return unbanUserMsg{}
+	}
+}
+
+// unbanUserById unbans a user by their account ID (used from Users view)
+func unbanUserById(accountId uuid.UUID) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+
+		// Clear the banned flag on the account
+		err := database.UnbanAccount(accountId)
+		if err != nil {
+			log.Printf("Failed to unban account: %v", err)
+		}
+
+		// Delete the ban record (ban ID = account ID)
+		err = database.DeleteBan(accountId.String())
+		if err != nil {
+			log.Printf("Failed to delete ban record: %v", err)
+		}
+		return unbanUserMsg{}
+	}
+}
+
 // Server message management commands
 func loadServerMessage() tea.Cmd {
 	return func() tea.Msg {
@@ -273,10 +367,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Error = ""
 		return m, loadUsers()
 
-	case kickUserMsg:
-		m.Status = "User kicked successfully"
+	case banUserMsg:
+		m.Status = "User banned successfully"
 		m.Error = ""
-		return m, loadUsers()
+		// Reload both users and bans lists to reflect the change
+		return m, tea.Batch(loadUsers(), loadBans())
 
 	case infoBoxesLoadedMsg:
 		m.InfoBoxes = msg.boxes
@@ -312,6 +407,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.EditingServerMsg = false
 		return m, loadServerMessage()
 
+	case bansLoadedMsg:
+		m.Bans = msg.bans
+		if m.BanSelected >= len(m.Bans) && len(m.Bans) > 0 {
+			m.BanSelected = len(m.Bans) - 1
+		}
+		return m, nil
+
+	case unbanUserMsg:
+		m.Status = "User unbanned successfully"
+		m.Error = ""
+		// Reload both users and bans lists to reflect the change
+		return m, tea.Batch(loadUsers(), loadBans())
+
 	case tea.KeyMsg:
 		m.Status = ""
 		m.Error = ""
@@ -337,6 +445,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case ServerMessageView:
 			return m.handleServerMessageKeys(msg)
+		case BansView:
+			return m.handleBansKeys(msg)
 		}
 	}
 
@@ -382,7 +492,7 @@ func (m Model) handleMenuKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.MenuSelected--
 		}
 	case "down", "j":
-		if m.MenuSelected < 2 { // We have 3 menu items (0, 1, and 2)
+		if m.MenuSelected < 3 { // We have 4 menu items (0, 1, 2, and 3)
 			m.MenuSelected++
 		}
 	case "enter":
@@ -394,6 +504,8 @@ func (m Model) handleMenuKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.CurrentView = InfoBoxesView
 		case 2:
 			m.CurrentView = ServerMessageView
+		case 3:
+			m.CurrentView = BansView
 		}
 	}
 	return m, nil
@@ -436,18 +548,31 @@ func (m Model) handleUsersKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 			return m, muteUser(selectedUser.Id)
 		}
-	case "K":
+	case "B":
 		if len(m.Users) > 0 && m.Selected < len(m.Users) {
 			selectedUser := m.Users[m.Selected]
 			if selectedUser.IsAdmin {
-				m.Error = "Cannot kick admin user"
+				m.Error = "Cannot ban admin user"
 				return m, nil
 			}
 			if selectedUser.Id == m.AdminId {
-				m.Error = "Cannot kick yourself"
+				m.Error = "Cannot ban yourself"
 				return m, nil
 			}
-			return m, kickUser(selectedUser.Id)
+			if selectedUser.Banned {
+				m.Error = "User is already banned"
+				return m, nil
+			}
+			return m, banUser(selectedUser.Id)
+		}
+	case "U":
+		if len(m.Users) > 0 && m.Selected < len(m.Users) {
+			selectedUser := m.Users[m.Selected]
+			if !selectedUser.Banned {
+				m.Error = "User is not banned"
+				return m, nil
+			}
+			return m, unbanUserById(selectedUser.Id)
 		}
 	}
 	return m, nil
@@ -577,6 +702,38 @@ func (m Model) handleServerMessageKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.ServerMessage != nil {
 			newWebEnabled := !m.ServerMessage.WebEnabled
 			return m, saveServerMessage(m.ServerMessage.Message, m.ServerMessage.Enabled, newWebEnabled)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleBansKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.CurrentView = MenuView
+		return m, nil
+	case "up", "k":
+		if m.BanSelected > 0 {
+			m.BanSelected--
+			// Handle pagination
+			if m.BanSelected < m.BanOffset {
+				m.BanOffset--
+			}
+		}
+	case "down", "j":
+		if m.BanSelected < len(m.Bans)-1 {
+			m.BanSelected++
+			// Handle pagination
+			maxVisible := common.DefaultItemsPerPage
+			if m.BanSelected >= m.BanOffset+maxVisible {
+				m.BanOffset++
+			}
+		}
+	case "u":
+		// Unban the selected user
+		if len(m.Bans) > 0 && m.BanSelected < len(m.Bans) {
+			selectedBan := m.Bans[m.BanSelected]
+			return m, unbanUser(selectedBan.Id)
 		}
 	}
 	return m, nil
@@ -721,6 +878,8 @@ func (m Model) View() string {
 		} else {
 			s.WriteString(m.renderServerMessageView())
 		}
+	case BansView:
+		s.WriteString(m.renderBansView())
 	}
 
 	// Status messages
@@ -740,7 +899,7 @@ func (m Model) View() string {
 func (m Model) renderMenu() string {
 	var s strings.Builder
 
-	menuItems := []string{"Manage Users", "Manage Info Boxes", "Server Message"}
+	menuItems := []string{"Manage Users", "Manage Info Boxes", "Server Message", "Manage Bans"}
 
 	for i, item := range menuItems {
 		if i == m.MenuSelected {
@@ -782,6 +941,9 @@ func (m Model) renderUsersView() string {
 		if user.IsAdmin {
 			badges = append(badges, "[ADMIN]")
 		}
+		if user.Banned {
+			badges = append(badges, "[BANNED]")
+		}
 		if user.Muted {
 			badges = append(badges, "[MUTED]")
 		}
@@ -794,6 +956,9 @@ func (m Model) renderUsersView() string {
 		if i == m.Selected {
 			text := common.ListItemSelectedStyle.Render(username + badge)
 			s.WriteString(common.ListSelectedPrefix + text)
+		} else if user.Banned {
+			text := username + common.ListBadgeMutedStyle.Render(badge)
+			s.WriteString(common.ListUnselectedPrefix + common.ListItemStyle.Render(text))
 		} else if user.Muted {
 			text := username + common.ListBadgeMutedStyle.Render(badge)
 			s.WriteString(common.ListUnselectedPrefix + common.ListItemStyle.Render(text))
@@ -811,7 +976,7 @@ func (m Model) renderUsersView() string {
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • K: kick • esc: back"))
+	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • B: ban • U: unban • esc: back"))
 
 	return s.String()
 }
@@ -977,6 +1142,68 @@ func (m Model) renderServerMessageEditView() string {
 	s.WriteString("\n\n")
 
 	s.WriteString(common.ListBadgeStyle.Render("Keys: ctrl+s: save • esc: cancel"))
+
+	return s.String()
+}
+
+func (m Model) renderBansView() string {
+	var s strings.Builder
+
+	s.WriteString(common.CaptionStyle.Render(fmt.Sprintf("manage bans (%d banned)", len(m.Bans))))
+	s.WriteString("\n\n")
+
+	if len(m.Bans) == 0 {
+		s.WriteString(common.ListItemStyle.Render("No banned users"))
+		s.WriteString("\n\n")
+		s.WriteString(common.ListBadgeStyle.Render("Keys: esc: back"))
+		return s.String()
+	}
+
+	// Calculate pagination
+	start := m.BanOffset
+	end := min(start+common.DefaultItemsPerPage, len(m.Bans))
+
+	// Render bans
+	for i := start; i < end; i++ {
+		ban := m.Bans[i]
+
+		// Format the ban info
+		bannedTime := ban.BannedAt.Format("2006-01-02 15:04")
+		info := fmt.Sprintf("%s (banned %s)", ban.Username, bannedTime)
+
+		// Show reason if not default
+		if ban.Reason != "" && ban.Reason != "Banned by administrator" {
+			info += fmt.Sprintf(" - %s", ban.Reason)
+		}
+
+		// Show IP if present
+		if ban.IPAddress != "" {
+			info += fmt.Sprintf(" [IP: %s]", ban.IPAddress)
+		}
+
+		// Show partial pubkey hash for identification
+		if len(ban.PublicKeyHash) > 16 {
+			info += fmt.Sprintf(" [Key: %s...]", ban.PublicKeyHash[:16])
+		}
+
+		if i == m.BanSelected {
+			text := common.ListItemSelectedStyle.Render(info)
+			s.WriteString(common.ListSelectedPrefix + text)
+		} else {
+			s.WriteString(common.ListUnselectedPrefix + common.ListItemStyle.Render(info))
+		}
+		s.WriteString("\n")
+	}
+
+	// Show pagination info
+	if len(m.Bans) > common.DefaultItemsPerPage {
+		s.WriteString("\n")
+		paginationText := fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.Bans))
+		s.WriteString(common.ListBadgeStyle.Render(paginationText))
+	}
+
+	s.WriteString("\n\n")
+	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • u: unban • esc: back"))
 
 	return s.String()
 }

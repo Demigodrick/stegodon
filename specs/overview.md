@@ -43,7 +43,7 @@ This document provides a lookup table for all specification documents in the ste
 | LocalUsers View | Browse and follow local users | [ui/localusers.md](./ui/localusers.md) |
 | Notifications View | Notification center with unread badges | [ui/notifications.md](./ui/notifications.md) |
 | Relay Management | Admin relay control (add, pause, delete) | [ui/relay.md](./ui/relay.md) |
-| Admin Panel | User management (mute, kickout) | [ui/admin.md](./ui/admin.md) |
+| Admin Panel | User management (mute, ban) and ban management | [ui/admin.md](./ui/admin.md) |
 | DeleteAccount View | Two-step account deletion confirmation | [ui/deleteaccount.md](./ui/deleteaccount.md) |
 | Common Components | Header, styles, layout, commands | [ui/common.md](./ui/common.md) |
 

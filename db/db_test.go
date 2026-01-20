@@ -51,6 +51,8 @@ func setupTestDB(t *testing.T) *DB {
 	// Add admin fields to accounts table
 	db.db.Exec(`ALTER TABLE accounts ADD COLUMN is_admin INTEGER DEFAULT 0`)
 	db.db.Exec(`ALTER TABLE accounts ADD COLUMN muted INTEGER DEFAULT 0`)
+	db.db.Exec(`ALTER TABLE accounts ADD COLUMN banned INTEGER DEFAULT 0`)
+	db.db.Exec(`ALTER TABLE accounts ADD COLUMN last_ip TEXT`)
 
 	// Create ActivityPub tables
 	db.db.Exec(`CREATE TABLE IF NOT EXISTS remote_accounts(

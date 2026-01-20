@@ -78,6 +78,9 @@ func (a *App) Initialize() error {
 		log.Printf("Warning: Performance indexes migration encountered errors: %v", err)
 	}
 
+	// Cleanup expired IP bans (IP addresses older than 60 days are cleared)
+	database.CleanupExpiredIPBans()
+
 	// Initialize SSH server
 	sshKeyPath := util.ResolveFilePathWithSubdir(".ssh", "stegodonhostkey")
 	log.Printf("Using SSH host key at: %s", sshKeyPath)

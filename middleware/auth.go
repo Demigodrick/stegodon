@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"log"
+	"net"
+	"strings"
 
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -13,16 +15,54 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 	return func(h ssh.Handler) ssh.Handler {
 		return func(s ssh.Session) {
 			database := db.GetDB()
+
+			// Check if IP or public key is banned
+			remoteAddr := s.RemoteAddr().String()
+			// Extract just the IP (remove port) - handles IPv4 and IPv6
+			ip := extractIP(remoteAddr)
+
+			// Check IP ban
+			if database.IsIPBanned(ip) {
+				log.Printf("Blocked connection from banned IP: %s", ip)
+				s.Write([]byte("\n"))
+				s.Write([]byte("Your IP address is banned.\n"))
+				s.Write([]byte("\n"))
+				s.Write([]byte("If you think this is a mistake, please contact the administrator.\n"))
+				s.Write([]byte("\n"))
+				s.Close()
+				return
+			}
+
+			// Check public key ban
+			publicKeyHash := util.PkToHash(util.PublicKeyToString(s.PublicKey()))
+			if database.IsPublicKeyBanned(publicKeyHash) {
+				log.Printf("Blocked connection from banned public key: %s", publicKeyHash[:16])
+				s.Write([]byte("You have been banned from this server.\n"))
+				s.Close()
+				return
+			}
+
 			found, acc := database.ReadAccBySession(s)
 
 			switch {
 			case found == nil:
-				// User exists - check if muted
+				// User exists - check if banned
+				if acc != nil && acc.Banned {
+					log.Printf("Blocked login attempt from banned user: %s", acc.Username)
+					s.Write([]byte("You have been banned from this server.\n"))
+					s.Close()
+					return
+				}
+				// Check if muted
 				if acc != nil && acc.Muted {
 					log.Printf("Blocked login attempt from muted user: %s", acc.Username)
 					s.Write([]byte("Your account has been muted by an administrator.\n"))
 					s.Close()
 					return
+				}
+				// Update last IP for the account
+				if acc != nil {
+					database.UpdateAccountLastIP(acc.Id, ip)
 				}
 				util.LogPublicKey(s)
 			default:
@@ -62,6 +102,8 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 
 				if created != false {
 					util.LogPublicKey(s)
+					// Update last IP for the new account
+					database.UpdateAccountLastIPByPkHash(publicKeyHash, ip)
 				} else {
 					log.Println("The user is still empty!")
 				}
@@ -70,4 +112,21 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 			h(s)
 		}
 	}
+}
+
+// extractIP extracts the IP address from a remote address string.
+// Handles IPv4, IPv6 with brackets, and raw IPv6 without port.
+func extractIP(remoteAddr string) string {
+	// Try net.SplitHostPort first - works for "ip:port" and "[ip]:port"
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+
+	// SplitHostPort failed - check if it's bracketed IPv6 without port
+	if strings.HasPrefix(remoteAddr, "[") && strings.HasSuffix(remoteAddr, "]") {
+		return remoteAddr[1 : len(remoteAddr)-1]
+	}
+
+	// Otherwise return as-is (raw IPv6 or IPv4 without port)
+	return remoteAddr
 }

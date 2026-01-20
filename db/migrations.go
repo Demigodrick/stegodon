@@ -241,6 +241,21 @@ const (
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`
 
+	// Bans table for storing banned users' IP addresses and public keys
+	sqlCreateBansTable = `CREATE TABLE IF NOT EXISTS bans (
+		id TEXT NOT NULL PRIMARY KEY,
+		username TEXT NOT NULL,
+		ip_address TEXT NOT NULL,
+		public_key_hash TEXT NOT NULL,
+		reason TEXT NOT NULL DEFAULT 'Banned by administrator',
+		banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+
+	sqlCreateBansIndices = `
+		CREATE INDEX IF NOT EXISTS idx_bans_ip_address ON bans(ip_address);
+		CREATE INDEX IF NOT EXISTS idx_bans_public_key_hash ON bans(public_key_hash);
+	`
+
 	// Extend existing tables with new columns
 	sqlExtendAccountsTable = `
 		ALTER TABLE accounts ADD COLUMN display_name TEXT;
@@ -315,6 +330,9 @@ func (db *DB) RunMigrations() error {
 		if err := db.createTableIfNotExists(tx, sqlCreateServerMessageTable, "server_message"); err != nil {
 			return err
 		}
+		if err := db.createTableIfNotExists(tx, sqlCreateBansTable, "bans"); err != nil {
+			return err
+		}
 
 		// Create indices
 		if _, err := tx.Exec(sqlCreateFollowsIndices); err != nil {
@@ -355,6 +373,9 @@ func (db *DB) RunMigrations() error {
 		}
 		if _, err := tx.Exec(sqlCreateUploadTokensIndices); err != nil {
 			log.Printf("Warning: Failed to create upload_tokens indices: %v", err)
+		}
+		if _, err := tx.Exec(sqlCreateBansIndices); err != nil {
+			log.Printf("Warning: Failed to create bans indices: %v", err)
 		}
 		if _, err := tx.Exec(sqlCreateNotesIndices); err != nil {
 			log.Printf("Warning: Failed to create notes indices: %v", err)
@@ -409,6 +430,8 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 	tx.Exec("ALTER TABLE accounts ADD COLUMN avatar_url TEXT")
 	tx.Exec("ALTER TABLE accounts ADD COLUMN is_admin INTEGER DEFAULT 0")
 	tx.Exec("ALTER TABLE accounts ADD COLUMN muted INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE accounts ADD COLUMN banned INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE accounts ADD COLUMN last_ip TEXT")
 
 	// Try to add columns to notes table (ignore errors if they exist)
 	tx.Exec("ALTER TABLE notes ADD COLUMN visibility TEXT DEFAULT 'public'")

@@ -860,13 +860,17 @@ func (m MainModel) View() string {
 			case 0: // MenuView
 				viewCommands = "↑/↓ • enter: select"
 			case 1: // UsersView
-				viewCommands = "↑/↓ • m: mute • K: kick • esc: back"
+				viewCommands = "↑/↓ • m: mute • B: ban • U: unban • esc: back"
 			case 2: // InfoBoxesView
 				if m.adminModel.Editing {
 					viewCommands = "tab/shift+tab: switch • ctrl+s: save • esc: cancel"
 				} else {
 					viewCommands = "↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back"
 				}
+			case 3: // ServerMessageView
+				viewCommands = "e: edit • esc: back"
+			case 4: // BansView
+				viewCommands = "↑/↓ • u: unban • esc: back"
 			default:
 				viewCommands = "↑/↓ • enter: select"
 			}
