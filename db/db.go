@@ -3969,15 +3969,19 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.GlobalTimelinePost) {
 	var posts []domain.GlobalTimelinePost
 
+	// Fetch more posts than needed to ensure we have enough after sorting and pagination
+	// Fetch enough to cover the offset + limit, multiplied by 2 to account for interleaving
+	fetchLimit := (offset + limit) * 2
+
 	// Get local posts (excluding replies)
 	localRows, err := db.db.Query(`
-		SELECT n.id, a.username, '', '/u/' || a.username, '', 0, n.message, n.created_at, 
+		SELECT n.id, a.username, '', '/u/' || a.username, '', 0, n.message, n.created_at,
 		       COALESCE(n.reply_count, 0), COALESCE(n.like_count, 0), COALESCE(n.boost_count, 0)
 		FROM notes n
 		INNER JOIN accounts a ON a.id = n.user_id
 		WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
 		ORDER BY n.created_at DESC
-		LIMIT ?`, limit)
+		LIMIT ?`, fetchLimit)
 	if err != nil {
 		return err, nil
 	}
@@ -4007,7 +4011,7 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.Global
 		AND a.local = 0
 		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
 		ORDER BY a.created_at DESC
-		LIMIT ?`, limit)
+		LIMIT ?`, fetchLimit)
 	if err != nil {
 		return err, posts
 	}
