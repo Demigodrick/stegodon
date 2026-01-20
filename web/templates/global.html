@@ -99,11 +99,7 @@
                                 </span>
                             {{end}}
                             {{if gt .ReplyCount 0}}
-                                {{if .PostURL}}
-                                    <a href="{{.PostURL}}" class="reply-count" target="_blank" rel="noopener noreferrer"><span class="icon">💬</span> {{.ReplyCount}}</a>
-                                {{else}}
-                                    <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>
-                                {{end}}
+                                <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>
                             {{end}}
                         </div>
                         {{end}}
