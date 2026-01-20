@@ -1430,6 +1430,94 @@ func extractAuthorFromActorURI(actorURI string) string {
 	return "@" + username + "@" + domain
 }
 
+// convertActivityPubURLToHTML converts an ActivityPub object URI to an HTML post URL
+// For Stegodon servers: https://domain/notes/{uuid} -> https://domain/u/{username}/{uuid}
+// For other servers: keeps the original URL
+func convertActivityPubURLToHTML(objectURI string, actorURI string) string {
+	// Check if this is a Stegodon notes URL
+	if strings.Contains(objectURI, "/notes/") {
+		// Extract username from actor URI
+		username := extractUsernameFromActorURI(actorURI)
+		if username == "" {
+			return objectURI // Fallback to original if can't extract username
+		}
+
+		// Extract UUID from object URI
+		parts := strings.Split(objectURI, "/notes/")
+		if len(parts) != 2 {
+			return objectURI
+		}
+		uuidPart := parts[1]
+		// Remove any trailing path segments
+		if idx := strings.Index(uuidPart, "/"); idx > 0 {
+			uuidPart = uuidPart[:idx]
+		}
+
+		// Extract domain from actor URI
+		domain := extractDomainFromActorURI(actorURI)
+		if domain == "" {
+			return objectURI
+		}
+
+		// Construct HTML URL
+		return fmt.Sprintf("https://%s/u/%s/%s", domain, username, uuidPart)
+	}
+
+	// For non-Stegodon servers, return original URL
+	return objectURI
+}
+
+// extractUsernameFromActorURI extracts just the username from an actor URI
+func extractUsernameFromActorURI(actorURI string) string {
+	// Remove protocol prefix
+	uri := strings.TrimPrefix(actorURI, "https://")
+	uri = strings.TrimPrefix(uri, "http://")
+
+	// Split into domain and path
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	path := parts[1]
+
+	// Extract username from path
+	var username string
+	if strings.HasPrefix(path, "users/") {
+		username = strings.TrimPrefix(path, "users/")
+	} else if strings.HasPrefix(path, "@") {
+		username = strings.TrimPrefix(path, "@")
+	} else if strings.HasPrefix(path, "u/") {
+		username = strings.TrimPrefix(path, "u/")
+	} else {
+		// Just use last path segment as username
+		pathParts := strings.Split(path, "/")
+		username = pathParts[len(pathParts)-1]
+	}
+
+	// Remove any trailing path segments from username
+	if idx := strings.Index(username, "/"); idx > 0 {
+		username = username[:idx]
+	}
+
+	return username
+}
+
+// extractDomainFromActorURI extracts just the domain from an actor URI
+func extractDomainFromActorURI(actorURI string) string {
+	// Remove protocol prefix
+	uri := strings.TrimPrefix(actorURI, "https://")
+	uri = strings.TrimPrefix(uri, "http://")
+
+	// Split into domain and path
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) < 1 {
+		return ""
+	}
+
+	return parts[0]
+}
+
 // Delivery Queue queries
 const (
 	sqlInsertDeliveryQueue     = `INSERT INTO delivery_queue(id, inbox_uri, activity_json, attempts, next_retry_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`
@@ -4019,9 +4107,9 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.Global
 
 	for remoteRows.Next() {
 		var post domain.GlobalTimelinePost
-		var rawJSON, createdAtStr, actorURI string
+		var rawJSON, createdAtStr, actorURI, objectURI string
 		err := remoteRows.Scan(&post.NoteId, &post.Username, &post.UserDomain, &actorURI,
-			&post.PostURL, &post.IsRemote, &rawJSON, &createdAtStr,
+			&objectURI, &post.IsRemote, &rawJSON, &createdAtStr,
 			&post.ReplyCount, &post.LikeCount, &post.BoostCount)
 		if err != nil {
 			return err, posts
@@ -4032,6 +4120,8 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.Global
 		post.ProfileURL = actorURI
 		// Format username as @user@domain for display
 		post.Username = fmt.Sprintf("@%s@%s", post.Username, post.UserDomain)
+		// Convert ActivityPub object URI to HTML URL for Stegodon servers
+		post.PostURL = convertActivityPubURLToHTML(objectURI, actorURI)
 		posts = append(posts, post)
 	}
 
