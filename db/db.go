@@ -3998,12 +3998,12 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, []domain.Global
 
 	// Get remote posts (excluding replies)
 	remoteRows, err := db.db.Query(`
-		SELECT a.id, ra.username, ra.domain, ra.actor_uri, COALESCE(a.object_url, a.object_uri), 
+		SELECT a.id, ra.username, ra.domain, ra.actor_uri, a.object_uri,
 		       1, a.raw_json, a.created_at,
 		       COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
 		FROM activities a
 		INNER JOIN remote_accounts ra ON ra.actor_uri = a.actor_uri
-		WHERE a.activity_type = 'Create' 
+		WHERE a.activity_type = 'Create'
 		AND a.local = 0
 		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
 		ORDER BY a.created_at DESC
