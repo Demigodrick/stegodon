@@ -28,6 +28,9 @@ type Account struct {
 	// Admin fields
 	IsAdmin bool
 	Muted   bool
+	Banned  bool
+	// Connection tracking
+	LastIP string
 }
 
 func (acc *Account) ToString() string {

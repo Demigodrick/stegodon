@@ -32,7 +32,9 @@ func setupMigrationTestDB(t *testing.T) *DB {
 		summary TEXT,
 		avatar_url TEXT,
 		is_admin INTEGER DEFAULT 0,
-		muted INTEGER DEFAULT 0
+		muted INTEGER DEFAULT 0,
+		banned INTEGER DEFAULT 0,
+		last_ip TEXT
 	)`)
 	if err != nil {
 		t.Fatalf("Failed to create accounts table: %v", err)

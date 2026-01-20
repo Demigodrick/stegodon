@@ -179,21 +179,19 @@ func banUser(userId uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
 
-		// Get account info before deleting
+		// Get account info for ban record
 		err, account := database.ReadAccById(userId)
 		if err != nil || account == nil {
 			log.Printf("Failed to read account for ban: %v", err)
 			return banUserMsg{}
 		}
 
-		// Create ban record with public key hash
-		// IP address will be empty for now - we don't track last login IP yet
-		// Public key hash is the primary ban mechanism
+		// Create ban record with public key hash and last known IP
 		publicKeyHash := account.Publickey // This is already the SHA256 hash
 		err = database.CreateBan(
 			account.Id.String(),
 			account.Username,
-			"", // IP address - empty for now
+			account.LastIP, // Use the last known IP address
 			publicKeyHash,
 			"Banned by administrator",
 		)
@@ -201,10 +199,10 @@ func banUser(userId uuid.UUID) tea.Cmd {
 			log.Printf("Failed to create ban record: %v", err)
 		}
 
-		// Delete the account
-		err = database.DeleteAccount(userId)
+		// Set the banned flag on the account (keep the account for tracking)
+		err = database.BanAccount(userId)
 		if err != nil {
-			log.Printf("Failed to delete banned account: %v", err)
+			log.Printf("Failed to ban account: %v", err)
 		}
 
 		return banUserMsg{}
@@ -288,9 +286,21 @@ func loadBans() tea.Cmd {
 func unbanUser(banId string) tea.Cmd {
 	return func() tea.Msg {
 		database := db.GetDB()
+
+		// Parse the ban ID as a UUID to unban the account
+		accountId, parseErr := uuid.Parse(banId)
+		if parseErr == nil {
+			// Clear the banned flag on the account
+			err := database.UnbanAccount(accountId)
+			if err != nil {
+				log.Printf("Failed to unban account: %v", err)
+			}
+		}
+
+		// Delete the ban record
 		err := database.DeleteBan(banId)
 		if err != nil {
-			log.Printf("Failed to unban user: %v", err)
+			log.Printf("Failed to delete ban record: %v", err)
 		}
 		return unbanUserMsg{}
 	}
@@ -525,6 +535,10 @@ func (m Model) handleUsersKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 			if selectedUser.Id == m.AdminId {
 				m.Error = "Cannot ban yourself"
+				return m, nil
+			}
+			if selectedUser.Banned {
+				m.Error = "User is already banned"
 				return m, nil
 			}
 			return m, banUser(selectedUser.Id)
@@ -896,6 +910,9 @@ func (m Model) renderUsersView() string {
 		if user.IsAdmin {
 			badges = append(badges, "[ADMIN]")
 		}
+		if user.Banned {
+			badges = append(badges, "[BANNED]")
+		}
 		if user.Muted {
 			badges = append(badges, "[MUTED]")
 		}
@@ -908,6 +925,9 @@ func (m Model) renderUsersView() string {
 		if i == m.Selected {
 			text := common.ListItemSelectedStyle.Render(username + badge)
 			s.WriteString(common.ListSelectedPrefix + text)
+		} else if user.Banned {
+			text := username + common.ListBadgeMutedStyle.Render(badge)
+			s.WriteString(common.ListUnselectedPrefix + common.ListItemStyle.Render(text))
 		} else if user.Muted {
 			text := username + common.ListBadgeMutedStyle.Render(badge)
 			s.WriteString(common.ListUnselectedPrefix + common.ListItemStyle.Render(text))

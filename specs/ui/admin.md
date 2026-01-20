@@ -6,9 +6,10 @@ This document specifies the Admin Panel view, which provides user and content ma
 
 ## Overview
 
-The Admin Panel is an admin-only view with two main functions:
-- **User Management**: View, mute, and kick users
+The Admin Panel is an admin-only view with three main functions:
+- **User Management**: View, mute, and ban users
 - **Info Box Management**: Create, edit, delete, and toggle web UI info boxes
+- **Ban Management**: View and unban banned users
 
 ---
 
@@ -121,7 +122,7 @@ User muted and posts deleted
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
 | `m` | Mute selected user |
-| `K` | Kick selected user (capital K to prevent accidents) |
+| `B` | Ban selected user (capital B to prevent accidents) |
 | `Esc` | Return to menu |
 
 ### User Badges
@@ -129,6 +130,7 @@ User muted and posts deleted
 | Badge | Style | Meaning |
 |-------|-------|---------|
 | `[ADMIN]` | Dim color | Admin user |
+| `[BANNED]` | Error/red color | Banned user |
 | `[MUTED]` | Error/red color | Muted user |
 
 ### Muting Users
@@ -143,15 +145,18 @@ Muting a user:
 - Cannot mute yourself
 - Cannot mute already-muted users
 
-### Kicking Users
+### Banning Users
 
-Kicking a user (capital `K` for safety):
-- Completely deletes their account
-- Removes all notes, follows, activities, notifications
+Banning a user (capital `B` for safety):
+- Sets the `Banned` flag on the account
+- Records the user's IP address and SSH public key in the bans table
+- Prevents the user from logging in
+- The account is preserved for tracking purposes (username and SSH key cannot be reused)
 
 **Restrictions:**
-- Cannot kick admin users
-- Cannot kick yourself
+- Cannot ban admin users
+- Cannot ban yourself
+- Cannot ban already-banned users
 
 ---
 
@@ -258,7 +263,7 @@ type usersLoadedMsg struct {
     users []domain.Account
 }
 type muteUserMsg struct{}
-type kickUserMsg struct{}
+type banUserMsg struct{}
 
 // Info box management
 type infoBoxesLoadedMsg struct {
@@ -293,11 +298,20 @@ func muteUser(userId uuid.UUID) tea.Cmd {
     }
 }
 
-func kickUser(userId uuid.UUID) tea.Cmd {
+func banUser(userId uuid.UUID) tea.Cmd {
     return func() tea.Msg {
         database := db.GetDB()
-        database.DeleteAccount(userId)
-        return kickUserMsg{}
+        // Get account info for ban record
+        err, account := database.ReadAccById(userId)
+        if err != nil || account == nil {
+            return banUserMsg{}
+        }
+        // Create ban record with public key hash and last known IP
+        database.CreateBan(account.Id.String(), account.Username,
+            account.LastIP, account.Publickey, "Banned by administrator")
+        // Set the banned flag (keep the account for tracking)
+        database.BanAccount(userId)
+        return banUserMsg{}
     }
 }
 ```
@@ -397,7 +411,7 @@ The footer shows context-specific help:
 | View | Help Text |
 |------|-----------|
 | MenuView | `↑/↓ • enter: select` |
-| UsersView | `↑/↓ • m: mute • K: kick • esc: back` |
+| UsersView | `↑/↓ • m: mute • B: ban • esc: back` |
 | InfoBoxesView (list) | `↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back` |
 | InfoBoxesView (edit) | `tab/shift+tab: switch • ctrl+s: save • esc: cancel` |
 

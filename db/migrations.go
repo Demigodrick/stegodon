@@ -238,7 +238,7 @@ const (
 		message TEXT NOT NULL DEFAULT '',
 		enabled INTEGER NOT NULL DEFAULT 0,
 		web_enabled INTEGER NOT NULL DEFAULT 1,
-		updated_at TIMESTAMP DEFAULT CURRENT TIMESTAMP
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`
 
 	// Bans table for storing banned users' IP addresses and public keys
@@ -430,6 +430,8 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 	tx.Exec("ALTER TABLE accounts ADD COLUMN avatar_url TEXT")
 	tx.Exec("ALTER TABLE accounts ADD COLUMN is_admin INTEGER DEFAULT 0")
 	tx.Exec("ALTER TABLE accounts ADD COLUMN muted INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE accounts ADD COLUMN banned INTEGER DEFAULT 0")
+	tx.Exec("ALTER TABLE accounts ADD COLUMN last_ip TEXT")
 
 	// Try to add columns to notes table (ignore errors if they exist)
 	tx.Exec("ALTER TABLE notes ADD COLUMN visibility TEXT DEFAULT 'public'")

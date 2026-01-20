@@ -26,7 +26,11 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 			// Check IP ban
 			if database.IsIPBanned(ip) {
 				log.Printf("Blocked connection from banned IP: %s", ip)
-				s.Write([]byte("You have been banned from this server.\n"))
+				s.Write([]byte("\n"))
+				s.Write([]byte("Your IP address is banned.\n"))
+				s.Write([]byte("\n"))
+				s.Write([]byte("If you think this is a mistake, please contact the administrator.\n"))
+				s.Write([]byte("\n"))
 				s.Close()
 				return
 			}
@@ -44,12 +48,23 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 
 			switch {
 			case found == nil:
-				// User exists - check if muted
+				// User exists - check if banned
+				if acc != nil && acc.Banned {
+					log.Printf("Blocked login attempt from banned user: %s", acc.Username)
+					s.Write([]byte("You have been banned from this server.\n"))
+					s.Close()
+					return
+				}
+				// Check if muted
 				if acc != nil && acc.Muted {
 					log.Printf("Blocked login attempt from muted user: %s", acc.Username)
 					s.Write([]byte("Your account has been muted by an administrator.\n"))
 					s.Close()
 					return
+				}
+				// Update last IP for the account
+				if acc != nil {
+					database.UpdateAccountLastIP(acc.Id, ip)
 				}
 				util.LogPublicKey(s)
 			default:
@@ -89,6 +104,8 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 
 				if created != false {
 					util.LogPublicKey(s)
+					// Update last IP for the new account
+					database.UpdateAccountLastIPByPkHash(publicKeyHash, ip)
 				} else {
 					log.Println("The user is still empty!")
 				}

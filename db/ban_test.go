@@ -189,4 +189,88 @@ func TestBanOperations(t *testing.T) {
 			t.Error("Unrelated IP should not be considered banned")
 		}
 	})
+
+	t.Run("CleanupExpiredIPBans clears old IP addresses", func(t *testing.T) {
+		// Create a ban with an old timestamp (more than 60 days ago)
+		id := uuid.New().String()
+		oldIP := "192.168.99.99"
+		publicKey := "oldbankey"
+
+		// Insert directly with an old timestamp
+		_, err := testDB.db.Exec(
+			`INSERT INTO bans(id, username, ip_address, public_key_hash, reason, banned_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-61 days'))`,
+			id, "olduser", oldIP, publicKey, "Old ban",
+		)
+		if err != nil {
+			t.Fatalf("Failed to create old ban: %v", err)
+		}
+
+		// Verify the IP is NOT banned (because it's too old)
+		if testDB.IsIPBanned(oldIP) {
+			t.Error("Old IP should not be considered banned (>60 days)")
+		}
+
+		// But the public key should still be banned
+		if !testDB.IsPublicKeyBanned(publicKey) {
+			t.Error("Public key should still be banned regardless of age")
+		}
+
+		// Run cleanup
+		affected, err := testDB.CleanupExpiredIPBans()
+		if err != nil {
+			t.Fatalf("Cleanup failed: %v", err)
+		}
+		if affected < 1 {
+			t.Error("Expected at least 1 expired IP to be cleaned up")
+		}
+
+		// Verify the ban still exists but IP is cleared
+		err, bans := testDB.ReadAllBans()
+		if err != nil {
+			t.Fatalf("Failed to read bans: %v", err)
+		}
+
+		found := false
+		for _, ban := range *bans {
+			if ban.Id == id {
+				found = true
+				if ban.IPAddress != "" {
+					t.Errorf("Expected IP to be cleared, got %s", ban.IPAddress)
+				}
+				// Public key should still be there
+				if ban.PublicKeyHash != publicKey {
+					t.Errorf("Public key should be preserved, got %s", ban.PublicKeyHash)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("Ban record should still exist after cleanup")
+		}
+	})
+
+	t.Run("Recent IP bans are not cleaned up", func(t *testing.T) {
+		// Create a recent ban
+		id := uuid.New().String()
+		recentIP := "192.168.50.50"
+		publicKey := "recentbankey"
+
+		err := testDB.CreateBan(id, "recentuser", recentIP, publicKey, "Recent ban")
+		if err != nil {
+			t.Fatalf("Failed to create recent ban: %v", err)
+		}
+
+		// Verify the IP is banned
+		if !testDB.IsIPBanned(recentIP) {
+			t.Error("Recent IP should be banned")
+		}
+
+		// Run cleanup
+		testDB.CleanupExpiredIPBans()
+
+		// IP should still be banned
+		if !testDB.IsIPBanned(recentIP) {
+			t.Error("Recent IP should still be banned after cleanup")
+		}
+	})
 }

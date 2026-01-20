@@ -47,9 +47,9 @@ const (
 	sqlUpdateAccountDisplayName = `UPDATE accounts SET display_name = ? WHERE id = ?`
 	sqlUpdateAccountSummary     = `UPDATE accounts SET summary = ? WHERE id = ?`
 	sqlUpdateAccountAvatar      = `UPDATE accounts SET avatar_url = ? WHERE id = ?`
-	sqlSelectUserByPublicKey    = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE publickey = ?`
-	sqlSelectUserById           = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE id = ?`
-	sqlSelectUserByUsername     = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE username = ?`
+	sqlSelectUserByPublicKey    = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted, banned, last_ip FROM accounts WHERE publickey = ?`
+	sqlSelectUserById           = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted, banned, last_ip FROM accounts WHERE id = ?`
+	sqlSelectUserByUsername     = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted, banned, last_ip FROM accounts WHERE username = ?`
 
 	//Notes
 	sqlCreateNotesTable = `CREATE TABLE IF NOT EXISTS notes(
@@ -77,8 +77,8 @@ const (
                                                             ORDER BY notes.created_at DESC`
 
 	// Local users and local timeline queries
-	sqlSelectAllAccounts        = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts WHERE first_time_login = 0 ORDER BY username ASC`
-	sqlSelectAllAccountsAdmin   = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted FROM accounts ORDER BY created_at ASC`
+	sqlSelectAllAccounts        = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted, banned, last_ip FROM accounts WHERE first_time_login = 0 ORDER BY username ASC`
+	sqlSelectAllAccountsAdmin   = `SELECT id, username, publickey, created_at, first_time_login, web_public_key, web_private_key, display_name, summary, avatar_url, is_admin, muted, banned, last_ip FROM accounts ORDER BY created_at ASC`
 	sqlCountAccounts            = `SELECT COUNT(*) FROM accounts`
 	sqlCountLocalPosts          = `SELECT COUNT(*) FROM notes`
 	sqlCountActiveUsersMonth    = `SELECT COUNT(DISTINCT user_id) FROM notes WHERE created_at >= datetime('now', '-30 days')`
@@ -300,10 +300,10 @@ func (db *DB) GetExistingUploadToken(accountId uuid.UUID, tokenType string) (str
 func (db *DB) ReadAccBySession(s ssh.Session) (error, *domain.Account) {
 	publicKeyToString := util.PublicKeyToString(s.PublicKey())
 	var tempAcc domain.Account
-	var displayName, summary, avatarURL sql.NullString
-	var isAdmin, muted sql.NullInt64
+	var displayName, summary, avatarURL, lastIP sql.NullString
+	var isAdmin, muted, banned sql.NullInt64
 	row := db.db.QueryRow(sqlSelectUserByPublicKey, util.PkToHash(publicKeyToString))
-	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted)
+	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -312,15 +312,17 @@ func (db *DB) ReadAccBySession(s ssh.Session) (error, *domain.Account) {
 	tempAcc.AvatarURL = avatarURL.String
 	tempAcc.IsAdmin = isAdmin.Int64 == 1
 	tempAcc.Muted = muted.Int64 == 1
+	tempAcc.Banned = banned.Int64 == 1
+	tempAcc.LastIP = lastIP.String
 	return err, &tempAcc
 }
 
 func (db *DB) ReadAccByPkHash(pkHash string) (error, *domain.Account) {
 	row := db.db.QueryRow(sqlSelectUserByPublicKey, pkHash)
 	var tempAcc domain.Account
-	var displayName, summary, avatarURL sql.NullString
-	var isAdmin, muted sql.NullInt64
-	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted)
+	var displayName, summary, avatarURL, lastIP sql.NullString
+	var isAdmin, muted, banned sql.NullInt64
+	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -329,15 +331,17 @@ func (db *DB) ReadAccByPkHash(pkHash string) (error, *domain.Account) {
 	tempAcc.AvatarURL = avatarURL.String
 	tempAcc.IsAdmin = isAdmin.Int64 == 1
 	tempAcc.Muted = muted.Int64 == 1
+	tempAcc.Banned = banned.Int64 == 1
+	tempAcc.LastIP = lastIP.String
 	return err, &tempAcc
 }
 
 func (db *DB) ReadAccById(id uuid.UUID) (error, *domain.Account) {
 	row := db.db.QueryRow(sqlSelectUserById, id)
 	var tempAcc domain.Account
-	var displayName, summary, avatarURL sql.NullString
-	var isAdmin, muted sql.NullInt64
-	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted)
+	var displayName, summary, avatarURL, lastIP sql.NullString
+	var isAdmin, muted, banned sql.NullInt64
+	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -346,15 +350,17 @@ func (db *DB) ReadAccById(id uuid.UUID) (error, *domain.Account) {
 	tempAcc.AvatarURL = avatarURL.String
 	tempAcc.IsAdmin = isAdmin.Int64 == 1
 	tempAcc.Muted = muted.Int64 == 1
+	tempAcc.Banned = banned.Int64 == 1
+	tempAcc.LastIP = lastIP.String
 	return err, &tempAcc
 }
 
 func (db *DB) ReadAccByUsername(username string) (error, *domain.Account) {
 	row := db.db.QueryRow(sqlSelectUserByUsername, username)
 	var tempAcc domain.Account
-	var displayName, summary, avatarURL sql.NullString
-	var isAdmin, muted sql.NullInt64
-	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted)
+	var displayName, summary, avatarURL, lastIP sql.NullString
+	var isAdmin, muted, banned sql.NullInt64
+	err := row.Scan(&tempAcc.Id, &tempAcc.Username, &tempAcc.Publickey, &tempAcc.CreatedAt, &tempAcc.FirstTimeLogin, &tempAcc.WebPublicKey, &tempAcc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP)
 	if err == sql.ErrNoRows {
 		return err, nil
 	}
@@ -363,6 +369,8 @@ func (db *DB) ReadAccByUsername(username string) (error, *domain.Account) {
 	tempAcc.AvatarURL = avatarURL.String
 	tempAcc.IsAdmin = isAdmin.Int64 == 1
 	tempAcc.Muted = muted.Int64 == 1
+	tempAcc.Banned = banned.Int64 == 1
+	tempAcc.LastIP = lastIP.String
 	return err, &tempAcc
 }
 
@@ -1567,9 +1575,9 @@ func (db *DB) ReadAllAccounts() (error, *[]domain.Account) {
 	var accounts []domain.Account
 	for rows.Next() {
 		var acc domain.Account
-		var displayName, summary, avatarURL sql.NullString
-		var isAdmin, muted sql.NullInt64
-		if err := rows.Scan(&acc.Id, &acc.Username, &acc.Publickey, &acc.CreatedAt, &acc.FirstTimeLogin, &acc.WebPublicKey, &acc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted); err != nil {
+		var displayName, summary, avatarURL, lastIP sql.NullString
+		var isAdmin, muted, banned sql.NullInt64
+		if err := rows.Scan(&acc.Id, &acc.Username, &acc.Publickey, &acc.CreatedAt, &acc.FirstTimeLogin, &acc.WebPublicKey, &acc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP); err != nil {
 			return err, &accounts
 		}
 		acc.DisplayName = displayName.String
@@ -1577,6 +1585,8 @@ func (db *DB) ReadAllAccounts() (error, *[]domain.Account) {
 		acc.AvatarURL = avatarURL.String
 		acc.IsAdmin = isAdmin.Int64 == 1
 		acc.Muted = muted.Int64 == 1
+		acc.Banned = banned.Int64 == 1
+		acc.LastIP = lastIP.String
 		accounts = append(accounts, acc)
 	}
 	if err = rows.Err(); err != nil {
@@ -1596,9 +1606,9 @@ func (db *DB) ReadAllAccountsAdmin() (error, *[]domain.Account) {
 	var accounts []domain.Account
 	for rows.Next() {
 		var acc domain.Account
-		var displayName, summary, avatarURL sql.NullString
-		var isAdmin, muted sql.NullInt64
-		if err := rows.Scan(&acc.Id, &acc.Username, &acc.Publickey, &acc.CreatedAt, &acc.FirstTimeLogin, &acc.WebPublicKey, &acc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted); err != nil {
+		var displayName, summary, avatarURL, lastIP sql.NullString
+		var isAdmin, muted, banned sql.NullInt64
+		if err := rows.Scan(&acc.Id, &acc.Username, &acc.Publickey, &acc.CreatedAt, &acc.FirstTimeLogin, &acc.WebPublicKey, &acc.WebPrivateKey, &displayName, &summary, &avatarURL, &isAdmin, &muted, &banned, &lastIP); err != nil {
 			return err, &accounts
 		}
 		acc.DisplayName = displayName.String
@@ -1606,6 +1616,8 @@ func (db *DB) ReadAllAccountsAdmin() (error, *[]domain.Account) {
 		acc.AvatarURL = avatarURL.String
 		acc.IsAdmin = isAdmin.Int64 == 1
 		acc.Muted = muted.Int64 == 1
+		acc.Banned = banned.Int64 == 1
+		acc.LastIP = lastIP.String
 		accounts = append(accounts, acc)
 	}
 	if err = rows.Err(); err != nil {
@@ -4115,8 +4127,11 @@ const (
 	sqlCreateBan      = `INSERT INTO bans(id, username, ip_address, public_key_hash, reason, banned_at) VALUES (?, ?, ?, ?, ?, ?)`
 	sqlReadAllBans    = `SELECT id, username, ip_address, public_key_hash, reason, banned_at FROM bans ORDER BY banned_at DESC`
 	sqlDeleteBan      = `DELETE FROM bans WHERE id = ?`
-	sqlCheckIPBanned  = `SELECT COUNT(*) FROM bans WHERE ip_address = ?`
+	// IP bans expire after 60 days - only check recent bans
+	sqlCheckIPBanned  = `SELECT COUNT(*) FROM bans WHERE ip_address = ? AND ip_address != '' AND banned_at >= datetime('now', '-60 days')`
 	sqlCheckKeyBanned = `SELECT COUNT(*) FROM bans WHERE public_key_hash = ?`
+	// Cleanup query to clear expired IP addresses (older than 60 days)
+	sqlClearExpiredIPBans = `UPDATE bans SET ip_address = '' WHERE ip_address != '' AND banned_at < datetime('now', '-60 days')`
 )
 
 // CreateBan adds a new ban record with IP address and public key hash
@@ -4175,4 +4190,43 @@ func (db *DB) IsPublicKeyBanned(publicKeyHash string) bool {
 		return false
 	}
 	return count > 0
+}
+
+// BanAccount sets the banned flag on an account and creates a ban record
+func (db *DB) BanAccount(accountId uuid.UUID) error {
+	_, err := db.db.Exec(`UPDATE accounts SET banned = 1 WHERE id = ?`, accountId.String())
+	return err
+}
+
+// UnbanAccount clears the banned flag on an account
+func (db *DB) UnbanAccount(accountId uuid.UUID) error {
+	_, err := db.db.Exec(`UPDATE accounts SET banned = 0 WHERE id = ?`, accountId.String())
+	return err
+}
+
+// UpdateAccountLastIP updates the last_ip field for an account
+func (db *DB) UpdateAccountLastIP(accountId uuid.UUID, ipAddress string) error {
+	_, err := db.db.Exec(`UPDATE accounts SET last_ip = ? WHERE id = ?`, ipAddress, accountId.String())
+	return err
+}
+
+// UpdateAccountLastIPByPkHash updates the last_ip field for an account by public key hash
+func (db *DB) UpdateAccountLastIPByPkHash(pkHash string, ipAddress string) error {
+	_, err := db.db.Exec(`UPDATE accounts SET last_ip = ? WHERE publickey = ?`, ipAddress, pkHash)
+	return err
+}
+
+// CleanupExpiredIPBans clears IP addresses from bans older than 60 days
+// The ban record is kept (for public key blocking) but the IP is cleared
+func (db *DB) CleanupExpiredIPBans() (int64, error) {
+	result, err := db.db.Exec(sqlClearExpiredIPBans)
+	if err != nil {
+		log.Printf("Failed to cleanup expired IP bans: %v", err)
+		return 0, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		log.Printf("Cleared %d expired IP addresses from ban records", affected)
+	}
+	return affected, nil
 }
