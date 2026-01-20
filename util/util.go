@@ -87,8 +87,8 @@ func UnescapeHTML(text string) string {
 	text = strings.ReplaceAll(text, "&gt;", ">")
 	text = strings.ReplaceAll(text, "&amp;", "&")
 	text = strings.ReplaceAll(text, "&quot;", "\"")
-	text = strings.ReplaceAll(text, "&#34;", "\"")  // Numeric entity for double quote
-	text = strings.ReplaceAll(text, "&#39;", "'")   // Numeric entity for apostrophe
+	text = strings.ReplaceAll(text, "&#34;", "\"") // Numeric entity for double quote
+	text = strings.ReplaceAll(text, "&#39;", "'")  // Numeric entity for apostrophe
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 	return text
 }

@@ -56,8 +56,8 @@ type HomePost struct {
 	Author     string // @user (local) or @user@domain (remote)
 	Content    string
 	Time       time.Time
-	ObjectURI  string // ActivityPub object id (canonical URI, returns JSON)
-	ObjectURL  string // ActivityPub object url (human-readable web UI link, preferred for display)
+	ObjectURI  string    // ActivityPub object id (canonical URI, returns JSON)
+	ObjectURL  string    // ActivityPub object url (human-readable web UI link, preferred for display)
 	IsLocal    bool      // true = local note, false = remote activity
 	NoteID     uuid.UUID // only set for local posts (for editing/deleting)
 	ReplyCount int       // number of replies to this post
