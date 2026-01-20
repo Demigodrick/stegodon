@@ -844,6 +844,8 @@ func (m MainModel) View() string {
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link"
 		case common.MyPostsView:
 			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐"
+		case common.GlobalPostsView:
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link • f: follow"
 		case common.FollowUserView:
 			viewCommands = "enter: follow"
 		case common.FollowersView:
