@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deemkeen/stegodon/domain"
 	"github.com/google/uuid"
 )
 
@@ -274,3 +275,274 @@ func TestBanOperations(t *testing.T) {
 		}
 	})
 }
+
+func TestBanAccount(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.db.Close()
+
+	// Create a test account
+	accountId := uuid.New()
+	createBanTestAccount(t, testDB, accountId, "bantest", "banhash", "banpubkey", "banprivkey")
+
+	t.Run("BanAccount sets banned flag to true", func(t *testing.T) {
+		// Verify account is not banned initially
+		err, acc := testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account: %v", err)
+		}
+		if acc.Banned {
+			t.Error("Account should not be banned initially")
+		}
+
+		// Ban the account
+		err = testDB.BanAccount(accountId)
+		if err != nil {
+			t.Fatalf("Failed to ban account: %v", err)
+		}
+
+		// Verify account is now banned
+		err, acc = testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account after ban: %v", err)
+		}
+		if !acc.Banned {
+			t.Error("Account should be banned after BanAccount")
+		}
+	})
+
+	t.Run("UnbanAccount clears banned flag", func(t *testing.T) {
+		// Account should still be banned from previous test
+		err, acc := testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account: %v", err)
+		}
+		if !acc.Banned {
+			t.Error("Account should be banned before unban test")
+		}
+
+		// Unban the account
+		err = testDB.UnbanAccount(accountId)
+		if err != nil {
+			t.Fatalf("Failed to unban account: %v", err)
+		}
+
+		// Verify account is no longer banned
+		err, acc = testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account after unban: %v", err)
+		}
+		if acc.Banned {
+			t.Error("Account should not be banned after UnbanAccount")
+		}
+	})
+
+	t.Run("BanAccount on non-existent account does not error", func(t *testing.T) {
+		// Banning a non-existent account should not return an error
+		// (SQL UPDATE on non-existent row just affects 0 rows)
+		nonExistentId := uuid.New()
+		err := testDB.BanAccount(nonExistentId)
+		if err != nil {
+			t.Errorf("BanAccount on non-existent account should not error, got: %v", err)
+		}
+	})
+}
+
+func TestUpdateAccountLastIP(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.db.Close()
+
+	t.Run("UpdateAccountLastIP sets IP address", func(t *testing.T) {
+		// Create a test account
+		accountId := uuid.New()
+		createBanTestAccount(t, testDB, accountId, "iptest1", "iphash1", "ippubkey1", "ipprivkey1")
+
+		// Verify last_ip is empty initially
+		err, acc := testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account: %v", err)
+		}
+		if acc.LastIP != "" {
+			t.Errorf("LastIP should be empty initially, got: %s", acc.LastIP)
+		}
+
+		// Update the IP
+		testIP := "192.168.1.100"
+		err = testDB.UpdateAccountLastIP(accountId, testIP)
+		if err != nil {
+			t.Fatalf("Failed to update last IP: %v", err)
+		}
+
+		// Verify IP was updated
+		err, acc = testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account after IP update: %v", err)
+		}
+		if acc.LastIP != testIP {
+			t.Errorf("Expected LastIP %s, got %s", testIP, acc.LastIP)
+		}
+	})
+
+	t.Run("UpdateAccountLastIP overwrites previous IP", func(t *testing.T) {
+		// Create a test account
+		accountId := uuid.New()
+		createBanTestAccount(t, testDB, accountId, "iptest2", "iphash2", "ippubkey2", "ipprivkey2")
+
+		// Set initial IP
+		firstIP := "10.0.0.1"
+		err := testDB.UpdateAccountLastIP(accountId, firstIP)
+		if err != nil {
+			t.Fatalf("Failed to set first IP: %v", err)
+		}
+
+		// Update to new IP
+		secondIP := "10.0.0.2"
+		err = testDB.UpdateAccountLastIP(accountId, secondIP)
+		if err != nil {
+			t.Fatalf("Failed to update to second IP: %v", err)
+		}
+
+		// Verify only the latest IP is stored
+		err, acc := testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account: %v", err)
+		}
+		if acc.LastIP != secondIP {
+			t.Errorf("Expected LastIP %s, got %s", secondIP, acc.LastIP)
+		}
+	})
+
+	t.Run("UpdateAccountLastIPByPkHash sets IP by public key hash", func(t *testing.T) {
+		// Create a test account
+		accountId := uuid.New()
+		pkHash := "uniquepkhash123"
+		createBanTestAccount(t, testDB, accountId, "iptest3", pkHash, "ippubkey3", "ipprivkey3")
+
+		// Update IP by public key hash
+		testIP := "172.16.0.50"
+		err := testDB.UpdateAccountLastIPByPkHash(pkHash, testIP)
+		if err != nil {
+			t.Fatalf("Failed to update IP by pk hash: %v", err)
+		}
+
+		// Verify IP was updated
+		err, acc := testDB.ReadAccById(accountId)
+		if err != nil {
+			t.Fatalf("Failed to read account: %v", err)
+		}
+		if acc.LastIP != testIP {
+			t.Errorf("Expected LastIP %s, got %s", testIP, acc.LastIP)
+		}
+	})
+}
+
+func TestAccountBannedFieldInQueries(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.db.Close()
+
+	t.Run("ReadAllAccounts includes banned field", func(t *testing.T) {
+		// Create two accounts - one banned, one not
+		id1 := uuid.New()
+		id2 := uuid.New()
+		createBanTestAccount(t, testDB, id1, "readall1", "hash1", "pub1", "priv1")
+		createBanTestAccount(t, testDB, id2, "readall2", "hash2", "pub2", "priv2")
+
+		// Mark first_time_login = 0 so they show up in ReadAllAccounts
+		testDB.db.Exec(`UPDATE accounts SET first_time_login = 0 WHERE id = ?`, id1.String())
+		testDB.db.Exec(`UPDATE accounts SET first_time_login = 0 WHERE id = ?`, id2.String())
+
+		// Ban the first account
+		testDB.BanAccount(id1)
+
+		// Read all accounts
+		err, accounts := testDB.ReadAllAccounts()
+		if err != nil {
+			t.Fatalf("ReadAllAccounts failed: %v", err)
+		}
+		if accounts == nil || len(*accounts) < 2 {
+			t.Fatal("Expected at least 2 accounts")
+		}
+
+		// Verify banned status is correctly read
+		var foundBanned, foundNotBanned bool
+		for _, acc := range *accounts {
+			if acc.Id == id1 {
+				if !acc.Banned {
+					t.Error("Account id1 should be banned")
+				}
+				foundBanned = true
+			}
+			if acc.Id == id2 {
+				if acc.Banned {
+					t.Error("Account id2 should not be banned")
+				}
+				foundNotBanned = true
+			}
+		}
+		if !foundBanned || !foundNotBanned {
+			t.Error("Did not find both test accounts in results")
+		}
+	})
+
+	t.Run("ReadAllAccountsAdmin includes banned field", func(t *testing.T) {
+		// Create a banned account
+		id := uuid.New()
+		createBanTestAccount(t, testDB, id, "adminread", "adminhash", "adminpub", "adminpriv")
+		testDB.BanAccount(id)
+
+		// Read all accounts (admin view)
+		err, accounts := testDB.ReadAllAccountsAdmin()
+		if err != nil {
+			t.Fatalf("ReadAllAccountsAdmin failed: %v", err)
+		}
+
+		// Find our account and verify banned status
+		var found bool
+		for _, acc := range *accounts {
+			if acc.Id == id {
+				if !acc.Banned {
+					t.Error("Account should be banned in admin view")
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Did not find test account in admin results")
+		}
+	})
+
+	t.Run("ReadAccByUsername includes banned and last_ip fields", func(t *testing.T) {
+		// Create and configure a test account
+		id := uuid.New()
+		username := "usernametest"
+		createBanTestAccount(t, testDB, id, username, "usernamehash", "usernamepub", "usernamepriv")
+		testDB.BanAccount(id)
+		testDB.UpdateAccountLastIP(id, "8.8.8.8")
+
+		// Read by username
+		err, acc := testDB.ReadAccByUsername(username)
+		if err != nil {
+			t.Fatalf("ReadAccByUsername failed: %v", err)
+		}
+		if !acc.Banned {
+			t.Error("Account should be banned")
+		}
+		if acc.LastIP != "8.8.8.8" {
+			t.Errorf("Expected LastIP 8.8.8.8, got %s", acc.LastIP)
+		}
+	})
+}
+
+// createBanTestAccount is a helper to create test accounts with all required fields
+func createBanTestAccount(t *testing.T, db *DB, id uuid.UUID, username, pkHash, webPubKey, webPrivKey string) {
+	_, err := db.db.Exec(`
+		INSERT INTO accounts (id, username, publickey, created_at, first_time_login, web_public_key, web_private_key)
+		VALUES (?, ?, ?, ?, 1, ?, ?)
+	`, id.String(), username, pkHash, time.Now(), webPubKey, webPrivKey)
+	if err != nil {
+		t.Fatalf("Failed to create test account: %v", err)
+	}
+}
+
+// Ensure domain.Account is used (for import)
+var _ = domain.Account{}
