@@ -42,17 +42,17 @@ type Model struct {
 	BoxOffset     int
 	Editing       bool
 	EditBox       *domain.InfoBox
-	EditField     int              // 0=Title, 1=Content, 2=Order
-	TitleInput    textarea.Model   // Textarea for title
-	ContentInput  textarea.Model   // Textarea for content
-	OrderInput    textarea.Model   // Textarea for order number
-	ConfirmDelete bool             // True when confirming deletion
-	DeleteBoxId   uuid.UUID        // ID of box to delete
+	EditField     int            // 0=Title, 1=Content, 2=Order
+	TitleInput    textarea.Model // Textarea for title
+	ContentInput  textarea.Model // Textarea for content
+	OrderInput    textarea.Model // Textarea for order number
+	ConfirmDelete bool           // True when confirming deletion
+	DeleteBoxId   uuid.UUID      // ID of box to delete
 
 	// Server message management
-	ServerMessage       *domain.ServerMessage
-	EditingServerMsg    bool
-	ServerMsgInput      textarea.Model // Textarea for server message
+	ServerMessage    *domain.ServerMessage
+	EditingServerMsg bool
+	ServerMsgInput   textarea.Model // Textarea for server message
 
 	Width  int
 	Height int

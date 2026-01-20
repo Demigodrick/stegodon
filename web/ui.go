@@ -68,20 +68,20 @@ type UserView struct {
 type PostView struct {
 	NoteId       string
 	Username     string
-	UserDomain   string        // Domain for remote users (empty for local)
-	ProfileURL   string        // Full profile URL
-	PostURL      string        // Permalink to the post (remote object_uri or local path)
-	IsRemote     bool          // True if federated user
+	UserDomain   string // Domain for remote users (empty for local)
+	ProfileURL   string // Full profile URL
+	PostURL      string // Permalink to the post (remote object_uri or local path)
+	IsRemote     bool   // True if federated user
 	Message      string
 	MessageHTML  template.HTML // HTML-rendered message with clickable links
 	TimeAgo      string
-	CreatedAt    time.Time     // For chronological sorting
-	InReplyToURI string        // URI of parent post if this is a reply
-	ReplyCount   int           // Number of replies to this post
-	LikeCount    int           // Number of likes on this post
-	BoostCount   int           // Number of boosts on this post
-	Likers       []string      // Usernames who liked this post
-	Boosters     []string      // Usernames who boosted this post
+	CreatedAt    time.Time // For chronological sorting
+	InReplyToURI string    // URI of parent post if this is a reply
+	ReplyCount   int       // Number of replies to this post
+	LikeCount    int       // Number of likes on this post
+	BoostCount   int       // Number of boosts on this post
+	Likers       []string  // Usernames who liked this post
+	Boosters     []string  // Usernames who boosted this post
 }
 
 // convertMarkdownToHTML converts markdown text to HTML
