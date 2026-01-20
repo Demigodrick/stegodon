@@ -22,9 +22,9 @@ func TestExtractIPFromRemoteAddr(t *testing.T) {
 			expectedIP: "192.168.1.100",
 		},
 		{
-			name:       "IPv6 with port",
+			name:       "IPv6 with port (brackets stripped)",
 			remoteAddr: "[::1]:12345",
-			expectedIP: "[::1]",
+			expectedIP: "::1",
 		},
 		{
 			name:       "IPv6 without port",
@@ -36,6 +36,21 @@ func TestExtractIPFromRemoteAddr(t *testing.T) {
 			remoteAddr: "127.0.0.1:22",
 			expectedIP: "127.0.0.1",
 		},
+		{
+			name:       "full IPv6 with port",
+			remoteAddr: "[2001:db8::1]:22",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name:       "full IPv6 without port",
+			remoteAddr: "2001:db8::1",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name:       "bracketed IPv6 without port",
+			remoteAddr: "[2001:db8::1]",
+			expectedIP: "2001:db8::1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -46,41 +61,6 @@ func TestExtractIPFromRemoteAddr(t *testing.T) {
 			}
 		})
 	}
-}
-
-// extractIP extracts the IP address from a remote address string
-// This mirrors the logic in AuthMiddleware
-func extractIP(remoteAddr string) string {
-	ip := remoteAddr
-	// Find the last colon (handles both IPv4:port and [IPv6]:port)
-	if colonIndex := lastIndex(remoteAddr, ':'); colonIndex != -1 {
-		// Check if this might be an IPv6 address without port
-		// IPv6 addresses have multiple colons, so only strip if there's a bracket
-		// or if there's only one colon (IPv4)
-		if countColons(remoteAddr) == 1 || (len(remoteAddr) > 0 && remoteAddr[colonIndex-1] == ']') {
-			ip = remoteAddr[:colonIndex]
-		}
-	}
-	return ip
-}
-
-func lastIndex(s string, b byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
-}
-
-func countColons(s string) int {
-	count := 0
-	for _, c := range s {
-		if c == ':' {
-			count++
-		}
-	}
-	return count
 }
 
 // TestBanCheckOrder documents the expected order of ban checks in middleware

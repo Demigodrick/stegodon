@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"log"
+	"net"
 	"strings"
 
 	"github.com/charmbracelet/ssh"
@@ -17,11 +18,8 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 
 			// Check if IP or public key is banned
 			remoteAddr := s.RemoteAddr().String()
-			// Extract just the IP (remove port)
-			ip := remoteAddr
-			if colonIndex := strings.LastIndex(remoteAddr, ":"); colonIndex != -1 {
-				ip = remoteAddr[:colonIndex]
-			}
+			// Extract just the IP (remove port) - handles IPv4 and IPv6
+			ip := extractIP(remoteAddr)
 
 			// Check IP ban
 			if database.IsIPBanned(ip) {
@@ -114,4 +112,21 @@ func AuthMiddleware(conf *util.AppConfig) wish.Middleware {
 			h(s)
 		}
 	}
+}
+
+// extractIP extracts the IP address from a remote address string.
+// Handles IPv4, IPv6 with brackets, and raw IPv6 without port.
+func extractIP(remoteAddr string) string {
+	// Try net.SplitHostPort first - works for "ip:port" and "[ip]:port"
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+
+	// SplitHostPort failed - check if it's bracketed IPv6 without port
+	if strings.HasPrefix(remoteAddr, "[") && strings.HasSuffix(remoteAddr, "]") {
+		return remoteAddr[1 : len(remoteAddr)-1]
+	}
+
+	// Otherwise return as-is (raw IPv6 or IPv4 without port)
+	return remoteAddr
 }
