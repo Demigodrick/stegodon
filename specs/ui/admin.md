@@ -123,6 +123,7 @@ User muted and posts deleted
 | `↓` / `j` | Move selection down |
 | `m` | Mute selected user |
 | `B` | Ban selected user (capital B to prevent accidents) |
+| `U` | Unban selected user (capital U to prevent accidents) |
 | `Esc` | Return to menu |
 
 ### User Badges
@@ -157,6 +158,15 @@ Banning a user (capital `B` for safety):
 - Cannot ban admin users
 - Cannot ban yourself
 - Cannot ban already-banned users
+
+### Unbanning Users
+
+Unbanning a user (capital `U` for safety):
+- Clears the `Banned` flag on the account
+- Removes the ban record from the bans table
+- User can log in again with their SSH key
+
+**Note:** The IP address may have already expired (after 60 days) but the SSH key ban remains until manually unbanned.
 
 ---
 
@@ -411,7 +421,7 @@ The footer shows context-specific help:
 | View | Help Text |
 |------|-----------|
 | MenuView | `↑/↓ • enter: select` |
-| UsersView | `↑/↓ • m: mute • B: ban • esc: back` |
+| UsersView | `↑/↓ • m: mute • B: ban • U: unban • esc: back` |
 | InfoBoxesView (list) | `↑/↓ • n: add • enter: edit • d: delete • t: toggle • esc: back` |
 | InfoBoxesView (edit) | `tab/shift+tab: switch • ctrl+s: save • esc: cancel` |
 

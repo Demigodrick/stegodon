@@ -306,6 +306,26 @@ func unbanUser(banId string) tea.Cmd {
 	}
 }
 
+// unbanUserById unbans a user by their account ID (used from Users view)
+func unbanUserById(accountId uuid.UUID) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+
+		// Clear the banned flag on the account
+		err := database.UnbanAccount(accountId)
+		if err != nil {
+			log.Printf("Failed to unban account: %v", err)
+		}
+
+		// Delete the ban record (ban ID = account ID)
+		err = database.DeleteBan(accountId.String())
+		if err != nil {
+			log.Printf("Failed to delete ban record: %v", err)
+		}
+		return unbanUserMsg{}
+	}
+}
+
 // Server message management commands
 func loadServerMessage() tea.Cmd {
 	return func() tea.Msg {
@@ -542,6 +562,15 @@ func (m Model) handleUsersKeys(msg tea.KeyMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, banUser(selectedUser.Id)
+		}
+	case "U":
+		if len(m.Users) > 0 && m.Selected < len(m.Users) {
+			selectedUser := m.Users[m.Selected]
+			if !selectedUser.Banned {
+				m.Error = "User is not banned"
+				return m, nil
+			}
+			return m, unbanUserById(selectedUser.Id)
 		}
 	}
 	return m, nil
@@ -945,7 +974,7 @@ func (m Model) renderUsersView() string {
 	}
 
 	s.WriteString("\n\n")
-	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • B: ban • esc: back"))
+	s.WriteString(common.ListBadgeStyle.Render("Keys: ↑/↓: navigate • m: mute • B: ban • U: unban • esc: back"))
 
 	return s.String()
 }
