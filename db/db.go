@@ -1437,6 +1437,94 @@ func extractAuthorFromActorURI(actorURI string) string {
 	return "@" + username + "@" + domain
 }
 
+// convertActivityPubURLToHTML converts an ActivityPub object URI to an HTML post URL
+// For Stegodon servers: https://domain/notes/{uuid} -> https://domain/u/{username}/{uuid}
+// For other servers: keeps the original URL
+func convertActivityPubURLToHTML(objectURI string, actorURI string) string {
+	// Check if this is a Stegodon notes URL
+	if strings.Contains(objectURI, "/notes/") {
+		// Extract username from actor URI
+		username := extractUsernameFromActorURI(actorURI)
+		if username == "" {
+			return objectURI // Fallback to original if can't extract username
+		}
+
+		// Extract UUID from object URI
+		parts := strings.Split(objectURI, "/notes/")
+		if len(parts) != 2 {
+			return objectURI
+		}
+		uuidPart := parts[1]
+		// Remove any trailing path segments
+		if idx := strings.Index(uuidPart, "/"); idx > 0 {
+			uuidPart = uuidPart[:idx]
+		}
+
+		// Extract domain from actor URI
+		domain := extractDomainFromActorURI(actorURI)
+		if domain == "" {
+			return objectURI
+		}
+
+		// Construct HTML URL
+		return fmt.Sprintf("https://%s/u/%s/%s", domain, username, uuidPart)
+	}
+
+	// For non-Stegodon servers, return original URL
+	return objectURI
+}
+
+// extractUsernameFromActorURI extracts just the username from an actor URI
+func extractUsernameFromActorURI(actorURI string) string {
+	// Remove protocol prefix
+	uri := strings.TrimPrefix(actorURI, "https://")
+	uri = strings.TrimPrefix(uri, "http://")
+
+	// Split into domain and path
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	path := parts[1]
+
+	// Extract username from path
+	var username string
+	if strings.HasPrefix(path, "users/") {
+		username = strings.TrimPrefix(path, "users/")
+	} else if strings.HasPrefix(path, "@") {
+		username = strings.TrimPrefix(path, "@")
+	} else if strings.HasPrefix(path, "u/") {
+		username = strings.TrimPrefix(path, "u/")
+	} else {
+		// Just use last path segment as username
+		pathParts := strings.Split(path, "/")
+		username = pathParts[len(pathParts)-1]
+	}
+
+	// Remove any trailing path segments from username
+	if idx := strings.Index(username, "/"); idx > 0 {
+		username = username[:idx]
+	}
+
+	return username
+}
+
+// extractDomainFromActorURI extracts just the domain from an actor URI
+func extractDomainFromActorURI(actorURI string) string {
+	// Remove protocol prefix
+	uri := strings.TrimPrefix(actorURI, "https://")
+	uri = strings.TrimPrefix(uri, "http://")
+
+	// Split into domain and path
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) < 1 {
+		return ""
+	}
+
+	return parts[0]
+}
+
 // Delivery Queue queries
 const (
 	sqlInsertDeliveryQueue     = `INSERT INTO delivery_queue(id, inbox_uri, activity_json, attempts, next_retry_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`
@@ -3971,152 +4059,120 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 	return err
 }
 
-// ReadGlobalTimelinePosts returns a unified global timeline combining local notes and all remote activities
-// This shows all posts from known accounts to the server, including likes, boosts, replies, etc.
-func (db *DB) ReadGlobalTimelinePosts(limit int, offset int) (error, *[]domain.HomePost) {
-	var posts []domain.HomePost
+// ============================================================================
+// Global Timeline (Local + Federated Posts)
+// ============================================================================
 
-	// Fetch all local notes (excluding replies)
-	localRows, err := db.db.Query(`
-		SELECT notes.id, accounts.username, notes.message, notes.created_at, notes.object_uri,
-		       COALESCE(notes.reply_count, 0), COALESCE(notes.like_count, 0), COALESCE(notes.boost_count, 0)
-		FROM notes
-		INNER JOIN accounts ON accounts.id = notes.user_id
-		WHERE (notes.in_reply_to_uri IS NULL OR notes.in_reply_to_uri = '')
-		ORDER BY notes.created_at DESC
-		LIMIT ? OFFSET ?`,
-		limit, offset)
+// ReadGlobalTimelinePosts returns posts for the global timeline (local notes + remote activities)
+// excluding replies. Uses UNION ALL for efficient SQL-level sorting and pagination.
+func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.GlobalTimelinePost) {
+	// Use UNION ALL to combine local and remote posts with SQL-level sorting and pagination
+	rows, err := db.db.Query(`
+		SELECT
+			id, username, user_domain, profile_url, object_uri, object_url,
+			is_remote, message, created_at, reply_count, like_count, boost_count
+		FROM (
+			-- Local posts (excluding replies)
+			SELECT
+				n.id as id,
+				a.username as username,
+				'' as user_domain,
+				'/u/' || a.username as profile_url,
+				COALESCE(n.object_uri, '') as object_uri,
+				'' as object_url,
+				0 as is_remote,
+				n.message as message,
+				n.created_at as created_at,
+				COALESCE(n.reply_count, 0) as reply_count,
+				COALESCE(n.like_count, 0) as like_count,
+				COALESCE(n.boost_count, 0) as boost_count
+			FROM notes n
+			INNER JOIN accounts a ON a.id = n.user_id
+			WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
+
+			UNION ALL
+
+			-- Remote posts (excluding replies, using indexed in_reply_to column)
+			SELECT
+				act.id as id,
+				ra.username as username,
+				ra.domain as user_domain,
+				ra.actor_uri as profile_url,
+				COALESCE(act.object_uri, '') as object_uri,
+				COALESCE(act.object_url, '') as object_url,
+				1 as is_remote,
+				act.raw_json as message,
+				act.created_at as created_at,
+				COALESCE(act.reply_count, 0) as reply_count,
+				COALESCE(act.like_count, 0) as like_count,
+				COALESCE(act.boost_count, 0) as boost_count
+			FROM activities act
+			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
+			WHERE act.activity_type = 'Create'
+			AND act.local = 0
+			AND (act.in_reply_to IS NULL OR act.in_reply_to = '')
+		) combined
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return err, nil
 	}
-	defer localRows.Close()
+	defer rows.Close()
 
-	for localRows.Next() {
-		var idStr string
-		var username string
-		var message string
-		var createdAtStr string
-		var objectURI sql.NullString
-		var replyCount int
-		var likeCount int
-		var boostCount int
-
-		if err := localRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount, &likeCount, &boostCount); err != nil {
+	var posts []domain.GlobalTimelinePost
+	for rows.Next() {
+		var post domain.GlobalTimelinePost
+		var createdAtStr, message string
+		var isRemoteInt int
+		err := rows.Scan(
+			&post.NoteId, &post.Username, &post.UserDomain, &post.ProfileURL,
+			&post.ObjectURI, &post.ObjectURL, &isRemoteInt, &message, &createdAtStr,
+			&post.ReplyCount, &post.LikeCount, &post.BoostCount,
+		)
+		if err != nil {
 			return err, &posts
 		}
+		post.IsRemote = isRemoteInt == 1
+		post.CreatedAt, _ = parseTimestamp(createdAtStr)
 
-		noteId, _ := uuid.Parse(idStr)
-		parsedTime, _ := parseTimestamp(createdAtStr)
-
-		uri := ""
-		if objectURI.Valid {
-			uri = objectURI.String
+		if post.IsRemote {
+			// For remote posts, extract content from raw JSON
+			post.Message = extractContentFromJSON(message)
+			// Format username as @user@domain for display
+			post.Username = fmt.Sprintf("@%s@%s", post.Username, post.UserDomain)
+			// Convert ActivityPub object URI to HTML URL for display
+			if post.ObjectURL == "" {
+				post.ObjectURL = convertActivityPubURLToHTML(post.ObjectURI, post.ProfileURL)
+			}
+		} else {
+			post.Message = message
 		}
-
-		posts = append(posts, domain.HomePost{
-			ID:         noteId,
-			Author:     username,
-			Content:    message,
-			Time:       parsedTime,
-			ObjectURI:  uri,
-			IsLocal:    true,
-			NoteID:     noteId,
-			ReplyCount: replyCount,
-			LikeCount:  likeCount,
-			BoostCount: boostCount,
-		})
+		posts = append(posts, post)
 	}
-	if err = localRows.Err(); err != nil {
+
+	if err = rows.Err(); err != nil {
 		return err, &posts
 	}
-
-	// Fetch all remote activities (excluding replies)
-	remoteRows, err := db.db.Query(`
-		SELECT a.id, a.actor_uri, a.object_uri, COALESCE(a.object_url, ''), a.raw_json, a.created_at,
-		       COALESCE(a.reply_count, 0), COALESCE(a.like_count, 0), COALESCE(a.boost_count, 0)
-		FROM activities a
-		WHERE a.activity_type = 'Create' AND a.local = 0
-		AND a.raw_json NOT LIKE '%"inReplyTo":"http%'
-		ORDER BY a.created_at DESC
-		LIMIT ? OFFSET ?`,
-		limit, offset)
-	if err != nil {
-		return err, &posts
-	}
-	defer remoteRows.Close()
-
-	for remoteRows.Next() {
-		var idStr string
-		var actorURI string
-		var objectURI string
-		var objectURL string
-		var rawJSON string
-		var createdAtStr string
-		var replyCount int
-		var likeCount int
-		var boostCount int
-
-		if err := remoteRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &replyCount, &likeCount, &boostCount); err != nil {
-			return err, &posts
-		}
-
-		activityId, _ := uuid.Parse(idStr)
-		parsedTime, _ := parseTimestamp(createdAtStr)
-
-		// Extract content from raw JSON
-		content := extractContentFromJSON(rawJSON)
-
-		// Extract author info from actorURI (format: https://domain/users/username)
-		author := extractAuthorFromActorURI(actorURI)
-
-		posts = append(posts, domain.HomePost{
-			ID:         activityId,
-			Author:     author,
-			Content:    content,
-			Time:       parsedTime,
-			ObjectURI:  objectURI,
-			ObjectURL:  objectURL,
-			IsLocal:    false,
-			NoteID:     uuid.Nil,
-			ReplyCount: replyCount,
-			LikeCount:  likeCount,
-			BoostCount: boostCount,
-		})
-	}
-	if err = remoteRows.Err(); err != nil {
-		return err, &posts
-	}
-
-	// Sort combined posts by time (newest first)
-	sortPostsByTime(posts)
 
 	return nil, &posts
 }
 
-// CountGlobalTimelinePosts returns the total count of posts for the global timeline
+// CountGlobalTimelinePosts returns the total count of posts in the global timeline
 func (db *DB) CountGlobalTimelinePosts() (int, error) {
-	// Count local posts (excluding replies)
-	var localCount int
+	var count int
+
+	// Count both local and remote posts (excluding replies) in a single query
 	err := db.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM notes
-		WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = '')`).Scan(&localCount)
+		SELECT
+			(SELECT COUNT(*) FROM notes WHERE (in_reply_to_uri IS NULL OR in_reply_to_uri = ''))
+			+
+			(SELECT COUNT(*) FROM activities WHERE activity_type = 'Create' AND local = 0 AND (in_reply_to IS NULL OR in_reply_to = ''))
+	`).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 
-	// Count remote activities (excluding replies)
-	var remoteCount int
-	err = db.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM activities
-		WHERE activity_type = 'Create' AND local = 0
-		AND raw_json NOT LIKE '%"inReplyTo":"http%'`).Scan(&remoteCount)
-	if err != nil {
-		return 0, err
-	}
-
-	return localCount + remoteCount, nil
+	return count, nil
 }
 
 // ============================================================================

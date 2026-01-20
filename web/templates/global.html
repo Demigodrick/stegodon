@@ -1,4 +1,4 @@
-{{define "profile.html"}}
+{{define "global.html"}}
 <!doctype html>
 <html lang="en">
     <head>
@@ -7,24 +7,23 @@
         <title>{{.Title}} - stegodon – ssh-first fediverse blog</title>
 
         <!-- SEO Meta Tags -->
-        <meta name="description" content="{{.User.DisplayName}} (@{{.User.Username}}) on stegodon. {{if .User.Summary}}{{.User.Summary}}{{else}}SSH-first federated blog on the Fediverse.{{end}}" />
-        <meta name="keywords" content="{{.User.Username}}, fediverse, activitypub, blog, mastodon, federated" />
-        <meta name="author" content="{{.User.Username}}" />
-        <link rel="canonical" href="https://{{.Host}}/{{.User.Username}}" />
+        <meta name="description" content="Stegodon is an SSH-first federated blog platform. Connect via SSH to write and share posts that federate to the Fediverse via ActivityPub." />
+        <meta name="keywords" content="fediverse, activitypub, ssh, blog, terminal, mastodon, federated, decentralized" />
+        <meta name="author" content="stegodon" />
+        <link rel="canonical" href="https://{{.Host}}/" />
 
         <!-- Open Graph / Facebook -->
-        <meta property="og:type" content="profile" />
-        <meta property="og:url" content="https://{{.Host}}/{{.User.Username}}" />
-        <meta property="og:title" content="{{.User.DisplayName}} (@{{.User.Username}}) - stegodon" />
-        <meta property="og:description" content="{{if .User.Summary}}{{.User.Summary}}{{else}}View posts from {{.User.DisplayName}} on stegodon, an SSH-first federated blog platform.{{end}}" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://{{.Host}}/" />
+        <meta property="og:title" content="{{.Title}} - stegodon – ssh-first fediverse blog" />
+        <meta property="og:description" content="SSH-first federated blog platform. Connect via terminal to write posts that federate to the Fediverse via ActivityPub." />
         <meta property="og:site_name" content="stegodon" />
-        <meta property="profile:username" content="{{.User.Username}}" />
 
         <!-- Twitter Card -->
         <meta name="twitter:card" content="summary" />
-        <meta name="twitter:url" content="https://{{.Host}}/{{.User.Username}}" />
-        <meta name="twitter:title" content="{{.User.DisplayName}} (@{{.User.Username}})" />
-        <meta name="twitter:description" content="{{if .User.Summary}}{{.User.Summary}}{{else}}Posts from {{.User.DisplayName}} on stegodon{{end}}" />
+        <meta name="twitter:url" content="https://{{.Host}}/" />
+        <meta name="twitter:title" content="{{.Title}} - stegodon" />
+        <meta name="twitter:description" content="SSH-first federated blog platform connecting to the Fediverse" />
 
         <!-- Favicon -->
         <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23000'/><text x='50' y='70' text-anchor='middle' font-family='monospace' font-size='70' font-weight='bold' fill='%2300ff7f'>S</text></svg>">
@@ -53,64 +52,59 @@
 
             <div class="main-content">
                 <div class="content-wrapper">
-                    <div class="profile-header">
-                        <h2>@{{.User.Username}}</h2>
-                        <a href="/" class="back-link">← back to timeline</a>
-                    </div>
-
-                    {{if .ServerMessage}}
-                    <div class="server-message">
-                        <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}
-                    </div>
-                    {{end}}
-
-                    <div class="user-profile">
-                        <div class="user-avatar">
-                            {{if .User.AvatarURL}}
-                            <img src="{{.User.AvatarURL}}?v={{.User.AvatarVersion}}" alt="@{{.User.Username}}'s avatar" class="avatar-large">
-                            {{else}}
-                            <img src="/static/stegologo.png" alt="Default avatar" class="avatar-large">
-                            {{end}}
+                    <div class="timeline">
+                        <div class="timeline-header">
+                            <h2>global timeline</h2>
+                            <div class="timeline-nav">
+                                <a href="/" class="timeline-link">local</a>
+                                <span class="timeline-separator">•</span>
+                                <a href="/global" class="timeline-link active">global</a>
+                            </div>
                         </div>
-                        <div class="user-info">
-                            <p>
-                                <strong>posts:</strong>
-                                {{.TotalPosts}}
-                            </p>
-                            {{if .User.DisplayName}}
-                            <p>
-                                <strong>display name:</strong>
-                                {{.User.DisplayName}}
-                            </p>
-                            {{end}} {{if .User.Summary}}
-                            <p><strong>bio:</strong> {{.User.Summary}}</p>
-                            {{end}}
-                            <p><strong>joined:</strong> {{.User.JoinedAgo}}</p>
+                        {{if .ServerMessage}}
+                        <div class="server-message">
+                            <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}
                         </div>
+                        {{end}}
                     </div>
 
                     {{if .Posts}} {{range .Posts}}
                     <div class="post">
                         <div class="post-meta">
-                            <span class="post-caption">{{.TimeAgo}}</span>
-                            <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                            {{if .IsRemote}}
+                                <a href="{{.ProfileURL}}" class="post-author remote-author" target="_blank" rel="noopener noreferrer">{{.Username}}</a>
+                            {{else}}
+                                <a href="{{.ProfileURL}}" class="post-author">@{{.Username}}</a>
+                            {{end}}
+                            {{if .PostURL}}
+                                <a href="{{.PostURL}}" class="post-permalink" target="_blank" rel="noopener noreferrer">#</a>
+                            {{else}}
+                                <a href="/u/{{.Username}}/{{.NoteId}}" class="post-permalink">#</a>
+                            {{end}}
                         </div>
                         <div class="post-content">
+                            <p class="post-time">{{.TimeAgo}}</p>
                             <p class="post-text">{{.MessageHTML}}</p>
                         </div>
                         {{if or (gt .ReplyCount 0) (gt .LikeCount 0) (gt .BoostCount 0)}}
                         <div class="post-footer">
                             {{if gt .LikeCount 0}}
-                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">⭐</span> {{.LikeCount}}
                                 </span>
                             {{end}}
                             {{if gt .BoostCount 0}}
-                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">🔁</span> {{.BoostCount}}
                                 </span>
                             {{end}}
-                            {{if gt .ReplyCount 0}}<a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>{{end}}
+                            {{if gt .ReplyCount 0}}
+                                {{if .IsRemote}}
+                                    <a href="{{.PostURL}}" class="reply-count" target="_blank" rel="noopener noreferrer"><span class="icon">💬</span> {{.ReplyCount}}</a>
+                                {{else}}
+                                    <a href="/u/{{.Username}}/{{.NoteId}}" class="reply-count"><span class="icon">💬</span> {{.ReplyCount}}</a>
+                                {{end}}
+                            {{end}}
                         </div>
                         {{end}}
                     </div>
@@ -118,25 +112,23 @@
                     <div class="pagination">
                         <div>
                             {{if .HasPrev}}
-                            <a href="/u/{{$.User.Username}}?page={{.PrevPage}}"
-                                >← previous</a
-                            >
+                            <a href="/global?page={{.PrevPage}}">← previous</a>
                             {{else}}
                             <span>← previous</span>
                             {{end}}
                         </div>
                         <div>
                             {{if .HasNext}}
-                            <a href="/u/{{$.User.Username}}?page={{.NextPage}}"
-                                >next →</a
-                            >
+                            <a href="/global?page={{.NextPage}}">next →</a>
                             {{else}}
                             <span>next →</span>
                             {{end}}
                         </div>
                     </div>
                     {{end}} {{else}}
-                    <div class="empty-state">no posts yet.</div>
+                    <div class="empty-state">
+                        no posts yet. connect via SSH and be the first to post!
+                    </div>
                     {{end}}
                 </div>
             </div>
@@ -191,28 +183,38 @@
                     e.preventDefault();
                     const type = trigger.dataset.type;
                     const noteId = trigger.dataset.noteId;
-                    
+                    const objectUri = trigger.dataset.objectUri;
+                    const isRemote = trigger.dataset.isRemote === "true";
+
                     if (type === "likes") {
-                        await showEngagement("Liked by", noteId, "likes");
+                        await showEngagement("Liked by", noteId, objectUri, isRemote, "likes");
                     } else if (type === "boosts") {
-                        await showEngagement("Boosted by", noteId, "boosts");
+                        await showEngagement("Boosted by", noteId, objectUri, isRemote, "boosts");
                     }
                 });
             });
 
-            async function showEngagement(title, noteId, type) {
+            async function showEngagement(title, noteId, objectUri, isRemote, type) {
                 modalTitle.textContent = title;
                 modalBody.innerHTML = "Loading...";
                 modal.style.display = "flex";
-                
+
                 try {
-                    const response = await fetch(`/api/engagement/${noteId}/${type}`);
+                    let url;
+                    if (isRemote) {
+                        // For remote posts, use query parameter to avoid URL encoding issues
+                        url = `/api/engagement/by-uri/${type}?uri=${encodeURIComponent(objectUri)}`;
+                    } else {
+                        // For local posts, use note ID in path
+                        url = `/api/engagement/note-id/${noteId}/${type}`;
+                    }
+                    const response = await fetch(url);
                     const data = await response.json();
-                    
+
                     if (data.users && data.users.length > 0) {
                         const userList = data.users.map(user => {
                             let displayName, userUrl;
-                            
+
                             // Check if this is a remote user (contains @domain)
                             const parts = user.split("@").filter(p => p); // Remove empty strings
                             if (parts.length === 2) {
@@ -224,7 +226,7 @@
                                 displayName = `@${user}`;
                                 userUrl = `/u/${user}`;
                             }
-                            
+
                             return `<div class="engagement-user"><a href="${userUrl}" class="user-link" target="_blank" rel="noopener noreferrer">${displayName}</a></div>`;
                         }).join("");
                         modalBody.innerHTML = userList;

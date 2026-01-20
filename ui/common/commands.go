@@ -12,6 +12,7 @@ const (
 	CreateNoteView   SessionState = iota
 	HomeTimelineView              // Unified home timeline (local + remote)
 	MyPostsView                   // View only your own posts
+	GlobalPostsView               // Global timeline (all local + all federated posts)
 	CreateUserView
 	UpdateNoteList
 	FollowUserView      // Follow remote users

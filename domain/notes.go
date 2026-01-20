@@ -12,6 +12,22 @@ type SaveNote struct {
 	InReplyToURI string // URI of parent post (empty for top-level posts)
 }
 
+// GlobalTimelinePost represents a post in the global timeline (local + federated)
+type GlobalTimelinePost struct {
+	NoteId      string
+	Username    string
+	UserDomain  string
+	ProfileURL  string
+	ObjectURI   string // ActivityPub object id (canonical URI, for replies/likes)
+	ObjectURL   string // ActivityPub object url (human-readable web UI link, preferred for display)
+	IsRemote    bool
+	Message     string
+	CreatedAt   time.Time
+	ReplyCount  int
+	LikeCount   int
+	BoostCount  int
+}
+
 type Note struct {
 	Id        uuid.UUID
 	CreatedBy string
@@ -41,8 +57,8 @@ type HomePost struct {
 	Author     string // @user (local) or @user@domain (remote)
 	Content    string
 	Time       time.Time
-	ObjectURI  string // ActivityPub object id (canonical URI, returns JSON)
-	ObjectURL  string // ActivityPub object url (human-readable web UI link, preferred for display)
+	ObjectURI  string    // ActivityPub object id (canonical URI, returns JSON)
+	ObjectURL  string    // ActivityPub object url (human-readable web UI link, preferred for display)
 	IsLocal    bool      // true = local note, false = remote activity
 	NoteID     uuid.UUID // only set for local posts (for editing/deleting)
 	ReplyCount int       // number of replies to this post

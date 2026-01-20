@@ -26,6 +26,9 @@ STEGODON_SINGLE=true ./stegodon
 
 # Run with closed registration
 STEGODON_CLOSED=true ./stegodon
+
+# Run in SSH-only mode (no web UI, but RSS/ActivityPub still work)
+STEGODON_SSH_ONLY=true ./stegodon
 ```
 
 ## Configuration
@@ -38,7 +41,10 @@ Environment variables:
 - `STEGODON_WITH_AP` - Enable ActivityPub (default: false)
 - `STEGODON_SINGLE` - Single-user mode (default: false)
 - `STEGODON_CLOSED` - Close registration (default: false)
+- `STEGODON_SSH_ONLY` - SSH-only mode, disables web UI but keeps RSS/ActivityPub (default: false)
 - `STEGODON_NODE_DESCRIPTION` - NodeInfo description
+- `STEGODON_MAX_CHARS` - Maximum note length (default: 150, max: 300)
+- `STEGODON_SHOW_GLOBAL` - Show global timeline in TUI and web (default: false)
 - `STEGODON_WITH_JOURNALD` - Linux journald logging (default: false)
 - `STEGODON_WITH_PPROF` - Enable pprof on localhost:6060 (default: false)
 

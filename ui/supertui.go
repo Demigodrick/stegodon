@@ -18,6 +18,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/followers"
 	"github.com/deemkeen/stegodon/ui/following"
 	"github.com/deemkeen/stegodon/ui/followuser"
+	"github.com/deemkeen/stegodon/ui/globalposts"
 	"github.com/deemkeen/stegodon/ui/header"
 	"github.com/deemkeen/stegodon/ui/hometimeline"
 	"github.com/deemkeen/stegodon/ui/localusers"
@@ -50,6 +51,7 @@ type MainModel struct {
 	newUserModel         createuser.Model
 	createModel          writenote.Model
 	myPostsModel         myposts.Model
+	globalPostsModel     globalposts.Model
 	followModel          followuser.Model
 	followersModel       followers.Model
 	followingModel       following.Model
@@ -98,6 +100,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	noteModel := writenote.InitialNote(width, acc.Id)
 	headerModel := header.Model{Width: width, Acc: &acc}
 	myPostsModel := myposts.NewPager(acc.Id, width, height, localDomain)
+	globalPostsModel := globalposts.InitialModel(acc.Id, width, height, localDomain)
 	followModel := followuser.InitialModel(acc.Id)
 	followersModel := followers.InitialModel(acc.Id, width, height)
 	followingModel := following.InitialModel(acc.Id, width, height)
@@ -114,6 +117,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.newUserModel = createuser.InitialModel()
 	m.createModel = noteModel
 	m.myPostsModel = myPostsModel
+	m.globalPostsModel = globalPostsModel
 	m.followModel = followModel
 	m.followersModel = followersModel
 	m.followingModel = followingModel
@@ -177,6 +181,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.headerModel.Width = msg.Width
 		m.myPostsModel.Width = msg.Width
 		m.myPostsModel.Height = msg.Height
+		m.globalPostsModel.Width = msg.Width
+		m.globalPostsModel.Height = msg.Height
 		m.homeTimelineModel.Width = msg.Width
 		m.homeTimelineModel.Height = msg.Height
 		m.followersModel.Width = msg.Width
@@ -294,8 +300,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "tab":
 			// Cycle through main views (excluding create user)
-			// Order: write -> home -> my posts -> [follow] -> followers -> following -> users -> [admin -> relay] -> delete
+			// Order: write -> home -> my posts -> [global posts] -> [follow] -> followers -> following -> users -> [admin -> relay] -> delete
 			// AP-only views: follow remote user, relay management
+			// Optional views: global posts (when ShowGlobal is enabled)
 			if m.state == common.CreateUserView {
 				return m, nil
 			}
@@ -311,6 +318,14 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case common.HomeTimelineView:
 				m.state = common.MyPostsView
 			case common.MyPostsView:
+				if m.config.Conf.ShowGlobal {
+					m.state = common.GlobalPostsView
+				} else if m.config.Conf.WithAp {
+					m.state = common.FollowUserView
+				} else {
+					m.state = common.FollowersView
+				}
+			case common.GlobalPostsView:
 				if m.config.Conf.WithAp {
 					m.state = common.FollowUserView
 				} else {
@@ -372,6 +387,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			// Cycle backwards through views
 			// AP-only views: follow remote user, relay management
+			// Optional views: global posts (when ShowGlobal is enabled)
 			if m.state == common.CreateUserView {
 				return m, nil
 			}
@@ -390,11 +406,19 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = common.CreateNoteView
 			case common.MyPostsView:
 				m.state = common.HomeTimelineView
-			case common.FollowUserView:
+			case common.GlobalPostsView:
 				m.state = common.MyPostsView
+			case common.FollowUserView:
+				if m.config.Conf.ShowGlobal {
+					m.state = common.GlobalPostsView
+				} else {
+					m.state = common.MyPostsView
+				}
 			case common.FollowersView:
 				if m.config.Conf.WithAp {
 					m.state = common.FollowUserView
+				} else if m.config.Conf.ShowGlobal {
+					m.state = common.GlobalPostsView
 				} else {
 					m.state = common.MyPostsView
 				}
@@ -477,10 +501,12 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// This is more efficient than routing ALL messages to ALL models
 	switch msg.(type) {
 	case common.ActivateViewMsg, common.DeactivateViewMsg:
-		// Activation/deactivation messages go to home timeline, myposts, and notifications models
+		// Activation/deactivation messages go to home timeline, myposts, globalposts, and notifications models
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+		m.globalPostsModel, cmd = m.globalPostsModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
@@ -540,36 +566,50 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Route keyboard input ONLY to active model
-	if _, ok := msg.(tea.KeyMsg); ok {
-		switch m.state {
-		case common.CreateUserView:
-			m.newUserModel, cmd = m.newUserModel.Update(msg)
-		case common.CreateNoteView:
-			m.createModel, cmd = m.createModel.Update(msg)
-		case common.HomeTimelineView:
-			m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
-		case common.MyPostsView:
-			m.myPostsModel, cmd = m.myPostsModel.Update(msg)
-		case common.FollowUserView:
-			m.followModel, cmd = m.followModel.Update(msg)
-		case common.FollowersView:
-			m.followersModel, cmd = m.followersModel.Update(msg)
-		case common.FollowingView:
-			m.followingModel, cmd = m.followingModel.Update(msg)
-		case common.LocalUsersView:
-			m.localUsersModel, cmd = m.localUsersModel.Update(msg)
-		case common.AdminPanelView:
-			m.adminModel, cmd = m.adminModel.Update(msg)
-		case common.RelayManagementView:
-			m.relayModel, cmd = m.relayModel.Update(msg)
-		case common.AccountSettingsView:
-			m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
-		case common.ThreadView:
-			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
-		case common.NotificationsView:
-			m.notificationsModel, cmd = m.notificationsModel.Update(msg)
-		}
+	// Route messages to active model
+	// This includes keyboard input AND internal messages (like postsLoadedMsg from async commands)
+	switch m.state {
+	case common.CreateUserView:
+		m.newUserModel, cmd = m.newUserModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.CreateNoteView:
+		m.createModel, cmd = m.createModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.HomeTimelineView:
+		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.MyPostsView:
+		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.GlobalPostsView:
+		m.globalPostsModel, cmd = m.globalPostsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowUserView:
+		m.followModel, cmd = m.followModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowersView:
+		m.followersModel, cmd = m.followersModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.FollowingView:
+		m.followingModel, cmd = m.followingModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.LocalUsersView:
+		m.localUsersModel, cmd = m.localUsersModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.AdminPanelView:
+		m.adminModel, cmd = m.adminModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.RelayManagementView:
+		m.relayModel, cmd = m.relayModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.AccountSettingsView:
+		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.ThreadView:
+		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.NotificationsView:
+		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -650,6 +690,14 @@ func (m MainModel) View() string {
 		MaxWidth(rightPanelWidth).
 		Margin(1).
 		Render(m.myPostsModel.View())
+
+	globalPostsStyleStr := lipgloss.NewStyle().
+		MaxHeight(availableHeight).
+		Height(availableHeight).
+		Width(rightPanelWidth).
+		MaxWidth(rightPanelWidth).
+		Margin(1).
+		Render(m.globalPostsModel.View())
 
 	followStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
@@ -746,6 +794,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(myPostsStyleStr))
+		case common.GlobalPostsView:
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(globalPostsStyleStr))
 		case common.FollowUserView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -792,6 +844,8 @@ func (m MainModel) View() string {
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link"
 		case common.MyPostsView:
 			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐"
+		case common.GlobalPostsView:
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link • f: follow"
 		case common.FollowUserView:
 			viewCommands = "enter: follow"
 		case common.FollowersView:
@@ -872,6 +926,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "home"
 	case common.MyPostsView:
 		return "my posts"
+	case common.GlobalPostsView:
+		return "global"
 	case common.FollowUserView:
 		return "follow"
 	case common.FollowersView:
@@ -904,6 +960,9 @@ func getViewInitCmd(state common.SessionState, m *MainModel) tea.Cmd {
 		// Timeline Init() returns nil now, just send activation message
 		return func() tea.Msg { return common.ActivateViewMsg{} }
 	case common.MyPostsView:
+		// Send activation message to reset scroll and reload data
+		return func() tea.Msg { return common.ActivateViewMsg{} }
+	case common.GlobalPostsView:
 		// Send activation message to reset scroll and reload data
 		return func() tea.Msg { return common.ActivateViewMsg{} }
 	case common.FollowersView:

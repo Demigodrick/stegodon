@@ -33,7 +33,7 @@
         <div class="layout">
             <div class="sidebar minimized">
                 <div class="sidebar-header">
-                    <h1><span class="emoji">🦣</span> stegodon</h1>
+                    <h1><a href="/"><span class="emoji">🦣</span> stegodon</a></h1>
                     <span class="version">v{{.Version}}</span>
                     <span class="toggle-btn"><span></span><span></span><span></span></span>
                 </div>
@@ -53,7 +53,16 @@
             <div class="main-content">
                 <div class="content-wrapper">
                     <div class="timeline">
-                        <h2>local timeline</h2>
+                        <div class="timeline-header">
+                            <h2>local timeline</h2>
+                            {{if .ShowGlobal}}
+                            <div class="timeline-nav">
+                                <a href="/" class="timeline-link active">local</a>
+                                <span class="timeline-separator">•</span>
+                                <a href="/global" class="timeline-link">global</a>
+                            </div>
+                            {{end}}
+                        </div>
                         {{if .ServerMessage}}
                         <div class="server-message">
                             <strong>📢 Server Message:</strong> {{.ServerMessage.Message}}

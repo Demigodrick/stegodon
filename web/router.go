@@ -51,83 +51,160 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 	globalLimiter := NewRateLimiter(rate.Limit(10), 20)
 	g.Use(RateLimitMiddleware(globalLimiter))
 
-	// Serve embedded static assets
-	g.GET("/static/stegologo.png", func(c *gin.Context) {
-		c.Header("Content-Type", "image/png")
-		c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
-		c.Data(200, "image/png", embeddedLogo)
-	})
-	g.GET("/static/style.css", func(c *gin.Context) {
-		c.Header("Content-Type", "text/css; charset=utf-8")
-		c.Data(200, "text/css; charset=utf-8", embeddedCSS)
-	})
+	// Web UI routes (skip if SSH-only mode is enabled)
+	if !conf.Conf.SshOnly {
+		// Serve embedded static assets
+		g.GET("/static/stegologo.png", func(c *gin.Context) {
+			c.Header("Content-Type", "image/png")
+			c.Header("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+			c.Data(200, "image/png", embeddedLogo)
+		})
+		g.GET("/static/style.css", func(c *gin.Context) {
+			c.Header("Content-Type", "text/css; charset=utf-8")
+			c.Data(200, "text/css; charset=utf-8", embeddedCSS)
+		})
 
-	// Web UI routes
-	g.GET("/", func(c *gin.Context) {
-		HandleIndex(c, conf)
-	})
+		g.GET("/", func(c *gin.Context) {
+			HandleIndex(c, conf)
+		})
 
-	g.GET("/u/:username", func(c *gin.Context) {
-		HandleProfile(c, conf)
-	})
-
-	g.GET("/u/:username/:noteid", func(c *gin.Context) {
-		HandleSinglePost(c, conf)
-	})
-
-	// Redirect /@username to /u/username (Mastodon-style URLs)
-	g.GET("/@:username", func(c *gin.Context) {
-		username := c.Param("username")
-		c.Redirect(301, "/u/"+username)
-	})
-
-	// Tag page
-	g.GET("/tags/:tag", func(c *gin.Context) {
-		HandleTagFeed(c, conf)
-	})
-
-	// API endpoint for engagement data
-	g.GET("/api/engagement/:noteid/:type", func(c *gin.Context) {
-		noteIdStr := c.Param("noteid")
-		engagementType := c.Param("type")
-
-		noteId, err := uuid.Parse(noteIdStr)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "Invalid note ID"})
-			return
+		// Global timeline (optional feature)
+		if conf.Conf.ShowGlobal {
+			g.GET("/global", func(c *gin.Context) {
+				HandleGlobalTimeline(c, conf)
+			})
 		}
 
-		database := db.GetDB()
-		var users []string
+		g.GET("/u/:username", func(c *gin.Context) {
+			HandleProfile(c, conf)
+		})
 
-		if engagementType == "likes" {
-			users, _ = database.ReadLikersInfoByNoteId(noteId)
-		} else if engagementType == "boosts" {
-			users, _ = database.ReadBoostersInfoByNoteId(noteId)
-		} else {
-			c.JSON(400, gin.H{"error": "Invalid engagement type"})
-			return
-		}
+		g.GET("/u/:username/:noteid", func(c *gin.Context) {
+			HandleSinglePost(c, conf)
+		})
 
-		if users == nil {
-			users = []string{}
-		}
+		// Redirect /@username to /u/username (Mastodon-style URLs)
+		g.GET("/@:username", func(c *gin.Context) {
+			username := c.Param("username")
+			c.Redirect(301, "/u/"+username)
+		})
 
-		c.JSON(200, gin.H{"users": users})
-	})
+		// Tag page
+		g.GET("/tags/:tag", func(c *gin.Context) {
+			HandleTagFeed(c, conf)
+		})
 
-	// Avatar upload routes
-	g.GET("/upload/:token", func(c *gin.Context) {
-		HandleUploadForm(c, conf)
-	})
-	g.POST("/upload/:token", func(c *gin.Context) {
-		HandleUploadSubmit(c, conf)
-	})
+		// API endpoint for engagement data (local posts by note ID)
+		g.GET("/api/engagement/note-id/:noteid/:type", func(c *gin.Context) {
+			noteIdStr := c.Param("noteid")
+			engagementType := c.Param("type")
 
-	// Serve avatar images
-	g.GET("/avatars/:filename", func(c *gin.Context) {
-		ServeAvatar(c, conf)
-	})
+			noteId, err := uuid.Parse(noteIdStr)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Invalid note ID"})
+				return
+			}
+
+			database := db.GetDB()
+			var users []string
+
+			if engagementType == "likes" {
+				users, _ = database.ReadLikersInfoByNoteId(noteId)
+			} else if engagementType == "boosts" {
+				users, _ = database.ReadBoostersInfoByNoteId(noteId)
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid engagement type"})
+				return
+			}
+
+			if users == nil {
+				users = []string{}
+			}
+
+			c.JSON(200, gin.H{"users": users})
+		})
+
+		// API endpoint for engagement data (remote posts by object URI - using query param)
+		g.GET("/api/engagement/by-uri/:type", func(c *gin.Context) {
+			objectURI := c.Query("uri")
+			engagementType := c.Param("type")
+
+			if objectURI == "" {
+				c.JSON(400, gin.H{"error": "Missing uri parameter"})
+				return
+			}
+
+			database := db.GetDB()
+			var users []string
+			var err error
+
+			if engagementType == "likes" {
+				users, err = database.ReadLikersInfoByObjectURI(objectURI)
+			} else if engagementType == "boosts" {
+				users, err = database.ReadBoostersInfoByObjectURI(objectURI)
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid engagement type"})
+				return
+			}
+
+			if err != nil {
+				log.Printf("Failed to read engagement info for %s: %v", objectURI, err)
+			}
+
+			if users == nil {
+				users = []string{}
+			}
+
+			c.JSON(200, gin.H{"users": users})
+		})
+
+		// Legacy API endpoint for engagement data (backward compatibility with index.html)
+		g.GET("/api/engagement/:noteid/:type", func(c *gin.Context) {
+			noteIdStr := c.Param("noteid")
+			engagementType := c.Param("type")
+
+			noteId, err := uuid.Parse(noteIdStr)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Invalid note ID"})
+				return
+			}
+
+			database := db.GetDB()
+			var users []string
+
+			if engagementType == "likes" {
+				users, _ = database.ReadLikersInfoByNoteId(noteId)
+			} else if engagementType == "boosts" {
+				users, _ = database.ReadBoostersInfoByNoteId(noteId)
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid engagement type"})
+				return
+			}
+
+			if users == nil {
+				users = []string{}
+			}
+
+			c.JSON(200, gin.H{"users": users})
+		})
+
+		// Avatar upload routes
+		g.GET("/upload/:token", func(c *gin.Context) {
+			HandleUploadForm(c, conf)
+		})
+		g.POST("/upload/:token", func(c *gin.Context) {
+			HandleUploadSubmit(c, conf)
+		})
+
+		// Serve avatar images
+		g.GET("/avatars/:filename", func(c *gin.Context) {
+			ServeAvatar(c, conf)
+		})
+
+		log.Println("Web UI routes enabled")
+	} else {
+		log.Println("SSH-only mode: Web UI routes disabled")
+	}
 
 	// RSS Feed
 	g.GET("/feed", func(c *gin.Context) {

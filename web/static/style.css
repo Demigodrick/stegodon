@@ -46,6 +46,15 @@ body {
     "Liberation Mono", "Courier New", monospace;
 }
 
+.sidebar h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sidebar h1 a:hover {
+  text-decoration: none;
+}
+
 .sidebar h1 .emoji {
   filter: grayscale(100%) sepia(100%) saturate(1000%) hue-rotate(90deg)
     brightness(1.2);
@@ -263,11 +272,49 @@ body {
   max-width: 800px;
 }
 
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 20px;
+}
+
+.timeline-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.timeline-link {
+  color: #888;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.timeline-link:hover {
+  color: #00ff7f;
+  background: rgba(0, 255, 127, 0.1);
+}
+
+.timeline-link.active {
+  color: #00ff7f;
+  font-weight: bold;
+}
+
+.timeline-separator {
+  color: #444;
+}
+
 h2 {
   color: #00ff7f;
-  margin-bottom: 20px;
+  margin-bottom: 0;
   font-size: 1.8em;
-  padding-bottom: 10px;
+  padding-bottom: 0;
 }
 
 .server-message {

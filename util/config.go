@@ -28,6 +28,8 @@ type AppConfig struct {
 		WithJournald    bool   `yaml:"withJournald"`
 		WithPprof       bool   `yaml:"withPprof"`
 		MaxChars        int    `yaml:"maxChars"`
+		ShowGlobal      bool   `yaml:"showGlobal"`
+		SshOnly         bool   `yaml:"sshOnly"`
 	}
 }
 
@@ -77,6 +79,8 @@ func ReadConf() (*AppConfig, error) {
 	envWithJournald := os.Getenv("STEGODON_WITH_JOURNALD")
 	envWithPprof := os.Getenv("STEGODON_WITH_PPROF")
 	envMaxChars := os.Getenv("STEGODON_MAX_CHARS")
+	envShowGlobal := os.Getenv("STEGODON_SHOW_GLOBAL")
+	envSshOnly := os.Getenv("STEGODON_SSH_ONLY")
 
 	if envHost != "" {
 		c.Conf.Host = envHost
@@ -124,6 +128,14 @@ func ReadConf() (*AppConfig, error) {
 
 	if envWithPprof == "true" {
 		c.Conf.WithPprof = true
+	}
+
+	if envShowGlobal == "true" {
+		c.Conf.ShowGlobal = true
+	}
+
+	if envSshOnly == "true" {
+		c.Conf.SshOnly = true
 	}
 
 	if envMaxChars != "" {
