@@ -196,10 +196,15 @@
                 modal.style.display = "flex";
 
                 try {
-                    // For remote posts, use objectUri; for local posts, use noteId
-                    const identifier = isRemote ? encodeURIComponent(objectUri) : noteId;
-                    const endpoint = isRemote ? "object-uri" : "note-id";
-                    const response = await fetch(`/api/engagement/${endpoint}/${identifier}/${type}`);
+                    let url;
+                    if (isRemote) {
+                        // For remote posts, use query parameter to avoid URL encoding issues
+                        url = `/api/engagement/by-uri/${type}?uri=${encodeURIComponent(objectUri)}`;
+                    } else {
+                        // For local posts, use note ID in path
+                        url = `/api/engagement/note-id/${noteId}/${type}`;
+                    }
+                    const response = await fetch(url);
                     const data = await response.json();
 
                     if (data.users && data.users.length > 0) {

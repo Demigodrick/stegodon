@@ -124,10 +124,15 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 			c.JSON(200, gin.H{"users": users})
 		})
 
-		// API endpoint for engagement data (remote posts by object URI)
-		g.GET("/api/engagement/object-uri/:objecturi/:type", func(c *gin.Context) {
-			objectURI := c.Param("objecturi")
+		// API endpoint for engagement data (remote posts by object URI - using query param)
+		g.GET("/api/engagement/by-uri/:type", func(c *gin.Context) {
+			objectURI := c.Query("uri")
 			engagementType := c.Param("type")
+
+			if objectURI == "" {
+				c.JSON(400, gin.H{"error": "Missing uri parameter"})
+				return
+			}
 
 			database := db.GetDB()
 			var users []string
