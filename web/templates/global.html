@@ -89,12 +89,12 @@
                         {{if or (gt .ReplyCount 0) (gt .LikeCount 0) (gt .BoostCount 0)}}
                         <div class="post-footer">
                             {{if gt .LikeCount 0}}
-                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">⭐</span> {{.LikeCount}}
                                 </span>
                             {{end}}
                             {{if gt .BoostCount 0}}
-                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" style="cursor: pointer;">
+                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">🔁</span> {{.BoostCount}}
                                 </span>
                             {{end}}
@@ -179,22 +179,27 @@
                     e.preventDefault();
                     const type = trigger.dataset.type;
                     const noteId = trigger.dataset.noteId;
+                    const objectUri = trigger.dataset.objectUri;
+                    const isRemote = trigger.dataset.isRemote === "true";
 
                     if (type === "likes") {
-                        await showEngagement("Liked by", noteId, "likes");
+                        await showEngagement("Liked by", noteId, objectUri, isRemote, "likes");
                     } else if (type === "boosts") {
-                        await showEngagement("Boosted by", noteId, "boosts");
+                        await showEngagement("Boosted by", noteId, objectUri, isRemote, "boosts");
                     }
                 });
             });
 
-            async function showEngagement(title, noteId, type) {
+            async function showEngagement(title, noteId, objectUri, isRemote, type) {
                 modalTitle.textContent = title;
                 modalBody.innerHTML = "Loading...";
                 modal.style.display = "flex";
 
                 try {
-                    const response = await fetch(`/api/engagement/${noteId}/${type}`);
+                    // For remote posts, use objectUri; for local posts, use noteId
+                    const identifier = isRemote ? encodeURIComponent(objectUri) : noteId;
+                    const endpoint = isRemote ? "object-uri" : "note-id";
+                    const response = await fetch(`/api/engagement/${endpoint}/${identifier}/${type}`);
                     const data = await response.json();
 
                     if (data.users && data.users.length > 0) {
