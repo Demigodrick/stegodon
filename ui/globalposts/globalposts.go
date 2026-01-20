@@ -225,21 +225,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				selectedPost := m.Posts[m.Selected]
 				noteURI := selectedPost.PostURL
 				var noteID uuid.UUID
+				var isLocal bool
+
 				if !selectedPost.IsRemote {
+					// Local post - use NoteId and construct local URI
 					if id, err := uuid.Parse(selectedPost.NoteId); err == nil {
 						noteID = id
+						isLocal = true
 						if noteURI == "" {
 							noteURI = "local:" + selectedPost.NoteId
 						}
 					}
+				} else {
+					// Remote post - use PostURL as ObjectURI
+					isLocal = false
+					if noteURI == "" {
+						// If no PostURL, we can't like this post
+						return m, nil
+					}
 				}
 
-				if noteURI != "" || noteID != uuid.Nil {
+				// Only send like message if we have valid data
+				if (isLocal && noteID != uuid.Nil) || (!isLocal && noteURI != "") {
 					return m, func() tea.Msg {
 						return common.LikeNoteMsg{
 							NoteURI: noteURI,
 							NoteID:  noteID,
-							IsLocal: !selectedPost.IsRemote,
+							IsLocal: isLocal,
 						}
 					}
 				}
