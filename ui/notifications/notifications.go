@@ -31,6 +31,7 @@ type Model struct {
 	Width         int
 	Height        int
 	isActive      bool
+	tickerRunning bool // Track if refresh ticker is already running
 	UnreadCount   int
 	Status        string
 	Error         string
@@ -185,8 +186,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.Selected < 0 {
 			m.Selected = 0
 		}
-		// Schedule next tick to keep badge updated
-		return m, tickRefresh()
+		// Schedule next tick to keep badge updated (only if not already running)
+		if !m.tickerRunning {
+			m.tickerRunning = true
+			return m, tickRefresh()
+		}
+		return m, nil
 
 	case refreshTickMsg:
 		// Always refresh to keep badge count updated

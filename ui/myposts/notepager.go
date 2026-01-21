@@ -161,6 +161,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 			}
+		case "b":
+			// Boost/unboost selected note
+			if len(m.Notes) > 0 && m.Selected < len(m.Notes) {
+				selectedNote := m.Notes[m.Selected]
+				noteURI := selectedNote.ObjectURI
+				// For local notes without ObjectURI, use local: prefix
+				if noteURI == "" {
+					noteURI = "local:" + selectedNote.Id.String()
+				}
+				return m, func() tea.Msg {
+					return common.BoostNoteMsg{
+						NoteURI: noteURI,
+						NoteID:  selectedNote.Id,
+						IsLocal: true, // myposts only shows local notes
+					}
+				}
+			}
 		}
 	}
 	return m, nil

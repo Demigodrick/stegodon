@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -381,12 +382,20 @@ func parseTimestamp(timestampStr string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("empty timestamp")
 	}
 
-	// Remove Z suffix and convert T to space for ISO 8601 format
+	// Handle Z suffix FIRST - SQLite adds Z but timestamps are actually local time
+	// Must check before RFC3339 because RFC3339 would parse Z as UTC
 	if strings.HasSuffix(timestampStr, "Z") {
 		timestampStr = strings.TrimSuffix(timestampStr, "Z")
 		timestampStr = strings.Replace(timestampStr, "T", " ", 1)
+		return time.ParseInLocation("2006-01-02 15:04:05", timestampStr, time.Local)
 	}
 
+	// Try RFC3339 for timestamps with real timezone offsets (e.g., "2026-01-21T00:38:20+01:00")
+	if t, err := time.Parse(time.RFC3339, timestampStr); err == nil {
+		return t, nil
+	}
+
+	// Parse as local time (space-separated format)
 	return time.ParseInLocation("2006-01-02 15:04:05", timestampStr, time.Local)
 }
 
@@ -1344,8 +1353,185 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		return err, &posts
 	}
 
-	// Sort combined posts by time (newest first)
-	sortPostsByTime(posts)
+	// Fetch posts boosted by the current user or by local users that the current user follows
+	// Uses UNION to allow index usage (OR prevents index optimization)
+	// Excludes self-boosts of your own posts (they already appear as original posts)
+	boostedLocalRows, err := db.db.Query(`
+		SELECT id, username, message, boost_time, object_uri, reply_count, like_count, boost_count, booster_username
+		FROM (
+			-- Own boosts of other users' posts
+			SELECT n.id, a.username, n.message, b.created_at as boost_time, n.object_uri,
+			       COALESCE(n.reply_count, 0) as reply_count, COALESCE(n.like_count, 0) as like_count,
+			       COALESCE(n.boost_count, 0) as boost_count, booster.username as booster_username
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN notes n ON n.id = b.note_id
+			INNER JOIN accounts a ON a.id = n.user_id
+			WHERE b.account_id = ? AND n.user_id != ?
+
+			UNION
+
+			-- Boosts from followed users
+			SELECT n.id, a.username, n.message, b.created_at as boost_time, n.object_uri,
+			       COALESCE(n.reply_count, 0) as reply_count, COALESCE(n.like_count, 0) as like_count,
+			       COALESCE(n.boost_count, 0) as boost_count, booster.username as booster_username
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN notes n ON n.id = b.note_id
+			INNER JOIN accounts a ON a.id = n.user_id
+			INNER JOIN follows f ON f.target_account_id = b.account_id AND f.account_id = ? AND f.accepted = 1
+		)
+		ORDER BY boost_time DESC LIMIT ?`,
+		accountId.String(), accountId.String(), accountId.String(), limit)
+	if err != nil {
+		return err, &posts
+	}
+	defer boostedLocalRows.Close()
+
+	for boostedLocalRows.Next() {
+		var idStr string
+		var username string
+		var message string
+		var createdAtStr string
+		var objectURI sql.NullString
+		var replyCount int
+		var likeCount int
+		var boostCount int
+		var boosterUsername string
+
+		if err := boostedLocalRows.Scan(&idStr, &username, &message, &createdAtStr, &objectURI, &replyCount, &likeCount, &boostCount, &boosterUsername); err != nil {
+			return err, &posts
+		}
+
+		noteId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		uri := ""
+		if objectURI.Valid {
+			uri = objectURI.String
+		}
+
+		posts = append(posts, domain.HomePost{
+			ID:         noteId,
+			Author:     username,
+			Content:    message,
+			Time:       parsedTime,
+			ObjectURI:  uri,
+			IsLocal:    true,
+			NoteID:     noteId,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+			BoostedBy:  "@" + boosterUsername,
+		})
+	}
+	if err = boostedLocalRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Fetch remote posts boosted by the current user or by local users that the current user follows
+	// Uses UNION to allow index usage (OR prevents index optimization)
+	boostedRemoteRows, err := db.db.Query(`
+		SELECT id, actor_uri, object_uri, object_url, raw_json, boost_time, username, domain,
+		       reply_count, like_count, boost_count, booster_username
+		FROM (
+			-- Own boosts of remote posts
+			SELECT act.id, act.actor_uri, act.object_uri, COALESCE(act.object_url, '') as object_url,
+			       act.raw_json, b.created_at as boost_time, ra.username, ra.domain,
+			       COALESCE(act.reply_count, 0) as reply_count, COALESCE(act.like_count, 0) as like_count,
+			       COALESCE(act.boost_count, 0) as boost_count, booster.username as booster_username
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN activities act ON act.object_uri = b.object_uri
+			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
+			WHERE b.account_id = ? AND b.object_uri IS NOT NULL AND b.object_uri != ''
+
+			UNION
+
+			-- Boosts from followed users of remote posts
+			SELECT act.id, act.actor_uri, act.object_uri, COALESCE(act.object_url, '') as object_url,
+			       act.raw_json, b.created_at as boost_time, ra.username, ra.domain,
+			       COALESCE(act.reply_count, 0) as reply_count, COALESCE(act.like_count, 0) as like_count,
+			       COALESCE(act.boost_count, 0) as boost_count, booster.username as booster_username
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN activities act ON act.object_uri = b.object_uri
+			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
+			INNER JOIN follows f ON f.target_account_id = b.account_id AND f.account_id = ? AND f.accepted = 1
+			WHERE b.object_uri IS NOT NULL AND b.object_uri != ''
+		)
+		ORDER BY boost_time DESC LIMIT ?`,
+		accountId.String(), accountId.String(), limit)
+	if err != nil {
+		return err, &posts
+	}
+	defer boostedRemoteRows.Close()
+
+	for boostedRemoteRows.Next() {
+		var idStr string
+		var actorURI string
+		var objectURI string
+		var objectURL string
+		var rawJSON string
+		var createdAtStr string
+		var username string
+		var remDomain string
+		var replyCount int
+		var likeCount int
+		var boostCount int
+		var boosterUsername string
+
+		if err := boostedRemoteRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount, &likeCount, &boostCount, &boosterUsername); err != nil {
+			return err, &posts
+		}
+
+		activityId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		// Extract content from raw JSON
+		content := extractContentFromJSON(rawJSON)
+
+		posts = append(posts, domain.HomePost{
+			ID:         activityId,
+			Author:     "@" + username + "@" + remDomain,
+			Content:    content,
+			Time:       parsedTime,
+			ObjectURI:  objectURI,
+			ObjectURL:  objectURL,
+			IsLocal:    false,
+			NoteID:     uuid.Nil,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+			BoostedBy:  "@" + boosterUsername,
+		})
+	}
+	if err = boostedRemoteRows.Err(); err != nil {
+		return err, &posts
+	}
+
+	// Deduplicate posts - prefer non-boosted version (original) over boosted
+	// Use a map to track seen posts by ID
+	seen := make(map[uuid.UUID]int) // maps ID to index in posts slice
+	var dedupedPosts []domain.HomePost
+	for _, post := range posts {
+		if existingIdx, exists := seen[post.ID]; exists {
+			// If the new post is the original (no BoostedBy) and existing is boosted, replace
+			if post.BoostedBy == "" && dedupedPosts[existingIdx].BoostedBy != "" {
+				dedupedPosts[existingIdx] = post
+			}
+			// Otherwise keep the existing one
+		} else {
+			seen[post.ID] = len(dedupedPosts)
+			dedupedPosts = append(dedupedPosts, post)
+		}
+	}
+	posts = dedupedPosts
+
+	// Sort combined posts by time (newest first) using efficient sort
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].Time.After(posts[j].Time)
+	})
 
 	// Limit to requested amount
 	if len(posts) > limit {
@@ -1386,17 +1572,6 @@ func extractContentFromJSON(rawJSON string) string {
 
 	// Strip HTML tags from content
 	return util.StripHTMLTags(activityWrapper.Object.Content)
-}
-
-// sortPostsByTime sorts posts by time (newest first)
-func sortPostsByTime(posts []domain.HomePost) {
-	for i := 0; i < len(posts)-1; i++ {
-		for j := i + 1; j < len(posts); j++ {
-			if posts[j].Time.After(posts[i].Time) {
-				posts[i], posts[j] = posts[j], posts[i]
-			}
-		}
-	}
 }
 
 // extractAuthorFromActorURI extracts username@domain from an ActivityPub actor URI
@@ -2753,7 +2928,7 @@ func (db *DB) CreateBoost(boost *domain.Boost) error {
 			boost.AccountId.String(),
 			boost.NoteId.String(),
 			boost.URI,
-			boost.CreatedAt)
+			boost.CreatedAt.Format("2006-01-02 15:04:05"))
 		return err
 	})
 }
@@ -2788,6 +2963,102 @@ func (db *DB) IncrementBoostCountByNoteId(noteId uuid.UUID) error {
 func (db *DB) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
 	return db.wrapTransaction(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE notes SET boost_count = CASE WHEN boost_count > 0 THEN boost_count - 1 ELSE 0 END WHERE id = ?`, noteId.String())
+		return err
+	})
+}
+
+// ReadBoostByAccountAndNote finds a boost by account ID and note ID
+func (db *DB) ReadBoostByAccountAndNote(accountId, noteId uuid.UUID) (error, *domain.Boost) {
+	var boost domain.Boost
+	var idStr, accountIdStr, noteIdStr, createdAtStr string
+	err := db.db.QueryRow(sqlSelectBoostByAccountNote, accountId.String(), noteId.String()).Scan(
+		&idStr, &accountIdStr, &noteIdStr, &boost.URI, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return err, nil
+	}
+	boost.Id = uuid.MustParse(idStr)
+	boost.AccountId = uuid.MustParse(accountIdStr)
+	boost.NoteId = uuid.MustParse(noteIdStr)
+	if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+		boost.CreatedAt = parsedTime
+	}
+	return nil, &boost
+}
+
+// IncrementBoostCountByObjectURI increments the boost_count for an activity by object URI
+func (db *DB) IncrementBoostCountByObjectURI(objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE activities SET boost_count = boost_count + 1 WHERE object_uri = ?`, objectURI)
+		return err
+	})
+}
+
+// DecrementBoostCountByObjectURI decrements the boost_count for an activity by object URI
+func (db *DB) DecrementBoostCountByObjectURI(objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE activities SET boost_count = CASE WHEN boost_count > 0 THEN boost_count - 1 ELSE 0 END WHERE object_uri = ?`, objectURI)
+		return err
+	})
+}
+
+// HasBoostByObjectURI checks if an account has boosted a post by its object URI
+func (db *DB) HasBoostByObjectURI(accountId uuid.UUID, objectURI string) (bool, error) {
+	var count int
+	err := db.db.QueryRow(`SELECT COUNT(*) FROM boosts WHERE account_id = ? AND object_uri = ?`, accountId.String(), objectURI).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// CreateBoostByObjectURI creates a boost for a remote post using object URI
+func (db *DB) CreateBoostByObjectURI(boost *domain.Boost, objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		// Use a deterministic UUID derived from the object_uri as the note_id placeholder
+		// This ensures the unique constraint (account_id, note_id) works correctly for remote posts
+		placeholderNoteId := uuid.NewSHA1(uuid.NameSpaceURL, []byte(objectURI))
+		_, err := tx.Exec(`INSERT INTO boosts(id, account_id, note_id, uri, object_uri, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			boost.Id.String(),
+			boost.AccountId.String(),
+			placeholderNoteId.String(), // Deterministic placeholder based on object_uri
+			boost.URI,
+			objectURI,
+			boost.CreatedAt.Format("2006-01-02 15:04:05"))
+		return err
+	})
+}
+
+// ReadBoostByAccountAndObjectURI finds a boost by account ID and object URI
+func (db *DB) ReadBoostByAccountAndObjectURI(accountId uuid.UUID, objectURI string) (error, *domain.Boost) {
+	var boost domain.Boost
+	var idStr, accountIdStr, noteIdStr, createdAtStr string
+	var objURI sql.NullString
+	err := db.db.QueryRow(`SELECT id, account_id, note_id, uri, object_uri, created_at FROM boosts WHERE account_id = ? AND object_uri = ?`,
+		accountId.String(), objectURI).Scan(&idStr, &accountIdStr, &noteIdStr, &boost.URI, &objURI, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return err, nil
+	}
+	boost.Id = uuid.MustParse(idStr)
+	boost.AccountId = uuid.MustParse(accountIdStr)
+	if noteIdStr != "" {
+		boost.NoteId = uuid.MustParse(noteIdStr)
+	}
+	if parsedTime, err := parseTimestamp(createdAtStr); err == nil {
+		boost.CreatedAt = parsedTime
+	}
+	return nil, &boost
+}
+
+// DeleteBoostByAccountAndObjectURI removes a boost by account ID and object URI
+func (db *DB) DeleteBoostByAccountAndObjectURI(accountId uuid.UUID, objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM boosts WHERE account_id = ? AND object_uri = ?`, accountId.String(), objectURI)
 		return err
 	})
 }
@@ -4066,11 +4337,11 @@ func (db *DB) UpdateServerMessage(message string, enabled bool, webEnabled bool)
 // ReadGlobalTimelinePosts returns posts for the global timeline (local notes + remote activities)
 // excluding replies. Uses UNION ALL for efficient SQL-level sorting and pagination.
 func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.GlobalTimelinePost) {
-	// Use UNION ALL to combine local and remote posts with SQL-level sorting and pagination
+	// Use UNION ALL to combine local, remote, and boosted posts with SQL-level sorting and pagination
 	rows, err := db.db.Query(`
 		SELECT
 			id, username, user_domain, profile_url, object_uri, object_url,
-			is_remote, message, created_at, reply_count, like_count, boost_count
+			is_remote, message, created_at, reply_count, like_count, boost_count, boosted_by
 		FROM (
 			-- Local posts (excluding replies)
 			SELECT
@@ -4085,7 +4356,8 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 				n.created_at as created_at,
 				COALESCE(n.reply_count, 0) as reply_count,
 				COALESCE(n.like_count, 0) as like_count,
-				COALESCE(n.boost_count, 0) as boost_count
+				COALESCE(n.boost_count, 0) as boost_count,
+				'' as boosted_by
 			FROM notes n
 			INNER JOIN accounts a ON a.id = n.user_id
 			WHERE (n.in_reply_to_uri IS NULL OR n.in_reply_to_uri = '')
@@ -4105,12 +4377,59 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 				act.created_at as created_at,
 				COALESCE(act.reply_count, 0) as reply_count,
 				COALESCE(act.like_count, 0) as like_count,
-				COALESCE(act.boost_count, 0) as boost_count
+				COALESCE(act.boost_count, 0) as boost_count,
+				'' as boosted_by
 			FROM activities act
 			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
 			WHERE act.activity_type = 'Create'
 			AND act.local = 0
 			AND (act.in_reply_to IS NULL OR act.in_reply_to = '')
+
+			UNION ALL
+
+			-- Boosted local posts (show who boosted them)
+			SELECT
+				n.id as id,
+				a.username as username,
+				'' as user_domain,
+				'/u/' || a.username as profile_url,
+				COALESCE(n.object_uri, '') as object_uri,
+				'' as object_url,
+				0 as is_remote,
+				n.message as message,
+				b.created_at as created_at,
+				COALESCE(n.reply_count, 0) as reply_count,
+				COALESCE(n.like_count, 0) as like_count,
+				COALESCE(n.boost_count, 0) as boost_count,
+				'@' || booster.username as boosted_by
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN notes n ON n.id = b.note_id
+			INNER JOIN accounts a ON a.id = n.user_id
+			WHERE b.account_id != n.user_id
+
+			UNION ALL
+
+			-- Boosted remote posts (show who boosted them)
+			SELECT
+				act.id as id,
+				ra.username as username,
+				ra.domain as user_domain,
+				ra.actor_uri as profile_url,
+				COALESCE(act.object_uri, '') as object_uri,
+				COALESCE(act.object_url, '') as object_url,
+				1 as is_remote,
+				act.raw_json as message,
+				b.created_at as created_at,
+				COALESCE(act.reply_count, 0) as reply_count,
+				COALESCE(act.like_count, 0) as like_count,
+				COALESCE(act.boost_count, 0) as boost_count,
+				'@' || booster.username as boosted_by
+			FROM boosts b
+			INNER JOIN accounts booster ON booster.id = b.account_id
+			INNER JOIN activities act ON act.object_uri = b.object_uri
+			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
+			WHERE b.object_uri IS NOT NULL AND b.object_uri != ''
 		) combined
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -4127,7 +4446,7 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 		err := rows.Scan(
 			&post.NoteId, &post.Username, &post.UserDomain, &post.ProfileURL,
 			&post.ObjectURI, &post.ObjectURL, &isRemoteInt, &message, &createdAtStr,
-			&post.ReplyCount, &post.LikeCount, &post.BoostCount,
+			&post.ReplyCount, &post.LikeCount, &post.BoostCount, &post.BoostedBy,
 		)
 		if err != nil {
 			return err, &posts
@@ -4154,7 +4473,23 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 		return err, &posts
 	}
 
-	return nil, &posts
+	// Deduplicate posts - prefer non-boosted version (original) over boosted
+	seen := make(map[string]int) // maps NoteId to index in posts slice
+	var dedupedPosts []domain.GlobalTimelinePost
+	for _, post := range posts {
+		if existingIdx, exists := seen[post.NoteId]; exists {
+			// If the new post is the original (no BoostedBy) and existing is boosted, replace
+			if post.BoostedBy == "" && dedupedPosts[existingIdx].BoostedBy != "" {
+				dedupedPosts[existingIdx] = post
+			}
+			// Otherwise keep the existing one
+		} else {
+			seen[post.NoteId] = len(dedupedPosts)
+			dedupedPosts = append(dedupedPosts, post)
+		}
+	}
+
+	return nil, &dedupedPosts
 }
 
 // CountGlobalTimelinePosts returns the total count of posts in the global timeline

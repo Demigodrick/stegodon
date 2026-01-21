@@ -72,3 +72,10 @@ type LikeNoteMsg struct {
 	NoteID  uuid.UUID // Local UUID (if local note)
 	IsLocal bool      // Whether this is a local note
 }
+
+// BoostNoteMsg is sent when user presses 'b' to boost/unboost a post
+type BoostNoteMsg struct {
+	NoteURI string    // ActivityPub object URI of the note being boosted
+	NoteID  uuid.UUID // Local UUID (if local note)
+	IsLocal bool      // Whether this is a local note
+}

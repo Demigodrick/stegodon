@@ -675,6 +675,40 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 				}
 			}
+		case "b":
+			// Boost/unboost selected post
+			if m.Selected == -1 && m.ParentPost != nil && !m.ParentPost.IsDeleted {
+				// Boost the parent post
+				noteURI := m.ParentPost.ObjectURI
+				if noteURI == "" && m.ParentPost.IsLocal && m.ParentPost.ID != uuid.Nil {
+					noteURI = "local:" + m.ParentPost.ID.String()
+				}
+				if noteURI != "" || m.ParentPost.ID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.BoostNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  m.ParentPost.ID,
+							IsLocal: m.ParentPost.IsLocal,
+						}
+					}
+				}
+			} else if m.Selected >= 0 && m.Selected < len(m.Replies) {
+				// Boost a reply
+				reply := m.Replies[m.Selected]
+				noteURI := reply.ObjectURI
+				if noteURI == "" && reply.IsLocal && reply.ID != uuid.Nil {
+					noteURI = "local:" + reply.ID.String()
+				}
+				if noteURI != "" || reply.ID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.BoostNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  reply.ID,
+							IsLocal: reply.IsLocal,
+						}
+					}
+				}
+			}
 		case "o":
 			// Toggle between showing content and URL (only for posts with valid HTTP/HTTPS URLs)
 			// Prefer ObjectURL (web UI link) over ObjectURI (ActivityPub id/JSON)

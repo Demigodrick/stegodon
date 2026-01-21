@@ -26,6 +26,7 @@ type GlobalTimelinePost struct {
 	ReplyCount  int
 	LikeCount   int
 	BoostCount  int
+	BoostedBy   string // if non-empty, this post was boosted by this user (e.g., "@alice" or "@bob@domain")
 }
 
 type Note struct {
@@ -64,4 +65,5 @@ type HomePost struct {
 	ReplyCount int       // number of replies to this post
 	LikeCount  int       // number of likes on this post
 	BoostCount int       // number of boosts on this post
+	BoostedBy  string    // if non-empty, this post was boosted by this user (e.g., "@alice" or "@bob@domain")
 }

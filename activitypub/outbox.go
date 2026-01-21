@@ -861,6 +861,101 @@ func SendUndoLikeWithDeps(localAccount *domain.Account, noteURI string, likeURI 
 	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
 }
 
+// SendAnnounce sends an Announce activity (boost) for a note.
+// This is the production wrapper that uses the default HTTP client and database.
+func SendAnnounce(localAccount *domain.Account, noteURI string, announceURI string, conf *util.AppConfig) error {
+	return SendAnnounceWithDeps(localAccount, noteURI, announceURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendAnnounceWithDeps sends an Announce activity (boost) for a note.
+// This version accepts dependencies for testing.
+func SendAnnounceWithDeps(localAccount *domain.Account, noteURI string, announceURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
+	// Find the author of the note to deliver the Announce
+	authorURI := extractAuthorFromURI(noteURI, database, conf)
+	if authorURI == "" {
+		return fmt.Errorf("could not determine note author for %s", noteURI)
+	}
+
+	// Check if this is a local note (don't send ActivityPub for local boosts)
+	if strings.Contains(authorURI, conf.Conf.SslDomain) {
+		log.Printf("Outbox: Skipping Announce delivery for local note %s", noteURI)
+		return nil
+	}
+
+	// Fetch remote actor to get inbox
+	remoteActor, err := GetOrFetchActorWithDeps(authorURI, client, database)
+	if err != nil {
+		return fmt.Errorf("failed to fetch note author: %w", err)
+	}
+
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	announce := map[string]any{
+		"@context":  "https://www.w3.org/ns/activitystreams",
+		"id":        announceURI,
+		"type":      "Announce",
+		"actor":     actorURI,
+		"object":    noteURI,
+		"published": time.Now().Format(time.RFC3339),
+		"to": []string{
+			"https://www.w3.org/ns/activitystreams#Public",
+		},
+		"cc": []string{
+			fmt.Sprintf("https://%s/users/%s/followers", conf.Conf.SslDomain, localAccount.Username),
+		},
+	}
+
+	log.Printf("Outbox: Sending Announce from %s for note %s to %s@%s", localAccount.Username, noteURI, remoteActor.Username, remoteActor.Domain)
+	return SendActivityWithDeps(announce, remoteActor.InboxURI, localAccount, conf, client)
+}
+
+// SendUndoAnnounce sends an Undo activity for an Announce (i.e., unboost).
+// This is the production wrapper that uses the default HTTP client and database.
+func SendUndoAnnounce(localAccount *domain.Account, noteURI string, announceURI string, conf *util.AppConfig) error {
+	return SendUndoAnnounceWithDeps(localAccount, noteURI, announceURI, conf, defaultHTTPClient, NewDBWrapper())
+}
+
+// SendUndoAnnounceWithDeps sends an Undo activity for an Announce (i.e., unboost).
+// This version accepts dependencies for testing.
+func SendUndoAnnounceWithDeps(localAccount *domain.Account, noteURI string, announceURI string, conf *util.AppConfig, client HTTPClient, database Database) error {
+	// Find the author of the note to deliver the Undo
+	authorURI := extractAuthorFromURI(noteURI, database, conf)
+	if authorURI == "" {
+		return fmt.Errorf("could not determine note author for %s", noteURI)
+	}
+
+	// Check if this is a local note (don't send ActivityPub for local unboosts)
+	if strings.Contains(authorURI, conf.Conf.SslDomain) {
+		log.Printf("Outbox: Skipping Undo Announce delivery for local note %s", noteURI)
+		return nil
+	}
+
+	// Fetch remote actor to get inbox
+	remoteActor, err := GetOrFetchActorWithDeps(authorURI, client, database)
+	if err != nil {
+		return fmt.Errorf("failed to fetch note author: %w", err)
+	}
+
+	undoID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+	actorURI := fmt.Sprintf("https://%s/users/%s", conf.Conf.SslDomain, localAccount.Username)
+
+	undo := map[string]any{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id":       undoID,
+		"type":     "Undo",
+		"actor":    actorURI,
+		"object": map[string]any{
+			"id":     announceURI,
+			"type":   "Announce",
+			"actor":  actorURI,
+			"object": noteURI,
+		},
+	}
+
+	log.Printf("Outbox: Sending Undo Announce from %s for note %s to %s@%s", localAccount.Username, noteURI, remoteActor.Username, remoteActor.Domain)
+	return SendActivityWithDeps(undo, remoteActor.InboxURI, localAccount, conf, client)
+}
+
 // SendRelayFollow subscribes to a relay by sending a Follow activity.
 // This is the production wrapper that uses the default HTTP client and database.
 func SendRelayFollow(localAccount *domain.Account, relayActorURI string, conf *util.AppConfig) error {
