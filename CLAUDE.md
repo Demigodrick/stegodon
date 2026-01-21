@@ -275,6 +275,22 @@ Key coverage areas:
 - Terminal: 24-bit color, minimum 115x28
 - Public keys SHA256-hashed before storage
 
+### SQLite Timestamp Handling (IMPORTANT)
+
+SQLite stores timestamps without timezone info. When reading back, the Go SQLite driver adds a "Z" suffix (e.g., `2026-01-21T01:30:04Z`), but these are **local time, not UTC**.
+
+**Critical**: Always handle Z-suffix timestamps BEFORE RFC3339 parsing. The `parseTimestamp()` function in `db/db.go` strips the Z suffix and parses as local time. If you parse with RFC3339 first, "Z" is interpreted as UTC, causing timestamps to be off by the timezone offset (e.g., 1 hour in CET).
+
+```go
+// WRONG: RFC3339 treats Z as UTC
+time.Parse(time.RFC3339, "2026-01-21T01:30:04Z") // → 01:30 UTC = 02:30 CET
+
+// CORRECT: Strip Z and parse as local
+time.ParseInLocation("2006-01-02 15:04:05", "2026-01-21 01:30:04", time.Local) // → 01:30 CET
+```
+
+**Symptoms of incorrect parsing**: `time.Since()` returns negative values (time in future), causing "just now" to display for old timestamps.
+
 ## Documentation
 
 - [DATABASE.md](DATABASE.md) - Schema and tables

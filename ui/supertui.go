@@ -278,6 +278,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle like/unlike
 		return m, likeNoteCmd(m.account.Id, msg.NoteURI, msg.NoteID, msg.IsLocal, &m.account)
 
+	case common.BoostNoteMsg:
+		// Handle boost/unboost
+		return m, boostNoteCmd(m.account.Id, msg.NoteURI, msg.NoteID, msg.IsLocal, &m.account)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -841,11 +845,11 @@ func (m MainModel) View() string {
 		var viewCommands string
 		switch m.state {
 		case common.HomeTimelineView:
-			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • b: 🔁 • i: info • o: link"
 		case common.MyPostsView:
-			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐"
+			viewCommands = "↑/↓ • u: edit • d: delete • l: ⭐ • b: 🔁"
 		case common.GlobalPostsView:
-			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • i: info • o: link • f: follow"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • b: 🔁 • i: info • o: link • f: follow"
 		case common.FollowUserView:
 			viewCommands = "enter: follow"
 		case common.FollowersView:
@@ -879,7 +883,7 @@ func (m MainModel) View() string {
 		case common.AccountSettingsView:
 			viewCommands = "↑/↓ • e: name • b: bio • a: avatar • d: delete"
 		case common.ThreadView:
-			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • o: URL • esc: back"
+			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • b: 🔁 • o: URL • esc: back"
 		case common.NotificationsView:
 			viewCommands = "j/k: nav • v: view • f: follow • enter: del • a: del all"
 		default:
@@ -1192,6 +1196,221 @@ func likeNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal 
 						log.Printf("Failed to federate like: %v", err)
 					} else {
 						log.Printf("Like federated successfully")
+					}
+				}()
+			}
+		}
+
+		return common.UpdateNoteList
+	}
+}
+
+// boostNoteCmd handles boosting/unboosting a note
+func boostNoteCmd(accountId uuid.UUID, noteURI string, noteID uuid.UUID, isLocal bool, account *domain.Account) tea.Cmd {
+	return func() tea.Msg {
+		database := db.GetDB()
+
+		// Determine the actual note ID and URI to use
+		var actualNoteID uuid.UUID
+		var actualNoteURI string
+		var isRemotePost bool
+
+		if isLocal && noteID != uuid.Nil {
+			actualNoteID = noteID
+			// Get the note's ObjectURI for federation
+			err, note := database.ReadNoteId(noteID)
+			if err != nil {
+				log.Printf("Failed to read note for boost: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = note.ObjectURI
+		} else if noteURI != "" && !strings.HasPrefix(noteURI, "local:") {
+			// Remote note - find it by ObjectURI
+			err, activity := database.ReadActivityByObjectURI(noteURI)
+			if err != nil || activity == nil {
+				log.Printf("Failed to find activity for boost: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = noteURI
+			isRemotePost = true
+			// Try to find a local note with this URI (federated back)
+			err, localNote := database.ReadNoteByURI(noteURI)
+			if err == nil && localNote != nil {
+				actualNoteID = localNote.Id
+				isRemotePost = false // It's actually a local post that was federated back
+			}
+		} else if strings.HasPrefix(noteURI, "local:") {
+			// Parse local: prefix
+			idStr := strings.TrimPrefix(noteURI, "local:")
+			parsedID, err := uuid.Parse(idStr)
+			if err != nil {
+				log.Printf("Failed to parse local note ID: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteID = parsedID
+			// Get the note's ObjectURI for federation
+			err, note := database.ReadNoteId(parsedID)
+			if err != nil {
+				log.Printf("Failed to read note for boost: %v", err)
+				return common.UpdateNoteList
+			}
+			actualNoteURI = note.ObjectURI
+		}
+
+		// Check if we already boosted this post
+		var hasBoost bool
+		var err error
+		if isRemotePost {
+			hasBoost, err = database.HasBoostByObjectURI(accountId, actualNoteURI)
+		} else {
+			hasBoost, err = database.HasBoost(accountId, actualNoteID)
+		}
+		if err != nil {
+			log.Printf("Failed to check existing boost: %v", err)
+			return common.UpdateNoteList
+		}
+
+		if hasBoost {
+			// Unboost - remove the boost
+			var existingBoost *domain.Boost
+			if isRemotePost {
+				err, existingBoost = database.ReadBoostByAccountAndObjectURI(accountId, actualNoteURI)
+			} else {
+				err, existingBoost = database.ReadBoostByAccountAndNote(accountId, actualNoteID)
+			}
+			if err != nil {
+				log.Printf("Failed to read existing boost: %v", err)
+				return common.UpdateNoteList
+			}
+
+			// Delete the boost
+			if isRemotePost {
+				if err := database.DeleteBoostByAccountAndObjectURI(accountId, actualNoteURI); err != nil {
+					log.Printf("Failed to delete boost: %v", err)
+					return common.UpdateNoteList
+				}
+				// Decrement boost count on the activity
+				if err := database.DecrementBoostCountByObjectURI(actualNoteURI); err != nil {
+					log.Printf("Failed to decrement activity boost count: %v", err)
+				}
+			} else {
+				if err := database.DeleteBoostByAccountAndNote(accountId, actualNoteID); err != nil {
+					log.Printf("Failed to delete boost: %v", err)
+					return common.UpdateNoteList
+				}
+				// Decrement boost count on the note
+				if err := database.DecrementBoostCountByNoteId(actualNoteID); err != nil {
+					log.Printf("Failed to decrement boost count: %v", err)
+				}
+			}
+
+			log.Printf("Unboosted post %s", actualNoteURI)
+
+			// Send Undo Announce to remote server (background task)
+			if actualNoteURI != "" && existingBoost != nil {
+				go func() {
+					conf, err := util.ReadConf()
+					if err != nil {
+						log.Printf("Failed to read config for unboost federation: %v", err)
+						return
+					}
+
+					if !conf.Conf.WithAp {
+						return
+					}
+
+					if err := activitypub.SendUndoAnnounce(account, actualNoteURI, existingBoost.URI, conf); err != nil {
+						log.Printf("Failed to federate unboost: %v", err)
+					} else {
+						log.Printf("Unboost federated successfully")
+					}
+				}()
+			}
+		} else {
+			// Boost - create a new boost
+			boostURI := ""
+			conf, err := util.ReadConf()
+			if err == nil && conf.Conf.WithAp {
+				boostURI = fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
+			}
+
+			boost := &domain.Boost{
+				Id:        uuid.New(),
+				AccountId: accountId,
+				NoteId:    actualNoteID, // Will be uuid.Nil for remote posts
+				URI:       boostURI,
+				CreatedAt: time.Now(),
+			}
+
+			// Create the boost
+			if isRemotePost {
+				if err := database.CreateBoostByObjectURI(boost, actualNoteURI); err != nil {
+					log.Printf("Failed to create boost: %v", err)
+					return common.UpdateNoteList
+				}
+				// Increment boost count on the activity
+				if err := database.IncrementBoostCountByObjectURI(actualNoteURI); err != nil {
+					log.Printf("Failed to increment activity boost count: %v", err)
+				}
+			} else {
+				if err := database.CreateBoost(boost); err != nil {
+					log.Printf("Failed to create boost: %v", err)
+					return common.UpdateNoteList
+				}
+				// Increment boost count on the note
+				if err := database.IncrementBoostCountByNoteId(actualNoteID); err != nil {
+					log.Printf("Failed to increment boost count: %v", err)
+				}
+
+				// Create notification for local note author
+				err, note := database.ReadNoteId(actualNoteID)
+				if err == nil && note != nil {
+					err, noteAuthor := database.ReadAccByUsername(note.CreatedBy)
+					if err == nil && noteAuthor != nil && noteAuthor.Id != accountId {
+						// Only notify if booster is not the author
+						preview := note.Message
+						if len(preview) > 100 {
+							preview = preview[:100] + "..."
+						}
+						notification := &domain.Notification{
+							Id:               uuid.New(),
+							AccountId:        noteAuthor.Id,
+							NotificationType: domain.NotificationBoost,
+							ActorId:          accountId,
+							ActorUsername:    account.Username,
+							ActorDomain:      "", // Empty for local users
+							NoteId:           note.Id,
+							NoteURI:          note.ObjectURI,
+							NotePreview:      preview,
+							Read:             false,
+							CreatedAt:        time.Now(),
+						}
+						if err := database.CreateNotification(notification); err != nil {
+							log.Printf("Failed to create boost notification: %v", err)
+						}
+					}
+				}
+			}
+
+			log.Printf("Boosted post %s", actualNoteURI)
+
+			// Send Announce to remote server (background task)
+			if actualNoteURI != "" {
+				go func() {
+					conf, err := util.ReadConf()
+					if err != nil {
+						log.Printf("Failed to read config for boost federation: %v", err)
+						return
+					}
+
+					if !conf.Conf.WithAp {
+						return
+					}
+
+					if err := activitypub.SendAnnounce(account, actualNoteURI, boostURI, conf); err != nil {
+						log.Printf("Failed to federate boost: %v", err)
+					} else {
+						log.Printf("Boost federated successfully")
 					}
 				}()
 			}

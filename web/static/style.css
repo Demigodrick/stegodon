@@ -347,6 +347,18 @@ h2 {
   margin-bottom: 20px;
 }
 
+.boost-indicator {
+  background: #1a1a2e;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #888;
+  font-style: italic;
+}
+
+.boost-indicator .boost-icon {
+  margin-right: 4px;
+}
+
 .post-meta {
   background: #181818;
   border-bottom: 1px solid #333;

@@ -51,6 +51,15 @@ var (
 	selectedContentStyle = lipgloss.NewStyle().
 				Align(lipgloss.Left).
 				Foreground(lipgloss.Color(common.COLOR_WHITE))
+
+	// Boost indicator style (dim, italic)
+	boostIndicatorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(common.COLOR_DIM)).
+				Italic(true)
+
+	selectedBoostIndicatorStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color(common.COLOR_WHITE)).
+					Italic(true)
 )
 
 type Model struct {
@@ -61,6 +70,7 @@ type Model struct {
 	Width              int
 	Height             int
 	isActive           bool     // Track if this view is currently visible
+	tickerRunning      bool     // Track if refresh ticker is already running (prevents multiple ticker chains)
 	showingURL         bool     // Track if URL is displayed instead of content
 	showingEngagement  bool     // Track if engagement info (likes/boosts) is displayed
 	engagementLikers   []string // List of users who liked the selected post
@@ -99,10 +109,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case common.DeactivateViewMsg:
 		m.isActive = false
+		m.tickerRunning = false // Stop ticker chain
 		return m, nil
 
 	case common.ActivateViewMsg:
 		m.isActive = true
+		m.tickerRunning = false // Reset ticker state
 		m.Selected = 0
 		m.Offset = 0
 		return m, loadGlobalPosts()
@@ -126,7 +138,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.Offset = m.Selected
 
-		if m.isActive {
+		// Only start ticker if active AND no ticker already running
+		// This prevents multiple ticker chains from UpdateNoteList reloads
+		if m.isActive && !m.tickerRunning {
+			m.tickerRunning = true
 			return m, tickRefresh()
 		}
 		return m, nil
@@ -246,6 +261,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if noteURI != "" || noteID != uuid.Nil {
 					return m, func() tea.Msg {
 						return common.LikeNoteMsg{
+							NoteURI: noteURI,
+							NoteID:  noteID,
+							IsLocal: !selectedPost.IsRemote,
+						}
+					}
+				}
+			}
+		case "b":
+			// Boost/unboost the selected post
+			if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+				selectedPost := m.Posts[m.Selected]
+				// Use ObjectURI (ActivityPub canonical ID) for proper federation
+				noteURI := selectedPost.ObjectURI
+				var noteID uuid.UUID
+
+				// For local posts without ObjectURI, use local: prefix with NoteId
+				if !selectedPost.IsRemote && selectedPost.NoteId != "" {
+					if id, err := uuid.Parse(selectedPost.NoteId); err == nil {
+						noteID = id
+						if noteURI == "" {
+							noteURI = "local:" + selectedPost.NoteId
+						}
+					}
+				}
+
+				// Send boost if we have either a URI or a note ID
+				if noteURI != "" || noteID != uuid.Nil {
+					return m, func() tea.Msg {
+						return common.BoostNoteMsg{
 							NoteURI: noteURI,
 							NoteID:  noteID,
 							IsLocal: !selectedPost.IsRemote,
@@ -412,6 +456,12 @@ func (m Model) View() string {
 
 					contentFormatted := selectedBg.Render(selectedContentStyle.Render(highlightedContent))
 					s.WriteString(timeFormatted + "\n")
+					// Show boost indicator if this is a boosted post
+					if post.BoostedBy != "" {
+						boostLine := fmt.Sprintf("🔁 %s boosted", post.BoostedBy)
+						boostFormatted := selectedBg.Render(selectedBoostIndicatorStyle.Render(boostLine))
+						s.WriteString(boostFormatted + "\n")
+					}
 					s.WriteString(authorFormatted + "\n")
 					s.WriteString(contentFormatted)
 				}
@@ -438,6 +488,12 @@ func (m Model) View() string {
 				contentFormatted := unselectedStyle.Render(contentStyle.Render(highlightedContent))
 
 				s.WriteString(timeFormatted + "\n")
+				// Show boost indicator if this is a boosted post
+				if post.BoostedBy != "" {
+					boostLine := fmt.Sprintf("🔁 %s boosted", post.BoostedBy)
+					boostFormatted := unselectedStyle.Render(boostIndicatorStyle.Render(boostLine))
+					s.WriteString(boostFormatted + "\n")
+				}
 				s.WriteString(authorFormatted + "\n")
 				s.WriteString(contentFormatted)
 			}

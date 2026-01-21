@@ -70,6 +70,11 @@
 
                     {{if .Posts}} {{range .Posts}}
                     <div class="post">
+                        {{if .BoostedBy}}
+                        <div class="boost-indicator">
+                            <span class="boost-icon">🔁</span> {{.BoostedBy}} boosted
+                        </div>
+                        {{end}}
                         <div class="post-meta">
                             {{if .IsRemote}}
                                 <a href="{{.ProfileURL}}" class="post-author remote-author" target="_blank" rel="noopener noreferrer">{{.Username}}</a>
@@ -89,12 +94,12 @@
                         {{if or (gt .ReplyCount 0) (gt .LikeCount 0) (gt .BoostCount 0)}}
                         <div class="post-footer">
                             {{if gt .LikeCount 0}}
-                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
+                                <span class="like-count engagement-trigger" data-type="likes" data-note-id="{{.NoteId}}" data-object-uri="{{.ObjectURI}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">⭐</span> {{.LikeCount}}
                                 </span>
                             {{end}}
                             {{if gt .BoostCount 0}}
-                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" data-object-uri="{{.PostURL}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
+                                <span class="boost-count engagement-trigger" data-type="boosts" data-note-id="{{.NoteId}}" data-object-uri="{{.ObjectURI}}" data-is-remote="{{.IsRemote}}" style="cursor: pointer;">
                                     <span class="icon">🔁</span> {{.BoostCount}}
                                 </span>
                             {{end}}

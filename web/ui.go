@@ -70,7 +70,8 @@ type PostView struct {
 	Username     string
 	UserDomain   string // Domain for remote users (empty for local)
 	ProfileURL   string // Full profile URL
-	PostURL      string // Permalink to the post (remote object_uri or local path)
+	PostURL      string // Permalink to the post (web URL for display)
+	ObjectURI    string // ActivityPub canonical URI (for API calls)
 	IsRemote     bool   // True if federated user
 	Message      string
 	MessageHTML  template.HTML // HTML-rendered message with clickable links
@@ -82,6 +83,7 @@ type PostView struct {
 	BoostCount   int       // Number of boosts on this post
 	Likers       []string  // Usernames who liked this post
 	Boosters     []string  // Usernames who boosted this post
+	BoostedBy    string    // If non-empty, this post was boosted by this user
 }
 
 // convertMarkdownToHTML converts markdown text to HTML
@@ -769,6 +771,7 @@ func HandleGlobalTimeline(c *gin.Context, conf *util.AppConfig) {
 			UserDomain:  post.UserDomain,
 			ProfileURL:  post.ProfileURL,
 			PostURL:     displayURL,
+			ObjectURI:   post.ObjectURI,
 			IsRemote:    post.IsRemote,
 			Message:     post.Message,
 			MessageHTML: template.HTML(messageHTML),
@@ -777,6 +780,7 @@ func HandleGlobalTimeline(c *gin.Context, conf *util.AppConfig) {
 			ReplyCount:  post.ReplyCount,
 			LikeCount:   post.LikeCount,
 			BoostCount:  post.BoostCount,
+			BoostedBy:   post.BoostedBy,
 		}
 		postViews = append(postViews, postView)
 	}
