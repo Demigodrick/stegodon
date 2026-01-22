@@ -53,22 +53,24 @@ jobs:
 
           # Build prompt for Claude
           RELEASE_LINK="[$TAG_NAME](https://github.com/deemkeen/stegodon/releases/tag/$TAG_NAME)"
-          PROMPT="You are writing a release announcement for Stegodon, an SSH-first fediverse microblogging server written in Go.
+          read -r -d '' PROMPT << PROMPT_EOF || true
+          You are writing a release announcement for Stegodon, an SSH-first fediverse microblogging server written in Go.
 
-Write a brief, engaging announcement post for version $TAG_NAME. The post will be published on the fediverse (like Mastodon).
+          Write a brief, engaging announcement post for version $TAG_NAME. The post will be published on the fediverse (like Mastodon).
 
-Requirements:
-- Start with the 🦣 emoji
-- Keep it under 260 characters
-- Mention 1-2 key highlights from the changes
-- Use this exact markdown link for the version number inline: $RELEASE_LINK (e.g. 'Stegodon $RELEASE_LINK brings...')
-- Be concise and enthusiastic but not over the top
-- You can use relevant hashtags like #fediverse #activitypub #golang
+          Requirements:
+          - Start with a mastodon emoji
+          - Keep it under 260 characters
+          - Mention 1-2 key highlights from the changes
+          - Use this exact markdown link for the version number inline: $RELEASE_LINK (e.g. Stegodon $RELEASE_LINK brings...)
+          - Be concise and enthusiastic but not over the top
+          - You can use relevant hashtags like #fediverse #activitypub #golang
 
-Changes in this release:
-$CHANGES
+          Changes in this release:
+          $CHANGES
 
-Respond with ONLY the post text, nothing else."
+          Respond with ONLY the post text, nothing else.
+          PROMPT_EOF
 
           # Call Claude API
           RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
