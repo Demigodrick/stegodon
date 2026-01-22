@@ -188,8 +188,11 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 		}
 	}
 
+	// Store activity record for non-Create/non-Announce types immediately.
+	// Create activities are stored in handleCreateActivityWithDeps AFTER acceptance check.
+	// Announce activities handle their own storage.
 	var activityRecord *domain.Activity
-	if activity.Type != "Announce" {
+	if activity.Type != "Announce" && activity.Type != "Create" {
 		activityRecord = &domain.Activity{
 			Id:           uuid.New(),
 			ActivityURI:  activity.ID,
@@ -488,6 +491,7 @@ func handleCreateActivity(body []byte, username string, isFromRelay bool) error 
 
 // handleCreateActivityWithDeps processes a Create activity (incoming post/note).
 // This version accepts dependencies for testing.
+// Activity is stored AFTER acceptance check passes (not before like other activity types).
 func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool, deps *InboxDeps) error {
 	var create struct {
 		ID     string `json:"id"`
@@ -495,6 +499,7 @@ func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool
 		Actor  string `json:"actor"`
 		Object struct {
 			ID           string `json:"id"`
+			URL          string `json:"url"`
 			Type         string `json:"type"`
 			Content      string `json:"content"`
 			Published    string `json:"published"`
@@ -569,6 +574,40 @@ func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool
 		}
 	}
 
+	// Acceptance check passed - now store the activity
+	// Check for duplicate first
+	err, existingActivity := database.ReadActivityByURI(create.ID)
+	if err == nil && existingActivity != nil {
+		log.Printf("Inbox: Create activity %s already exists, skipping", create.ID)
+		return nil
+	}
+
+	activityRecord := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  create.ID,
+		ActivityType: "Create",
+		ActorURI:     create.Actor,
+		ObjectURI:    create.Object.ID,
+		ObjectURL:    create.Object.URL,
+		InReplyTo:    create.Object.InReplyTo,
+		RawJSON:      string(body),
+		Processed:    true, // Mark as processed since we're handling it now
+		Local:        false,
+		FromRelay:    isFromRelay,
+		CreatedAt:    time.Now(),
+	}
+
+	if err := database.CreateActivity(activityRecord); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			log.Printf("Inbox: Create activity %s already processed", create.ID)
+			return nil
+		}
+		log.Printf("Inbox: Failed to store Create activity: %v", err)
+		// Continue processing - notifications etc. can still work
+	} else {
+		log.Printf("Inbox: Stored Create activity %s from %s", create.ID, create.Actor)
+	}
+
 	// Increment reply count on the parent post if this is a reply
 	// But skip if this activity is a duplicate of a local note (our own post coming back via federation)
 	if create.Object.InReplyTo != "" {
@@ -620,61 +659,53 @@ func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool
 	// Process tags (hashtags and mentions) from the incoming activity
 	// Store mentions in the database for future notification support
 	if len(create.Object.Tag) > 0 {
-		// Get the activity record to link mentions to it
-		err, activityRecord := database.ReadActivityByObjectURI(create.Object.ID)
-		if err != nil || activityRecord == nil {
-			log.Printf("Inbox: Could not find activity record for %s, skipping mention storage", create.Object.ID)
-		}
-
 		for _, tag := range create.Object.Tag {
 			switch tag.Type {
 			case "Mention":
 				log.Printf("Inbox: Post mentions %s (%s)", tag.Name, tag.Href)
 
 				// Store the mention in the database
-				if activityRecord != nil {
-					// Parse username and domain from @username@domain format
-					mentionName := strings.TrimPrefix(tag.Name, "@")
-					parts := strings.SplitN(mentionName, "@", 2)
-					if len(parts) == 2 {
-						mention := &domain.NoteMention{
-							Id:                uuid.New(),
-							NoteId:            activityRecord.Id, // Use activity ID as the note reference
-							MentionedActorURI: tag.Href,
-							MentionedUsername: parts[0],
-							MentionedDomain:   parts[1],
-							CreatedAt:         time.Now(),
-						}
-						if err := database.CreateNoteMention(mention); err != nil {
-							log.Printf("Inbox: Failed to store mention %s: %v", tag.Name, err)
-						} else {
-							log.Printf("Inbox: Stored mention %s for activity %s", tag.Name, activityRecord.Id)
+				// Parse username and domain from @username@domain format
+				mentionName := strings.TrimPrefix(tag.Name, "@")
+				parts := strings.SplitN(mentionName, "@", 2)
+				if len(parts) == 2 {
+					mention := &domain.NoteMention{
+						Id:                uuid.New(),
+						NoteId:            activityRecord.Id, // Use activity ID as the note reference
+						MentionedActorURI: tag.Href,
+						MentionedUsername: parts[0],
+						MentionedDomain:   parts[1],
+						CreatedAt:         time.Now(),
+					}
+					if err := database.CreateNoteMention(mention); err != nil {
+						log.Printf("Inbox: Failed to store mention %s: %v", tag.Name, err)
+					} else {
+						log.Printf("Inbox: Stored mention %s for activity %s", tag.Name, activityRecord.Id)
 
-							// Create notification if the mentioned user is local
-							// Need to check if this domain matches our local domain
-							conf, confErr := util.ReadConf()
-							if confErr == nil && conf != nil && parts[1] == conf.Conf.SslDomain {
-								err, mentionedUser := database.ReadAccByUsername(parts[0])
-								if err == nil && mentionedUser != nil {
-									preview := util.StripHTMLTags(create.Object.Content)
-									if len(preview) > 100 {
-										preview = preview[:100] + "..."
-									}
-									notification := &domain.Notification{
-										Id:               uuid.New(),
-										AccountId:        mentionedUser.Id,
-										NotificationType: domain.NotificationMention,
-										ActorId:          remoteActor.Id,
-										ActorUsername:    remoteActor.Username,
-										ActorDomain:      remoteActor.Domain,
-										NoteURI:          create.Object.ID,
-										NotePreview:      preview,
-										Read:             false,
-										CreatedAt:        time.Now(),
-									}
-									if err := database.CreateNotification(notification); err != nil {
-										log.Printf("Inbox: Failed to create mention notification: %v", err)
-									}
+						// Create notification if the mentioned user is local
+						// Need to check if this domain matches our local domain
+						conf, confErr := util.ReadConf()
+						if confErr == nil && conf != nil && parts[1] == conf.Conf.SslDomain {
+							err, mentionedUser := database.ReadAccByUsername(parts[0])
+							if err == nil && mentionedUser != nil {
+								preview := util.StripHTMLTags(create.Object.Content)
+								if len(preview) > 100 {
+									preview = preview[:100] + "..."
+								}
+								notification := &domain.Notification{
+									Id:               uuid.New(),
+									AccountId:        mentionedUser.Id,
+									NotificationType: domain.NotificationMention,
+									ActorId:          remoteActor.Id,
+									ActorUsername:    remoteActor.Username,
+									ActorDomain:      remoteActor.Domain,
+									NoteURI:          create.Object.ID,
+									NotePreview:      preview,
+									Read:             false,
+									CreatedAt:        time.Now(),
+								}
+								if err := database.CreateNotification(notification); err != nil {
+									log.Printf("Inbox: Failed to create mention notification: %v", err)
 								}
 							}
 						}
@@ -686,9 +717,6 @@ func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool
 			}
 		}
 	}
-
-	// Note: Activity is already stored in HandleInbox before this function is called
-	// No need to store it again here
 
 	return nil
 }

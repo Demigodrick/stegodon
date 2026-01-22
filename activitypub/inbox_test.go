@@ -1984,6 +1984,365 @@ func TestHandleCreateActivityWithDeps_NoReplyNoIncrement(t *testing.T) {
 	}
 }
 
+// TestHandleCreateActivityWithDeps_NotFollowing_NoStorage tests that Create activities
+// from non-followed actors are NOT stored in the database (bug fix verification)
+func TestHandleCreateActivityWithDeps_NotFollowing_NoStorage(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// No follow relationship - should be rejected
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	activityURI := "https://remote.example.com/activities/create-spam"
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "` + activityURI + `",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/spam-789",
+			"type": "Note",
+			"content": "Spam message from unfollowed user!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
+	if err == nil {
+		t.Fatal("Expected error for Create from non-followed actor")
+	}
+
+	// Verify activity was NOT stored in the database
+	if len(mockDB.Activities) != 0 {
+		t.Errorf("Expected 0 activities stored for rejected Create, got %d", len(mockDB.Activities))
+	}
+
+	// Also verify via ActivityURI index
+	_, storedActivity := mockDB.ReadActivityByURI(activityURI)
+	if storedActivity != nil {
+		t.Errorf("Activity should NOT be stored for non-followed actor, but found: %+v", storedActivity)
+	}
+}
+
+// TestHandleCreateActivityWithDeps_Following_ActivityStored tests that Create activities
+// from followed actors ARE stored in the database
+func TestHandleCreateActivityWithDeps_Following_ActivityStored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	activityURI := "https://remote.example.com/activities/create-456"
+	objectURI := "https://remote.example.com/notes/789"
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "` + activityURI + `",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "` + objectURI + `",
+			"url": "https://remote.example.com/@bob/789",
+			"type": "Note",
+			"content": "Hello from a followed user!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps failed: %v", err)
+	}
+
+	// Verify activity WAS stored in the database
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity stored, got %d", len(mockDB.Activities))
+	}
+
+	// Verify via ActivityURI index
+	_, storedActivity := mockDB.ReadActivityByURI(activityURI)
+	if storedActivity == nil {
+		t.Fatal("Activity should be stored for followed actor")
+	}
+
+	// Verify activity fields
+	if storedActivity.ActivityURI != activityURI {
+		t.Errorf("Expected ActivityURI %s, got %s", activityURI, storedActivity.ActivityURI)
+	}
+	if storedActivity.ObjectURI != objectURI {
+		t.Errorf("Expected ObjectURI %s, got %s", objectURI, storedActivity.ObjectURI)
+	}
+	if storedActivity.ObjectURL != "https://remote.example.com/@bob/789" {
+		t.Errorf("Expected ObjectURL https://remote.example.com/@bob/789, got %s", storedActivity.ObjectURL)
+	}
+	if storedActivity.ActivityType != "Create" {
+		t.Errorf("Expected ActivityType Create, got %s", storedActivity.ActivityType)
+	}
+	if !storedActivity.Processed {
+		t.Error("Expected activity to be marked as Processed")
+	}
+	if storedActivity.FromRelay {
+		t.Error("Expected FromRelay to be false")
+	}
+}
+
+// TestHandleCreateActivityWithDeps_Relay_ActivityStored tests that relay content
+// is stored even without a follow relationship
+func TestHandleCreateActivityWithDeps_Relay_ActivityStored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// No follow relationship - but this is relay content (isFromRelay=true)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	activityURI := "https://remote.example.com/activities/relay-create-456"
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "` + activityURI + `",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/relay-789",
+			"type": "Note",
+			"content": "Hello from relay!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	// isFromRelay=true should bypass the follow check and store the activity
+	err := handleCreateActivityWithDeps(createBody, "alice", true, deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps with isFromRelay=true failed: %v", err)
+	}
+
+	// Verify activity WAS stored in the database
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity stored for relay content, got %d", len(mockDB.Activities))
+	}
+
+	// Verify FromRelay flag is set
+	_, storedActivity := mockDB.ReadActivityByURI(activityURI)
+	if storedActivity == nil {
+		t.Fatal("Activity should be stored for relay content")
+	}
+	if !storedActivity.FromRelay {
+		t.Error("Expected FromRelay to be true for relay content")
+	}
+}
+
+// TestHandleCreateActivityWithDeps_ReplyToOurPost_ActivityStored tests that replies
+// to our own posts are stored even without a follow relationship
+func TestHandleCreateActivityWithDeps_ReplyToOurPost_ActivityStored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Add a local note that will be replied to
+	parentNoteURI := "https://local.example.com/notes/parent-123"
+	parentNote := &domain.Note{
+		Id:        uuid.New(),
+		CreatedBy: "alice",
+		Message:   "Original post",
+		ObjectURI: parentNoteURI,
+	}
+	mockDB.AddNote(parentNote)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// No follow relationship - but this is a reply to our post
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	activityURI := "https://remote.example.com/activities/reply-456"
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "` + activityURI + `",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/reply-789",
+			"type": "Note",
+			"content": "This is a reply to your post!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob",
+			"inReplyTo": "` + parentNoteURI + `"
+		}
+	}`)
+
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps for reply to our post failed: %v", err)
+	}
+
+	// Verify activity WAS stored in the database
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity stored for reply to our post, got %d", len(mockDB.Activities))
+	}
+
+	// Verify via ActivityURI index
+	_, storedActivity := mockDB.ReadActivityByURI(activityURI)
+	if storedActivity == nil {
+		t.Fatal("Activity should be stored for reply to our post")
+	}
+	if storedActivity.InReplyTo != parentNoteURI {
+		t.Errorf("Expected InReplyTo %s, got %s", parentNoteURI, storedActivity.InReplyTo)
+	}
+}
+
+// TestHandleCreateActivityWithDeps_DuplicateActivity_Skipped tests that duplicate
+// activities are gracefully handled
+func TestHandleCreateActivityWithDeps_DuplicateActivity_Skipped(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	remoteActor := &domain.RemoteAccount{
+		Id:       uuid.New(),
+		Username: "bob",
+		Domain:   "remote.example.com",
+		ActorURI: "https://remote.example.com/users/bob",
+		InboxURI: "https://remote.example.com/users/bob/inbox",
+	}
+	mockDB.AddRemoteAccount(remoteActor)
+
+	// Add follow relationship
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: remoteActor.Id,
+		URI:             "https://local.example.com/activities/follow-123",
+		Accepted:        true,
+		CreatedAt:       time.Now(),
+	}
+	mockDB.AddFollow(follow)
+
+	// Pre-add the activity (simulating it was already processed)
+	activityURI := "https://remote.example.com/activities/create-existing"
+	existingActivity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  activityURI,
+		ActivityType: "Create",
+		ActorURI:     "https://remote.example.com/users/bob",
+		ObjectURI:    "https://remote.example.com/notes/existing-789",
+		Processed:    true,
+	}
+	mockDB.AddActivity(existingActivity)
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	createBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "` + activityURI + `",
+		"type": "Create",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/notes/existing-789",
+			"type": "Note",
+			"content": "Duplicate message!",
+			"published": "2025-01-01T00:00:00Z",
+			"attributedTo": "https://remote.example.com/users/bob"
+		}
+	}`)
+
+	// Should return nil (success) for duplicate, not error
+	err := handleCreateActivityWithDeps(createBody, "alice", false, deps)
+	if err != nil {
+		t.Fatalf("handleCreateActivityWithDeps should not error for duplicate, got: %v", err)
+	}
+
+	// Verify only the original activity exists (no duplicate created)
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (original only), got %d", len(mockDB.Activities))
+	}
+}
+
 // TestHandleDeleteActivityWithDeps_PostDeletion tests successful post deletion
 func TestHandleDeleteActivityWithDeps_PostDeletion(t *testing.T) {
 	mockDB := NewMockDatabase()
