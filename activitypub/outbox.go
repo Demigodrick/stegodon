@@ -119,8 +119,9 @@ func SendCreateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 	createID := fmt.Sprintf("https://%s/activities/%s", conf.Conf.SslDomain, uuid.New().String())
 	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
 
-	// Convert Markdown links to HTML for ActivityPub content
+	// Convert Markdown links and raw URLs to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+	contentHTML = util.LinkifyRawURLsHTML(contentHTML)
 	// Convert hashtags to ActivityPub-compliant HTML links
 	contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
 
@@ -365,8 +366,9 @@ func SendUpdateWithDeps(note *domain.Note, localAccount *domain.Account, conf *u
 		updatedTime = *note.EditedAt
 	}
 
-	// Convert Markdown links to HTML for ActivityPub content
+	// Convert Markdown links and raw URLs to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+	contentHTML = util.LinkifyRawURLsHTML(contentHTML)
 	// Convert hashtags to ActivityPub-compliant HTML links
 	contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
 

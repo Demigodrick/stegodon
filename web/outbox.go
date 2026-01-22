@@ -149,8 +149,9 @@ func makeNoteActivities(notes []domain.Note, actor string, conf *util.AppConfig)
 			objectURI = fmt.Sprintf("%s/notes/%s", baseURL, note.Id.String())
 		}
 
-		// Convert Markdown links to HTML for ActivityPub content
+		// Convert Markdown links and raw URLs to HTML for ActivityPub content
 		contentHTML := util.MarkdownLinksToHTML(note.Message)
+		contentHTML = util.LinkifyRawURLsHTML(contentHTML)
 		// Convert hashtags to ActivityPub-compliant HTML links
 		contentHTML = util.HashtagsToActivityPubHTML(contentHTML, baseURL)
 

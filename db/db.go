@@ -1279,6 +1279,10 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 
 		// Extract content from raw JSON
 		content := extractContentFromJSON(rawJSON)
+		// If content is empty but we have a URL, show the URL as content
+		if content == "" && objectURL != "" {
+			content = objectURL
+		}
 
 		posts = append(posts, domain.HomePost{
 			ID:         activityId,
@@ -1331,6 +1335,10 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 
 		// Extract content from raw JSON
 		content := extractContentFromJSON(rawJSON)
+		// If content is empty but we have a URL, show the URL as content
+		if content == "" && objectURL != "" {
+			content = objectURL
+		}
 
 		// Extract author info from actorURI (format: https://domain/users/username)
 		author := extractAuthorFromActorURI(actorURI)
@@ -1490,6 +1498,10 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 
 		// Extract content from raw JSON
 		content := extractContentFromJSON(rawJSON)
+		// If content is empty but we have a URL, show the URL as content
+		if content == "" && objectURL != "" {
+			content = objectURL
+		}
 
 		posts = append(posts, domain.HomePost{
 			ID:         activityId,
@@ -4682,6 +4694,11 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 			// Convert ActivityPub object URI to HTML URL for display
 			if post.ObjectURL == "" {
 				post.ObjectURL = convertActivityPubURLToHTML(post.ObjectURI, post.ProfileURL)
+			}
+			// If content is empty but we have a URL, show the URL as content
+			// This handles posts that are just links (URL-only posts)
+			if post.Message == "" && post.ObjectURL != "" {
+				post.Message = post.ObjectURL
 			}
 		} else {
 			post.Message = message

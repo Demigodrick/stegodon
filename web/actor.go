@@ -136,8 +136,9 @@ func GetNoteObject(noteId uuid.UUID, conf *util.AppConfig) (error, string) {
 	noteURI := fmt.Sprintf("https://%s/notes/%s", conf.Conf.SslDomain, note.Id.String())
 	baseURL := fmt.Sprintf("https://%s", conf.Conf.SslDomain)
 
-	// Convert Markdown links to HTML for ActivityPub content
+	// Convert Markdown links and raw URLs to HTML for ActivityPub content
 	contentHTML := util.MarkdownLinksToHTML(note.Message)
+	contentHTML = util.LinkifyRawURLsHTML(contentHTML)
 
 	// Build cc list - start with followers
 	ccList := []string{

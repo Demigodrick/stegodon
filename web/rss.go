@@ -73,8 +73,9 @@ func GetRSS(conf *util.AppConfig, username string) (string, error) {
 				continue
 			}
 			email := fmt.Sprintf("%s@stegodon", note.CreatedBy)
-			// Convert Markdown links to HTML for RSS feed
+			// Convert Markdown links and raw URLs to HTML for RSS feed
 			contentHTML := util.MarkdownLinksToHTML(note.Message)
+			contentHTML = util.LinkifyRawURLsHTML(contentHTML)
 			feedItems = append(feedItems,
 				&feeds.Item{
 					Id:      note.Id.String(),

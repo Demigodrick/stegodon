@@ -268,8 +268,9 @@ func HandleIndex(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
-		// First convert markdown links, then highlight hashtags and mentions
+		// First convert markdown links, then raw URLs, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.LinkifyRawURLsHTML(messageHTML)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
@@ -394,8 +395,9 @@ func HandleProfile(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView
 	posts := make([]PostView, 0, len(paginatedNotes))
 	for _, note := range paginatedNotes {
-		// First convert markdown links, then highlight hashtags and mentions
+		// First convert markdown links, then raw URLs, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.LinkifyRawURLsHTML(messageHTML)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
@@ -533,8 +535,9 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		host = conf.Conf.SslDomain
 	}
 
-	// First convert markdown links, then highlight hashtags and mentions
+	// First convert markdown links, then raw URLs, then highlight hashtags and mentions
 	messageHTML := util.MarkdownLinksToHTML(note.Message)
+	messageHTML = util.LinkifyRawURLsHTML(messageHTML)
 	messageHTML = util.HighlightHashtagsHTML(messageHTML)
 	messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
@@ -566,6 +569,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 		err, parentNote := database.ReadNoteByURI(note.InReplyToURI)
 		if err == nil && parentNote != nil {
 			parentMessageHTML := util.MarkdownLinksToHTML(parentNote.Message)
+			parentMessageHTML = util.LinkifyRawURLsHTML(parentMessageHTML)
 			parentMessageHTML = util.HighlightHashtagsHTML(parentMessageHTML)
 			parentMessageHTML = util.HighlightMentionsHTML(parentMessageHTML, conf.Conf.SslDomain)
 
@@ -591,6 +595,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 	if err == nil && replyNotes != nil {
 		for _, replyNote := range *replyNotes {
 			replyMessageHTML := util.MarkdownLinksToHTML(replyNote.Message)
+			replyMessageHTML = util.LinkifyRawURLsHTML(replyMessageHTML)
 			replyMessageHTML = util.HighlightHashtagsHTML(replyMessageHTML)
 			replyMessageHTML = util.HighlightMentionsHTML(replyMessageHTML, conf.Conf.SslDomain)
 
@@ -639,6 +644,7 @@ func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
 
 				// Process content for display
 				replyMessageHTML := util.MarkdownLinksToHTML(replyContent)
+				replyMessageHTML = util.LinkifyRawURLsHTML(replyMessageHTML)
 				replyMessageHTML = util.HighlightHashtagsHTML(replyMessageHTML)
 				replyMessageHTML = util.HighlightMentionsHTML(replyMessageHTML, conf.Conf.SslDomain)
 
@@ -756,6 +762,7 @@ func HandleGlobalTimeline(c *gin.Context, conf *util.AppConfig) {
 	for _, post := range *posts {
 		// Process message HTML
 		messageHTML := util.MarkdownLinksToHTML(post.Message)
+		messageHTML = util.LinkifyRawURLsHTML(messageHTML)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
@@ -867,8 +874,9 @@ func HandleTagFeed(c *gin.Context, conf *util.AppConfig) {
 	// Convert to PostView with hashtag-highlighted content
 	posts := make([]PostView, 0, len(*notes))
 	for _, note := range *notes {
-		// First convert markdown links, then highlight hashtags and mentions
+		// First convert markdown links, then raw URLs, then highlight hashtags and mentions
 		messageHTML := util.MarkdownLinksToHTML(note.Message)
+		messageHTML = util.LinkifyRawURLsHTML(messageHTML)
 		messageHTML = util.HighlightHashtagsHTML(messageHTML)
 		messageHTML = util.HighlightMentionsHTML(messageHTML, conf.Conf.SslDomain)
 
