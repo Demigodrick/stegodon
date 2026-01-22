@@ -68,6 +68,8 @@ type Database interface {
 	IsRemoteAccountFollowed(remoteAccountId uuid.UUID) (bool, error)
 	CreateBoostFromRemote(boost *domain.Boost) error
 	HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (bool, error)
+	DeleteBoostByRemoteAccountAndObjectURI(remoteAccountId uuid.UUID, objectURI string) error
+	DecrementBoostCountByObjectURI(objectURI string) error
 
 	// Delivery queue operations
 	EnqueueDelivery(item *domain.DeliveryQueueItem) error

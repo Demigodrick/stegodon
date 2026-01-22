@@ -451,30 +451,55 @@ func handleUndoActivityWithDeps(body []byte, username string, remoteActor *domai
 		log.Printf("Inbox: Removed like from %s@%s on note %s", remoteActor.Username, remoteActor.Domain, note.Id)
 	} else if obj.Type == "Announce" {
 		// Handle Undo Announce (unboost)
-		// Find the note being unboosted
-		err, note := database.ReadNoteByURI(obj.Object)
-		if err != nil || note == nil {
-			log.Printf("Inbox: Note not found for Undo Announce object %s", obj.Object)
-			return nil // Not an error - note might not exist locally
-		}
-
 		// Verify the actor matches (they can only undo their own boosts)
 		if remoteActor.ActorURI != undo.Actor {
 			return fmt.Errorf("unauthorized: actor %s cannot undo boost", undo.Actor)
 		}
 
-		// Delete the boost
-		if err := database.DeleteBoostByAccountAndNote(remoteActor.Id, note.Id); err != nil {
-			log.Printf("Inbox: Failed to delete boost: %v", err)
-			return nil // Don't fail if boost doesn't exist
+		// First try to find the note in local notes table
+		err, note := database.ReadNoteByURI(obj.Object)
+		if err == nil && note != nil {
+			// Local note - delete boost by note ID
+			if err := database.DeleteBoostByAccountAndNote(remoteActor.Id, note.Id); err != nil {
+				log.Printf("Inbox: Failed to delete boost: %v", err)
+				return nil
+			}
+
+			// Decrement boost count on the note
+			if err := database.DecrementBoostCountByNoteId(note.Id); err != nil {
+				log.Printf("Inbox: Failed to decrement boost count: %v", err)
+			}
+
+			log.Printf("Inbox: Removed boost from %s@%s on local note %s", remoteActor.Username, remoteActor.Domain, note.Id)
+			return nil
 		}
 
-		// Decrement boost count
-		if err := database.DecrementBoostCountByNoteId(note.Id); err != nil {
-			log.Printf("Inbox: Failed to decrement boost count: %v", err)
+		// Note not in local notes table - check if it's a remote post (activity) that was boosted
+		// This handles boosts from followed remote users on remote posts
+		exists, err := database.HasBoostFromRemote(remoteActor.Id, obj.Object)
+		if err != nil {
+			log.Printf("Inbox: Error checking for remote boost: %v", err)
+			return nil
 		}
 
-		log.Printf("Inbox: Removed boost from %s@%s on note %s", remoteActor.Username, remoteActor.Domain, note.Id)
+		if exists {
+			// Delete the boost by remote account and object URI
+			if err := database.DeleteBoostByRemoteAccountAndObjectURI(remoteActor.Id, obj.Object); err != nil {
+				log.Printf("Inbox: Failed to delete remote boost: %v", err)
+				return nil
+			}
+
+			// Decrement boost count on the activity
+			if err := database.DecrementBoostCountByObjectURI(obj.Object); err != nil {
+				log.Printf("Inbox: Failed to decrement boost count on activity: %v", err)
+			}
+
+			log.Printf("Inbox: Removed boost from %s@%s on remote post %s", remoteActor.Username, remoteActor.Domain, obj.Object)
+			return nil
+		}
+
+		// Neither local note nor remote boost found - that's fine, just log and continue
+		log.Printf("Inbox: No boost found for Undo Announce object %s from %s@%s", obj.Object, remoteActor.Username, remoteActor.Domain)
 	}
 
 	return nil

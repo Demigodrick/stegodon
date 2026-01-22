@@ -711,6 +711,38 @@ func (m *MockDatabase) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI s
 	return false, nil
 }
 
+func (m *MockDatabase) DeleteBoostByRemoteAccountAndObjectURI(remoteAccountId uuid.UUID, objectURI string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	for id, boost := range m.Boosts {
+		if boost.RemoteAccountId == remoteAccountId && boost.ObjectURI == objectURI {
+			delete(m.Boosts, id)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *MockDatabase) DecrementBoostCountByObjectURI(objectURI string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	for _, activity := range m.Activities {
+		if activity.ObjectURI == objectURI {
+			if activity.BoostCount > 0 {
+				activity.BoostCount--
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // Relay operations
 
 func (m *MockDatabase) CreateRelay(relay *domain.Relay) error {

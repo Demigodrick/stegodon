@@ -192,6 +192,14 @@ func (w *DBWrapper) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI stri
 	return w.db.HasBoostFromRemote(remoteAccountId, objectURI)
 }
 
+func (w *DBWrapper) DeleteBoostByRemoteAccountAndObjectURI(remoteAccountId uuid.UUID, objectURI string) error {
+	return w.db.DeleteBoostByRemoteAccountAndObjectURI(remoteAccountId, objectURI)
+}
+
+func (w *DBWrapper) DecrementBoostCountByObjectURI(objectURI string) error {
+	return w.db.DecrementBoostCountByObjectURI(objectURI)
+}
+
 // Delivery queue operations
 
 func (w *DBWrapper) EnqueueDelivery(item *domain.DeliveryQueueItem) error {
