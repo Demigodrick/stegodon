@@ -42,11 +42,13 @@ type Like struct {
 
 // Boost represents a boost/reblog/announce on a note
 type Boost struct {
-	Id        uuid.UUID
-	AccountId uuid.UUID // Who boosted (can be local or remote)
-	NoteId    uuid.UUID // Which note was boosted
-	URI       string    // ActivityPub Announce activity URI
-	CreatedAt time.Time
+	Id              uuid.UUID
+	AccountId       uuid.UUID // Who boosted (local account, nil for remote booster)
+	RemoteAccountId uuid.UUID // Who boosted (remote account, nil for local booster)
+	NoteId          uuid.UUID // Which local note was boosted (nil if boosting remote post)
+	ObjectURI       string    // URI of the boosted object (for remote posts)
+	URI             string    // ActivityPub Announce activity URI
+	CreatedAt       time.Time
 }
 
 // Activity represents an ActivityPub activity (for logging/deduplication)

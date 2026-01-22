@@ -93,8 +93,10 @@ const (
 	// Boosts/announces table
 	sqlCreateBoostsTable = `CREATE TABLE IF NOT EXISTS boosts (
 		id TEXT NOT NULL PRIMARY KEY,
-		account_id TEXT NOT NULL,
+		account_id TEXT,
+		remote_account_id TEXT,
 		note_id TEXT NOT NULL,
+		object_uri TEXT,
 		uri TEXT NOT NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(account_id, note_id)
@@ -104,6 +106,8 @@ const (
 		CREATE INDEX IF NOT EXISTS idx_boosts_note_id ON boosts(note_id);
 		CREATE INDEX IF NOT EXISTS idx_boosts_account_id ON boosts(account_id);
 		CREATE INDEX IF NOT EXISTS idx_boosts_object_uri ON boosts(object_uri);
+		CREATE INDEX IF NOT EXISTS idx_boosts_remote_account_id ON boosts(remote_account_id);
+		CREATE INDEX IF NOT EXISTS idx_boosts_remote_created ON boosts(remote_account_id, created_at DESC);
 	`
 
 	// Delivery queue table
@@ -482,6 +486,11 @@ func (db *DB) extendExistingTables(tx *sql.Tx) {
 
 	// Add web_enabled column to server_message table for separate web UI toggle
 	tx.Exec("ALTER TABLE server_message ADD COLUMN web_enabled INTEGER NOT NULL DEFAULT 1")
+
+	// Add remote_account_id column to boosts table for tracking boosts from remote followed users
+	tx.Exec("ALTER TABLE boosts ADD COLUMN remote_account_id TEXT")
+	tx.Exec("CREATE INDEX IF NOT EXISTS idx_boosts_remote_account_id ON boosts(remote_account_id)")
+	tx.Exec("CREATE INDEX IF NOT EXISTS idx_boosts_remote_created ON boosts(remote_account_id, created_at DESC)")
 
 	log.Println("Extended existing tables with new columns")
 }

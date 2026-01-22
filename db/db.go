@@ -1510,6 +1510,72 @@ func (db *DB) ReadHomeTimelinePosts(accountId uuid.UUID, limit int) (error, *[]d
 		return err, &posts
 	}
 
+	// Fetch boosts from followed REMOTE users (remote_account_id is set)
+	// These are boosts where the booster is a remote user that the current user follows
+	remoteBoosterRows, err := db.db.Query(`
+		SELECT act.id, act.actor_uri, act.object_uri, COALESCE(act.object_url, '') as object_url,
+		       act.raw_json, b.created_at as boost_time, ra_author.username, ra_author.domain,
+		       COALESCE(act.reply_count, 0) as reply_count, COALESCE(act.like_count, 0) as like_count,
+		       COALESCE(act.boost_count, 0) as boost_count,
+		       ra_booster.username as booster_username, ra_booster.domain as booster_domain
+		FROM boosts b
+		INNER JOIN remote_accounts ra_booster ON ra_booster.id = b.remote_account_id
+		INNER JOIN activities act ON act.object_uri = b.object_uri
+		INNER JOIN remote_accounts ra_author ON ra_author.actor_uri = act.actor_uri
+		INNER JOIN follows f ON f.target_account_id = b.remote_account_id AND f.account_id = ? AND f.accepted = 1
+		WHERE b.remote_account_id IS NOT NULL AND b.remote_account_id != ''
+		AND b.object_uri IS NOT NULL AND b.object_uri != ''
+		ORDER BY b.created_at DESC LIMIT ?`,
+		accountId.String(), limit)
+	if err != nil {
+		return err, &posts
+	}
+	defer remoteBoosterRows.Close()
+
+	for remoteBoosterRows.Next() {
+		var idStr string
+		var actorURI string
+		var objectURI string
+		var objectURL string
+		var rawJSON string
+		var createdAtStr string
+		var username string
+		var remDomain string
+		var replyCount int
+		var likeCount int
+		var boostCount int
+		var boosterUsername string
+		var boosterDomain string
+
+		if err := remoteBoosterRows.Scan(&idStr, &actorURI, &objectURI, &objectURL, &rawJSON, &createdAtStr, &username, &remDomain, &replyCount, &likeCount, &boostCount, &boosterUsername, &boosterDomain); err != nil {
+			return err, &posts
+		}
+
+		activityId, _ := uuid.Parse(idStr)
+		parsedTime, _ := parseTimestamp(createdAtStr)
+
+		// Extract content from raw JSON
+		content := extractContentFromJSON(rawJSON)
+
+		posts = append(posts, domain.HomePost{
+			ID:         activityId,
+			Author:     "@" + username + "@" + remDomain,
+			Content:    content,
+			Time:       parsedTime,
+			ObjectURI:  objectURI,
+			ObjectURL:  objectURL,
+			IsLocal:    false,
+			NoteID:     uuid.Nil,
+			ReplyCount: replyCount,
+			LikeCount:  likeCount,
+			BoostCount: boostCount,
+			BoostedBy:  "@" + boosterUsername + "@" + boosterDomain,
+		})
+	}
+	if err = remoteBoosterRows.Err(); err != nil {
+		return err, &posts
+	}
+
 	// Deduplicate posts - prefer non-boosted version (original) over boosted
 	// Use a map to track seen posts by ID
 	seen := make(map[uuid.UUID]int) // maps ID to index in posts slice
@@ -3124,6 +3190,65 @@ func (db *DB) DeleteBoostByAccountAndObjectURI(accountId uuid.UUID, objectURI st
 	})
 }
 
+// IsRemoteAccountFollowed checks if any local user follows the given remote account
+func (db *DB) IsRemoteAccountFollowed(remoteAccountId uuid.UUID) (bool, error) {
+	var exists int
+	// Check if any local account follows this remote account
+	// Local accounts have their id in the accounts table, remote accounts in remote_accounts
+	// Follows: account_id is the follower (local), target_account_id is who they follow (remote)
+	// Uses LIMIT 1 for early termination - we only need to know if at least one exists
+	err := db.db.QueryRow(`
+		SELECT 1
+		FROM follows f
+		INNER JOIN accounts a ON a.id = f.account_id
+		WHERE f.target_account_id = ? AND f.accepted = 1
+		LIMIT 1`,
+		remoteAccountId.String()).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CreateBoostFromRemote creates a boost record with remote_account_id set (for boosts from followed remote users)
+func (db *DB) CreateBoostFromRemote(boost *domain.Boost) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		// Use a deterministic UUID derived from the object_uri as the note_id placeholder
+		// This ensures the unique constraint works correctly for remote posts
+		noteIdStr := ""
+		if boost.NoteId != uuid.Nil {
+			noteIdStr = boost.NoteId.String()
+		} else if boost.ObjectURI != "" {
+			// Generate deterministic placeholder for remote posts
+			placeholderNoteId := uuid.NewSHA1(uuid.NameSpaceURL, []byte(boost.ObjectURI))
+			noteIdStr = placeholderNoteId.String()
+		}
+
+		_, err := tx.Exec(`INSERT INTO boosts(id, account_id, remote_account_id, note_id, object_uri, uri, created_at) VALUES (?, '', ?, ?, ?, ?, ?)`,
+			boost.Id.String(),
+			boost.RemoteAccountId.String(),
+			noteIdStr,
+			boost.ObjectURI,
+			boost.URI,
+			boost.CreatedAt.Format("2006-01-02 15:04:05"))
+		return err
+	})
+}
+
+// HasBoostFromRemote checks if a boost already exists from a remote account for a given object URI
+func (db *DB) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (bool, error) {
+	var count int
+	err := db.db.QueryRow(`SELECT COUNT(*) FROM boosts WHERE remote_account_id = ? AND object_uri = ?`,
+		remoteAccountId.String(), objectURI).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // Reply query methods
 
 // ReadRepliesByNoteId returns all direct replies to a local note by its UUID
@@ -4471,7 +4596,7 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 
 			UNION ALL
 
-			-- Boosted remote posts (show who boosted them)
+			-- Boosted remote posts (show who boosted them - local boosters)
 			SELECT
 				act.id as id,
 				ra.username as username,
@@ -4491,6 +4616,31 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 			INNER JOIN activities act ON act.object_uri = b.object_uri
 			INNER JOIN remote_accounts ra ON ra.actor_uri = act.actor_uri
 			WHERE b.object_uri IS NOT NULL AND b.object_uri != ''
+			AND (b.account_id IS NOT NULL AND b.account_id != '')
+
+			UNION ALL
+
+			-- Boosted remote posts (show who boosted them - remote boosters)
+			SELECT
+				act.id as id,
+				ra_author.username as username,
+				ra_author.domain as user_domain,
+				ra_author.actor_uri as profile_url,
+				COALESCE(act.object_uri, '') as object_uri,
+				COALESCE(act.object_url, '') as object_url,
+				1 as is_remote,
+				act.raw_json as message,
+				b.created_at as created_at,
+				COALESCE(act.reply_count, 0) as reply_count,
+				COALESCE(act.like_count, 0) as like_count,
+				COALESCE(act.boost_count, 0) as boost_count,
+				'@' || ra_booster.username || '@' || ra_booster.domain as boosted_by
+			FROM boosts b
+			INNER JOIN remote_accounts ra_booster ON ra_booster.id = b.remote_account_id
+			INNER JOIN activities act ON act.object_uri = b.object_uri
+			INNER JOIN remote_accounts ra_author ON ra_author.actor_uri = act.actor_uri
+			WHERE b.remote_account_id IS NOT NULL AND b.remote_account_id != ''
+			AND b.object_uri IS NOT NULL AND b.object_uri != ''
 		) combined
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?`, limit, offset)
