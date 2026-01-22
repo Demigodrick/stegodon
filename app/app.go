@@ -78,6 +78,15 @@ func (a *App) Initialize() error {
 		log.Printf("Warning: Performance indexes migration encountered errors: %v", err)
 	}
 
+	// Run orphan activities cleanup migration (fixes bug where Create activities
+	// were stored before checking follow relationships)
+	log.Println("Checking for orphan activities...")
+	if err := database.MigrateOrphanActivities(); err != nil {
+		log.Printf("Warning: Orphan activities migration encountered errors: %v", err)
+	} else {
+		log.Println("Orphan activities migration complete")
+	}
+
 	// Cleanup expired IP bans (IP addresses older than 60 days are cleared)
 	database.CleanupExpiredIPBans()
 

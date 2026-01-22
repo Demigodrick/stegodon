@@ -106,6 +106,9 @@ func (m *MockDatabase) AddActivity(activity *domain.Activity) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Activities[activity.Id] = activity
+	if activity.ActivityURI != "" {
+		m.ActivitiesByURI[activity.ActivityURI] = activity
+	}
 	if activity.ObjectURI != "" {
 		m.ActivitiesByObj[activity.ObjectURI] = activity
 	}

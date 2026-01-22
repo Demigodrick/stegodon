@@ -2498,6 +2498,67 @@ func (db *DB) MigrateLocalReplyCounts() error {
 	return nil
 }
 
+// MigrateOrphanActivities removes Create activities that were incorrectly stored
+// because the inbox handler stored them before checking if the user follows the actor.
+// This is a one-time cleanup migration for the bug fix in handleCreateActivityWithDeps.
+func (db *DB) MigrateOrphanActivities() error {
+	log.Println("Starting orphan activities cleanup migration...")
+
+	// Delete Create activities where:
+	// 1. activity_type = 'Create'
+	// 2. local = 0 (not local)
+	// 3. from_relay = 0 (not from a relay)
+	// 4. The actor is NOT followed by any local user
+	// 5. The activity is NOT a reply to a local note
+	//
+	// Note: Activities from relays (from_relay = 1) are valid even without follow relationship
+	// Note: Replies to local posts are valid even without follow relationship
+	deleteQuery := `
+		DELETE FROM activities
+		WHERE id IN (
+			SELECT a.id FROM activities a
+			WHERE a.activity_type = 'Create'
+			AND a.local = 0
+			AND a.from_relay = 0
+			-- Not followed by any local user
+			AND NOT EXISTS (
+				SELECT 1 FROM follows f
+				INNER JOIN remote_accounts ra ON ra.id = f.target_account_id
+				WHERE ra.actor_uri = a.actor_uri
+				AND f.accepted = 1
+			)
+			-- Not a reply to a local note
+			AND NOT EXISTS (
+				SELECT 1 FROM notes n
+				WHERE n.object_uri = a.in_reply_to
+				AND a.in_reply_to IS NOT NULL
+				AND a.in_reply_to != ''
+			)
+			-- Not a reply to another activity (local or remote)
+			AND NOT EXISTS (
+				SELECT 1 FROM activities parent
+				WHERE parent.object_uri = a.in_reply_to
+				AND a.in_reply_to IS NOT NULL
+				AND a.in_reply_to != ''
+			)
+		)
+	`
+
+	result, err := db.db.Exec(deleteQuery)
+	if err != nil {
+		return fmt.Errorf("failed to delete orphan activities: %w", err)
+	}
+
+	deleted, _ := result.RowsAffected()
+	if deleted > 0 {
+		log.Printf("Orphan activities migration: deleted %d orphan activities", deleted)
+	} else {
+		log.Println("Orphan activities migration: no orphan activities found")
+	}
+
+	return nil
+}
+
 // Hashtag queries
 const (
 	sqlInsertHashtag          = `INSERT INTO hashtags(name, usage_count, last_used_at) VALUES (?, 1, CURRENT_TIMESTAMP) ON CONFLICT(name) DO UPDATE SET usage_count = usage_count + 1, last_used_at = CURRENT_TIMESTAMP RETURNING id`
