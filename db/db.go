@@ -4534,16 +4534,17 @@ func (db *DB) ReadGlobalTimelinePosts(limit, offset int) (error, *[]domain.Globa
 		return err, &posts
 	}
 
-	// Deduplicate posts - prefer non-boosted version (original) over boosted
+	// Deduplicate posts - prefer boosted version over non-boosted (original)
+	// This ensures that when you boost a post, it shows with the boost indicator
 	seen := make(map[string]int) // maps NoteId to index in posts slice
 	var dedupedPosts []domain.GlobalTimelinePost
 	for _, post := range posts {
 		if existingIdx, exists := seen[post.NoteId]; exists {
-			// If the new post is the original (no BoostedBy) and existing is boosted, replace
-			if post.BoostedBy == "" && dedupedPosts[existingIdx].BoostedBy != "" {
+			// If the new post is boosted and existing is not, replace with boosted version
+			if post.BoostedBy != "" && dedupedPosts[existingIdx].BoostedBy == "" {
 				dedupedPosts[existingIdx] = post
 			}
-			// Otherwise keep the existing one
+			// Otherwise keep the existing one (first boosted version wins)
 		} else {
 			seen[post.NoteId] = len(dedupedPosts)
 			dedupedPosts = append(dedupedPosts, post)
