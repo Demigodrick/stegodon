@@ -111,7 +111,8 @@ func setupTestDB(t *testing.T) *DB {
 
 	db.db.Exec(`CREATE TABLE IF NOT EXISTS boosts(
 		id uuid NOT NULL PRIMARY KEY,
-		account_id uuid NOT NULL,
+		account_id uuid,
+		remote_account_id uuid,
 		note_id uuid NOT NULL,
 		uri varchar(500),
 		object_uri TEXT,

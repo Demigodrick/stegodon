@@ -667,6 +667,50 @@ func (m *MockDatabase) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
 	return nil
 }
 
+// Remote boost operations
+
+func (m *MockDatabase) IsRemoteAccountFollowed(remoteAccountId uuid.UUID) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return false, m.ForceError
+	}
+	// Check if any local account follows this remote account
+	for _, follow := range m.Follows {
+		if follow.TargetAccountId == remoteAccountId && follow.Accepted {
+			// Verify the follower is a local account
+			if _, isLocal := m.Accounts[follow.AccountId]; isLocal {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (m *MockDatabase) CreateBoostFromRemote(boost *domain.Boost) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ForceError != nil {
+		return m.ForceError
+	}
+	m.Boosts[boost.Id] = boost
+	return nil
+}
+
+func (m *MockDatabase) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ForceError != nil {
+		return false, m.ForceError
+	}
+	for _, boost := range m.Boosts {
+		if boost.RemoteAccountId == remoteAccountId && boost.ObjectURI == objectURI {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Relay operations
 
 func (m *MockDatabase) CreateRelay(relay *domain.Relay) error {

@@ -64,6 +64,11 @@ type Database interface {
 	IncrementBoostCountByNoteId(noteId uuid.UUID) error
 	DecrementBoostCountByNoteId(noteId uuid.UUID) error
 
+	// Remote boost operations (for boosts from followed remote users)
+	IsRemoteAccountFollowed(remoteAccountId uuid.UUID) (bool, error)
+	CreateBoostFromRemote(boost *domain.Boost) error
+	HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (bool, error)
+
 	// Delivery queue operations
 	EnqueueDelivery(item *domain.DeliveryQueueItem) error
 	ReadPendingDeliveries(limit int) (error, *[]domain.DeliveryQueueItem)

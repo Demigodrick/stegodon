@@ -178,6 +178,20 @@ func (w *DBWrapper) DecrementBoostCountByNoteId(noteId uuid.UUID) error {
 	return w.db.DecrementBoostCountByNoteId(noteId)
 }
 
+// Remote boost operations
+
+func (w *DBWrapper) IsRemoteAccountFollowed(remoteAccountId uuid.UUID) (bool, error) {
+	return w.db.IsRemoteAccountFollowed(remoteAccountId)
+}
+
+func (w *DBWrapper) CreateBoostFromRemote(boost *domain.Boost) error {
+	return w.db.CreateBoostFromRemote(boost)
+}
+
+func (w *DBWrapper) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (bool, error) {
+	return w.db.HasBoostFromRemote(remoteAccountId, objectURI)
+}
+
 // Delivery queue operations
 
 func (w *DBWrapper) EnqueueDelivery(item *domain.DeliveryQueueItem) error {

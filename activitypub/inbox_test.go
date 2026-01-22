@@ -4531,3 +4531,281 @@ func TestHandleAnnounceFromRelayDifferentTag(t *testing.T) {
 		t.Errorf("Expected 0 boosts (relay content, not boost), got %d", len(mockDB.Boosts))
 	}
 }
+
+// TestHandleAnnounceActivity_FollowedRemoteUser_FetchesAndStores tests that when a followed
+// remote user boosts a post that doesn't exist locally, we fetch and store it
+func TestHandleAnnounceActivity_FollowedRemoteUser_FetchesAndStores(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote user who will boost (this user is followed by alice)
+	booster := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(booster)
+
+	// Alice follows bob (the booster)
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: booster.Id,
+		Accepted:        true,
+	}
+	mockDB.AddFollow(follow)
+
+	// Create mock HTTP client that returns the boosted post and actor info
+	mockClient := NewMockHTTPClient()
+
+	// Bob (the booster) actor info - needed because GetOrFetchActorWithDeps is called
+	bobJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/users/bob",
+		"type": "Person",
+		"preferredUsername": "bob",
+		"inbox": "https://remote.example.com/users/bob/inbox",
+		"publicKey": {
+			"id": "https://remote.example.com/users/bob#main-key",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://remote.example.com/users/bob"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(bobJSON)),
+		Header:     make(http.Header),
+	}
+
+	boostedPostJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://other.example.com/notes/123",
+		"type": "Note",
+		"attributedTo": "https://other.example.com/users/charlie",
+		"content": "<p>This is the original post</p>",
+		"url": "https://other.example.com/@charlie/123"
+	}`
+	charlieJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://other.example.com/users/charlie",
+		"type": "Person",
+		"preferredUsername": "charlie",
+		"inbox": "https://other.example.com/users/charlie/inbox",
+		"publicKey": {
+			"id": "https://other.example.com/users/charlie#main-key",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://other.example.com/notes/123"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(boostedPostJSON)),
+		Header:     make(http.Header),
+	}
+	mockClient.Responses["https://other.example.com/users/charlie"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(charlieJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Bob (followed by alice) boosts a post from charlie (not stored locally)
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-456",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://other.example.com/notes/123"
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps failed: %v", err)
+	}
+
+	// Verify: activity should be stored (the boosted post)
+	if len(mockDB.Activities) != 1 {
+		t.Errorf("Expected 1 activity (boosted post), got %d", len(mockDB.Activities))
+	}
+
+	// Verify: boost record should be stored with remote_account_id
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected 1 boost, got %d", len(mockDB.Boosts))
+	}
+
+	for _, boost := range mockDB.Boosts {
+		if boost.RemoteAccountId != booster.Id {
+			t.Errorf("Expected boost.RemoteAccountId = %s, got %s", booster.Id, boost.RemoteAccountId)
+		}
+		if boost.ObjectURI != "https://other.example.com/notes/123" {
+			t.Errorf("Expected boost.ObjectURI = 'https://other.example.com/notes/123', got %q", boost.ObjectURI)
+		}
+	}
+}
+
+// TestHandleAnnounceActivity_UnfollowedRemoteUser_DropsUnknownPost tests that when an
+// unfollowed remote user boosts a post that doesn't exist locally, we ignore it
+func TestHandleAnnounceActivity_UnfollowedRemoteUser_DropsUnknownPost(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote user who will boost (NOT followed by alice)
+	booster := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "stranger",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/stranger",
+		InboxURI:     "https://remote.example.com/users/stranger/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(booster)
+
+	// Note: alice does NOT follow stranger
+
+	mockClient := NewMockHTTPClient()
+	// Stranger actor info - needed because GetOrFetchActorWithDeps is called
+	strangerJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/users/stranger",
+		"type": "Person",
+		"preferredUsername": "stranger",
+		"inbox": "https://remote.example.com/users/stranger/inbox",
+		"publicKey": {
+			"id": "https://remote.example.com/users/stranger#main-key",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://remote.example.com/users/stranger"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(strangerJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Stranger (NOT followed) boosts a post that doesn't exist locally
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-789",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/stranger",
+		"object": "https://other.example.com/notes/unknown"
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps should not error: %v", err)
+	}
+
+	// Verify: no activity should be stored
+	if len(mockDB.Activities) != 0 {
+		t.Errorf("Expected 0 activities (unfollowed user, unknown post), got %d", len(mockDB.Activities))
+	}
+
+	// Verify: no boost record should be stored
+	if len(mockDB.Boosts) != 0 {
+		t.Errorf("Expected 0 boosts (unfollowed user, unknown post), got %d", len(mockDB.Boosts))
+	}
+}
+
+// TestHandleAnnounceActivity_FollowedRemoteUser_DuplicateBoostIgnored tests that
+// duplicate boosts from followed remote users are properly deduplicated
+func TestHandleAnnounceActivity_FollowedRemoteUser_DuplicateBoostIgnored(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote user who will boost
+	booster := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(booster)
+
+	// Alice follows bob
+	follow := &domain.Follow{
+		Id:              uuid.New(),
+		AccountId:       localAccount.Id,
+		TargetAccountId: booster.Id,
+		Accepted:        true,
+	}
+	mockDB.AddFollow(follow)
+
+	// Add existing boost from bob
+	existingBoost := &domain.Boost{
+		Id:              uuid.New(),
+		RemoteAccountId: booster.Id,
+		ObjectURI:       "https://other.example.com/notes/123",
+		URI:             "https://remote.example.com/activities/announce-456",
+	}
+	mockDB.Boosts[existingBoost.Id] = existingBoost
+
+	mockClient := NewMockHTTPClient()
+	// Bob actor info - needed because GetOrFetchActorWithDeps is called
+	bobJSON := `{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/users/bob",
+		"type": "Person",
+		"preferredUsername": "bob",
+		"inbox": "https://remote.example.com/users/bob/inbox",
+		"publicKey": {
+			"id": "https://remote.example.com/users/bob#main-key",
+			"publicKeyPem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+		}
+	}`
+	mockClient.Responses["https://remote.example.com/users/bob"] = &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(bobJSON)),
+		Header:     make(http.Header),
+	}
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: mockClient,
+	}
+
+	// Bob boosts the same post again (duplicate)
+	announceBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/announce-456-duplicate",
+		"type": "Announce",
+		"actor": "https://remote.example.com/users/bob",
+		"object": "https://other.example.com/notes/123"
+	}`)
+
+	err := handleAnnounceActivityWithDeps(announceBody, "alice", deps)
+	if err != nil {
+		t.Fatalf("handleAnnounceActivityWithDeps should not error: %v", err)
+	}
+
+	// Verify: only the original boost should exist (no duplicate)
+	if len(mockDB.Boosts) != 1 {
+		t.Errorf("Expected 1 boost (no duplicate), got %d", len(mockDB.Boosts))
+	}
+}

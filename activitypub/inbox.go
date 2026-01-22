@@ -904,18 +904,6 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 		return handleRelayAnnounce(announceActivity.ID, objectURI, embeddedObject, deps)
 	}
 
-	// Standard boost handling - find the note being boosted by its object_uri
-	err, note := database.ReadNoteByURI(objectURI)
-	if err != nil || note == nil {
-		// Check if this looks like a relay actor (contains /tag/ in path) but we're not subscribed
-		if strings.Contains(announceActivity.Actor, "/tag/") || strings.Contains(announceActivity.Actor, "/relay") {
-			log.Printf("Inbox: Ignoring Announce from unsubscribed relay %s (object: %s)", announceActivity.Actor, objectURI)
-		} else {
-			log.Printf("Inbox: Note not found for Announce object %s: %v", objectURI, err)
-		}
-		return nil // Not an error - the note might not exist locally
-	}
-
 	// Get or create remote account for the booster using the existing helper
 	remoteAcc, fetchErr := GetOrFetchActorWithDeps(announceActivity.Actor, deps.HTTPClient, database)
 	if fetchErr != nil {
@@ -923,6 +911,37 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 		return nil // Not a fatal error
 	}
 
+	// Check if the booster is followed by any local user
+	isBoosterFollowed, err := database.IsRemoteAccountFollowed(remoteAcc.Id)
+	if err != nil {
+		log.Printf("Inbox: Error checking if booster is followed: %v", err)
+	}
+
+	// Standard boost handling - find the note being boosted by its object_uri
+	err, note := database.ReadNoteByURI(objectURI)
+	noteExistsLocally := err == nil && note != nil
+
+	// If the boosted post doesn't exist locally, check if we should fetch it
+	if !noteExistsLocally {
+		if isBoosterFollowed {
+			// Booster is followed - fetch and store the boosted post, then record the boost
+			log.Printf("Inbox: Boost from followed user %s@%s - fetching boosted post %s", remoteAcc.Username, remoteAcc.Domain, objectURI)
+			if err := handleFollowedUserBoost(announceActivity.ID, objectURI, embeddedObject, remoteAcc, deps); err != nil {
+				log.Printf("Inbox: Failed to handle boost from followed user: %v", err)
+			}
+			return nil
+		}
+
+		// Not followed and note doesn't exist - ignore
+		if strings.Contains(announceActivity.Actor, "/tag/") || strings.Contains(announceActivity.Actor, "/relay") {
+			log.Printf("Inbox: Ignoring Announce from unsubscribed relay %s (object: %s)", announceActivity.Actor, objectURI)
+		} else {
+			log.Printf("Inbox: Note not found for Announce object %s and booster not followed: %v", objectURI, err)
+		}
+		return nil
+	}
+
+	// Note exists locally - standard boost handling
 	// Check if we already have a boost from this account on this note (dedupe by account+note)
 	exists, err := database.HasBoost(remoteAcc.Id, note.Id)
 	if err != nil {
@@ -977,6 +996,133 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 	}
 
 	log.Printf("Inbox: Stored Boost from %s on note %s", announceActivity.Actor, note.Id)
+	return nil
+}
+
+// handleFollowedUserBoost processes an Announce from a followed remote user,
+// fetching the boosted content if not already stored locally
+func handleFollowedUserBoost(announceID, objectURI string, embeddedObject map[string]any, booster *domain.RemoteAccount, deps *InboxDeps) error {
+	database := deps.Database
+
+	// Check if we already have this boost from this remote account
+	exists, err := database.HasBoostFromRemote(booster.Id, objectURI)
+	if err != nil {
+		log.Printf("Inbox: Error checking for existing remote boost: %v", err)
+	}
+	if exists {
+		log.Printf("Inbox: Boost from %s@%s on %s already exists, skipping", booster.Username, booster.Domain, objectURI)
+		return nil
+	}
+
+	// Check if we already have the activity stored
+	err, existingActivity := database.ReadActivityByObjectURI(objectURI)
+	if err == nil && existingActivity != nil {
+		log.Printf("Inbox: Boosted object %s already exists as activity, just recording boost", objectURI)
+	} else {
+		// Need to fetch and store the boosted content
+		var objectContent map[string]any
+		var actorURI string
+
+		if embeddedObject != nil {
+			objectContent = embeddedObject
+			if actor, ok := embeddedObject["attributedTo"].(string); ok {
+				actorURI = actor
+			} else if actor, ok := embeddedObject["actor"].(string); ok {
+				actorURI = actor
+			}
+		} else {
+			// Fetch the object
+			log.Printf("Inbox: Fetching boosted object %s", objectURI)
+			fetchedObject, err := fetchActivityPubObject(objectURI, deps.HTTPClient)
+			if err != nil {
+				return fmt.Errorf("failed to fetch boosted object %s: %w", objectURI, err)
+			}
+			objectContent = fetchedObject
+			if actor, ok := fetchedObject["attributedTo"].(string); ok {
+				actorURI = actor
+			} else if actor, ok := fetchedObject["actor"].(string); ok {
+				actorURI = actor
+			}
+		}
+
+		if actorURI == "" {
+			return fmt.Errorf("boosted object %s has no attributedTo/actor", objectURI)
+		}
+
+		// Get the object type
+		objectType, _ := objectContent["type"].(string)
+		if objectType != "Note" && objectType != "Article" {
+			log.Printf("Inbox: Boosted object %s is type %s, skipping", objectURI, objectType)
+			return nil
+		}
+
+		// Fetch and cache the original author
+		_, err = GetOrFetchActorWithDeps(actorURI, deps.HTTPClient, database)
+		if err != nil {
+			log.Printf("Inbox: Failed to fetch actor %s for boosted content: %v", actorURI, err)
+		}
+
+		// Extract inReplyTo and url for storage
+		inReplyTo := ""
+		if reply, ok := objectContent["inReplyTo"].(string); ok {
+			inReplyTo = reply
+		}
+		objectURL := ""
+		if url, ok := objectContent["url"].(string); ok {
+			objectURL = url
+		}
+
+		// Marshal the object content for storage
+		rawJSON, err := json.Marshal(map[string]any{
+			"@context": "https://www.w3.org/ns/activitystreams",
+			"type":     "Create",
+			"actor":    actorURI,
+			"object":   objectContent,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to marshal boosted object: %w", err)
+		}
+
+		// Store as a Create activity so it can be displayed
+		activity := &domain.Activity{
+			Id:           uuid.New(),
+			ActivityURI:  objectURI + "#create", // Synthetic activity URI
+			ActivityType: "Create",
+			ActorURI:     actorURI,
+			ObjectURI:    objectURI,
+			ObjectURL:    objectURL,
+			InReplyTo:    inReplyTo,
+			RawJSON:      string(rawJSON),
+			Processed:    true,
+			Local:        false,
+			FromRelay:    false,
+			CreatedAt:    time.Now(),
+		}
+
+		if err := database.CreateActivity(activity); err != nil {
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				return fmt.Errorf("failed to store boosted activity: %w", err)
+			}
+			// Activity already exists, that's fine
+		} else {
+			log.Printf("Inbox: Stored boosted content %s from %s", objectURI, actorURI)
+		}
+	}
+
+	// Create the boost record with remote_account_id
+	boost := &domain.Boost{
+		Id:              uuid.New(),
+		RemoteAccountId: booster.Id,
+		ObjectURI:       objectURI,
+		URI:             announceID,
+		CreatedAt:       time.Now(),
+	}
+
+	if err := database.CreateBoostFromRemote(boost); err != nil {
+		return fmt.Errorf("failed to store remote boost: %w", err)
+	}
+
+	log.Printf("Inbox: Stored boost from followed user %s@%s on %s", booster.Username, booster.Domain, objectURI)
 	return nil
 }
 
