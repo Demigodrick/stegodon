@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: "1.25"
           cache: true
 
       - name: Run GoReleaser
@@ -59,12 +59,13 @@ jobs:
           Write a brief, engaging announcement post for version $TAG_NAME. The post will be published on the fediverse (like Mastodon).
 
           Requirements:
-          - Start with a mastodon emoji
+          - Start with the 🦣 emoji
           - Keep it under 260 characters
+          - Don't use tabs or special characters
           - Mention 1-2 key highlights from the changes
           - Use this exact markdown link for the version number inline: $RELEASE_LINK (e.g. Stegodon $RELEASE_LINK brings...)
           - Be concise and enthusiastic but not over the top
-          - You can use relevant hashtags like #fediverse #activitypub #golang
+          - You can use relevant hashtags like #stegodon #fediverse #activitypub #tui #golang
 
           Changes in this release:
           $CHANGES
