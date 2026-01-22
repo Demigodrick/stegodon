@@ -125,6 +125,8 @@ if !isParent {
 | `Enter` | Open nested thread (if reply has replies) |
 | `r` | Reply to selected post |
 | `l` | Like/unlike selected post |
+| `b` | Boost/unboost selected post |
+| `i` | Toggle engagement info (likers/boosters) |
 | `o` | Toggle URL display (only for valid HTTP/HTTPS URLs) |
 | `Esc` / `q` | Return to home timeline |
 

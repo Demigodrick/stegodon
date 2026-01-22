@@ -37,6 +37,8 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - `Delete(Note)` - Delivered to all followers when deleting
 - `Like` - Sent when pressing 'l' on a remote post (TUI)
 - `Undo(Like)` - Sent when unliking a previously liked remote post
+- `Announce` - Sent when pressing 'b' to boost a post (TUI)
+- `Undo(Announce)` - Sent when unboosting a previously boosted post
 
 ## Object Types
 
@@ -91,7 +93,7 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - Replies are stored with their `in_reply_to_uri` in the database for thread reconstruction
 - Reply counts are denormalized and recursively updated (includes all nested sub-replies)
 - Duplicate detection prevents counting federated copies of local posts twice
-- TUI: Press `r` on a post to reply, press `Enter` to view thread, press `l` to like/unlike
+- TUI: Press `r` to reply, `Enter` for thread view, `l` to like/unlike, `b` to boost/unboost
 - Web: Single post pages show parent context and replies section
 - Full thread depth supported with nested reply navigation
 
@@ -170,7 +172,6 @@ Stegodon includes a real-time notifications system accessible via the TUI (press
 
 ## Not Yet Implemented
 
-- `Announce` (boost/reblog) sending
 - Direct messages
 - Media attachments
 - ActivityPub C2S (Client-to-Server)

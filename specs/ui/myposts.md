@@ -98,6 +98,8 @@ var (
 | `u` | Edit selected note |
 | `d` | Delete selected note (shows confirmation) |
 | `l` | Like/unlike selected note |
+| `b` | Boost/unboost selected note |
+| `i` | Toggle engagement info (likers/boosters) |
 
 ### Scroll Behavior
 

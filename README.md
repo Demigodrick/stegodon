@@ -72,6 +72,8 @@ See [DOCKER.md](DOCKER.md) for complete Docker deployment guide.
 - **Esc** - Return from thread view
 - **r** - Reply to selected post
 - **l** - Like/unlike selected post (federated)
+- **b** - Boost/unboost selected post (federated)
+- **i** - Toggle engagement info (show who liked/boosted)
 - **o** - Toggle URL display for selected post (home timeline)
   - Press once: Show clickable URL
   - Press again or navigate: Show post content

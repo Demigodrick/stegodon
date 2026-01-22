@@ -10,6 +10,7 @@ The HomeTimeline is the primary content consumption view, showing a unified time
 - Local posts from users on this server
 - Federated posts from followed remote accounts
 - Content from relay subscriptions
+- Posts boosted by followed remote users
 
 Posts are sorted in reverse chronological order with automatic refresh every 30 seconds.
 
@@ -46,6 +47,18 @@ type HomePost struct {
     ReplyCount int          // Number of replies to this post
     LikeCount  int          // Number of likes on this post
     BoostCount int          // Number of boosts on this post
+    BoostedBy  string       // "@user@domain" if this is a boosted post from a followed user
+}
+```
+
+### Model Fields for Engagement Display
+
+```go
+type Model struct {
+    // ... existing fields ...
+    showingEngagement  bool     // Toggle engagement info display
+    engagementLikers   []string // Users who liked selected post
+    engagementBoosters []string // Users who boosted selected post
 }
 ```
 
@@ -157,6 +170,8 @@ This pattern prevents goroutine leaks when users navigate away.
 | `Enter` | Open thread (if has replies) |
 | `r` | Reply to selected post |
 | `l` | Like/unlike selected post |
+| `b` | Boost/unboost selected post |
+| `i` | Toggle engagement info (likers/boosters) |
 | `o` | Toggle URL display |
 
 ### Scroll Behavior
@@ -310,6 +325,96 @@ case "l":
         }
     }
 ```
+
+---
+
+## Boost/Unboost
+
+Press `b` to toggle boost on the selected post:
+
+```go
+case "b":
+    if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+        selectedPost := m.Posts[m.Selected]
+        noteURI := selectedPost.ObjectURI
+
+        if noteURI == "" && selectedPost.IsLocal && selectedPost.NoteID != uuid.Nil {
+            noteURI = "local:" + selectedPost.NoteID.String()
+        }
+
+        return m, func() tea.Msg {
+            return common.BoostNoteMsg{
+                NoteURI: noteURI,
+                NoteID:  selectedPost.NoteID,
+                IsLocal: selectedPost.IsLocal,
+            }
+        }
+    }
+```
+
+### Boost Processing
+
+The boost command is handled by `boostNoteCmd()` in supertui.go:
+1. Checks if the user already boosted the post
+2. If boosted: removes boost, decrements count, sends Undo(Announce)
+3. If not boosted: creates boost, increments count, sends Announce activity
+4. Creates notification for local post authors (if different from booster)
+
+---
+
+## Engagement Info Display
+
+Press `i` to toggle display of users who liked/boosted the selected post:
+
+```go
+case "i":
+    if len(m.Posts) > 0 && m.Selected < len(m.Posts) {
+        selectedPost := m.Posts[m.Selected]
+        if selectedPost.LikeCount > 0 || selectedPost.BoostCount > 0 {
+            m.showingEngagement = !m.showingEngagement
+            if m.showingEngagement {
+                return m, loadEngagementInfo(selectedPost)
+            }
+        }
+    }
+```
+
+### Engagement Display
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ▸ 2h ago · ⭐ 5 · 🔁 2                                       │
+│   @alice                                                     │
+│   ⭐ Liked by:                                               │
+│     @bob                                                     │
+│     @charlie@mastodon.social                                 │
+│   🔁 Boosted by:                                             │
+│     @dave@remote.instance                                    │
+│                                                              │
+│   (press 'i' to toggle back)                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Boosts from Followed Remote Users
+
+When a followed remote user boosts a post, it appears in the home timeline with a boost indicator:
+
+```go
+if post.BoostedBy != "" {
+    boostLine := fmt.Sprintf("🔁 boosted by %s", post.BoostedBy)
+    s.WriteString(boostIndicatorStyle.Render(boostLine))
+}
+```
+
+### Data Flow
+
+1. Remote user sends Announce activity
+2. Inbox checks if the booster is followed by any local user
+3. If followed, the boosted content is fetched and stored
+4. A boost record is created with `remote_account_id` and `object_uri`
+5. Timeline query joins boosts with activities to show boosted content
 
 ---
 

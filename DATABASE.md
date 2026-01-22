@@ -19,6 +19,8 @@ erDiagram
         TEXT avatar_url
         INTEGER is_admin
         INTEGER muted
+        INTEGER banned
+        TEXT last_ip
     }
 
     notes {
@@ -91,7 +93,9 @@ erDiagram
         TEXT id PK
         TEXT account_id FK
         TEXT note_id FK
+        TEXT remote_account_id FK
         TEXT uri
+        TEXT object_uri
         TIMESTAMP created_at
     }
 
@@ -152,7 +156,16 @@ erDiagram
         TIMESTAMP created_at
     }
 
+    bans {
+        TEXT id PK
+        TEXT account_id FK
+        TEXT banned_by FK
+        TEXT reason
+        TIMESTAMP created_at
+    }
+
     accounts ||--o{ notes : "creates"
+    accounts ||--o{ bans : "receives"
     accounts ||--o{ follows : "follower"
     accounts ||--o{ likes : "likes"
     accounts ||--o{ boosts : "boosts"
@@ -187,7 +200,18 @@ Log of all ActivityPub activities (incoming and outgoing). Stores raw JSON for d
 Like/favorite relationships between accounts and notes. For local notes, `note_id` references the note directly. For remote/federated posts, `object_uri` stores the ActivityPub object URI and `note_id` contains a deterministic placeholder UUID derived from the object URI (to satisfy the unique constraint).
 
 ### boosts
-Boost/reblog relationships between accounts and notes. Created when receiving `Announce` activities.
+Boost/reblog relationships between accounts and notes. Created when receiving `Announce` activities or when a local user boosts a post.
+
+| Column | Description |
+|--------|-------------|
+| `account_id` | Local account that created the boost (for local user boosts) |
+| `note_id` | Local note being boosted (if boosting a local post) |
+| `remote_account_id` | Remote account that created the boost (for incoming boosts from followed users) |
+| `object_uri` | ActivityPub URI of the boosted object (for remote posts) |
+| `uri` | ActivityPub URI of the Announce activity |
+
+For local user boosts: `account_id` + `note_id` or `account_id` + `object_uri`
+For remote user boosts: `remote_account_id` + `note_id` or `remote_account_id` + `object_uri`
 
 ### delivery_queue
 Background queue for federating activities to remote servers. Supports retry with exponential backoff (1 minute to 24 hours).
@@ -231,6 +255,24 @@ User notifications for social interactions. Notifications appear in real-time in
 | `read` | Whether the notification has been read (0 or 1) |
 | `created_at` | When the notification was created |
 
+### bans
+Records of banned user accounts. When an admin bans a user, a record is created here and the `banned` flag is set on the account.
+
+| Column | Description |
+|--------|-------------|
+| `id` | Unique ban record identifier (UUID) |
+| `account_id` | The banned user account |
+| `banned_by` | The admin account that issued the ban |
+| `reason` | Optional reason for the ban |
+| `created_at` | When the ban was issued |
+
+### accounts (additional columns)
+
+| Column | Description |
+|--------|-------------|
+| `banned` | Whether the account is banned (0 or 1) |
+| `last_ip` | Last known IP address of the user (for admin visibility) |
+
 ## Indexes
 
 | Table | Index | Columns |
@@ -256,6 +298,9 @@ User notifications for social interactions. Notifications appear in real-time in
 | likes | idx_likes_object_uri | object_uri |
 | boosts | idx_boosts_note_id | note_id |
 | boosts | idx_boosts_account_id | account_id |
+| boosts | idx_boosts_remote_account_id | remote_account_id |
+| boosts | idx_boosts_object_uri | object_uri |
+| bans | idx_bans_account_id | account_id |
 | delivery_queue | idx_delivery_queue_next_retry | next_retry_at |
 | hashtags | idx_hashtags_name | name |
 | hashtags | idx_hashtags_usage | usage_count DESC |

@@ -208,6 +208,65 @@ if followActor.ActorURI != undo.Actor {
 database.DeleteFollowByURI(obj.ID)
 ```
 
+### Undo Like
+
+Removes a like from a local post:
+
+```go
+// Find the note being unliked
+err, note := database.ReadNoteByURI(obj.Object)
+if err != nil || note == nil {
+    return nil // Note doesn't exist locally - not an error
+}
+
+// Verify actor matches
+if remoteActor.ActorURI != undo.Actor {
+    return fmt.Errorf("unauthorized: actor %s cannot undo like", undo.Actor)
+}
+
+// Delete the like
+database.DeleteLikeByAccountAndNote(remoteActor.Id, note.Id)
+
+// Decrement like count
+database.DecrementLikeCountByNoteId(note.Id)
+```
+
+### Undo Announce
+
+Removes a boost. Handles both local notes and remote posts:
+
+```go
+// Verify actor matches
+if remoteActor.ActorURI != undo.Actor {
+    return fmt.Errorf("unauthorized: actor %s cannot undo boost", undo.Actor)
+}
+
+// First try local notes table
+err, note := database.ReadNoteByURI(obj.Object)
+if err == nil && note != nil {
+    // Local note - delete boost by note ID
+    database.DeleteBoostByAccountAndNote(remoteActor.Id, note.Id)
+    database.DecrementBoostCountByNoteId(note.Id)
+    return nil
+}
+
+// Not in local notes - check if it's a remote post boost
+exists, err := database.HasBoostFromRemote(remoteActor.Id, obj.Object)
+if exists {
+    // Delete boost by remote account and object URI
+    database.DeleteBoostByRemoteAccountAndObjectURI(remoteActor.Id, obj.Object)
+    // Decrement boost count on the activity
+    database.DecrementBoostCountByObjectURI(obj.Object)
+}
+```
+
+#### Remote Post Boosts
+
+When a followed remote user boosts a remote post:
+- The boost is stored with `remote_account_id` and `object_uri` (not `note_id`)
+- The boosted content is stored in the `activities` table
+- Undo must check both `notes` table (local) and `activities` table (remote)
+
 ---
 
 ## Create Activity
