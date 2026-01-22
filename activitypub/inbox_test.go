@@ -3250,6 +3250,83 @@ func TestHandleUndoAnnounce_NoExistingBoost(t *testing.T) {
 	}
 }
 
+// TestHandleUndoAnnounce_RemotePost tests that Undo Announce for a remote post
+// (stored in activities table, not notes table) is handled correctly
+func TestHandleUndoAnnounce_RemotePost(t *testing.T) {
+	mockDB := NewMockDatabase()
+
+	localAccount := &domain.Account{
+		Id:       uuid.New(),
+		Username: "alice",
+	}
+	mockDB.AddAccount(localAccount)
+
+	// Remote post stored in activities table (not in notes)
+	remotePostURI := "https://other.example.com/notes/remote-post-123"
+	activity := &domain.Activity{
+		Id:           uuid.New(),
+		ActivityURI:  remotePostURI + "#create",
+		ActivityType: "Create",
+		ActorURI:     "https://other.example.com/users/charlie",
+		ObjectURI:    remotePostURI,
+		BoostCount:   1,
+	}
+	mockDB.AddActivity(activity)
+
+	// Remote account who boosted the remote post
+	remoteAccount := &domain.RemoteAccount{
+		Id:           uuid.New(),
+		Username:     "bob",
+		Domain:       "remote.example.com",
+		ActorURI:     "https://remote.example.com/users/bob",
+		InboxURI:     "https://remote.example.com/users/bob/inbox",
+		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+	mockDB.AddRemoteAccount(remoteAccount)
+
+	// Add existing boost with RemoteAccountId and ObjectURI (remote post boost pattern)
+	existingBoost := &domain.Boost{
+		Id:              uuid.New(),
+		RemoteAccountId: remoteAccount.Id,
+		ObjectURI:       remotePostURI,
+		URI:             "https://remote.example.com/activities/announce-remote-123",
+	}
+	mockDB.Boosts[existingBoost.Id] = existingBoost
+
+	deps := &InboxDeps{
+		Database:   mockDB,
+		HTTPClient: NewMockHTTPClient(),
+	}
+
+	undoBody := []byte(`{
+		"@context": "https://www.w3.org/ns/activitystreams",
+		"id": "https://remote.example.com/activities/undo-announce-remote-123",
+		"type": "Undo",
+		"actor": "https://remote.example.com/users/bob",
+		"object": {
+			"id": "https://remote.example.com/activities/announce-remote-123",
+			"type": "Announce",
+			"actor": "https://remote.example.com/users/bob",
+			"object": "` + remotePostURI + `"
+		}
+	}`)
+
+	err := handleUndoActivityWithDeps(undoBody, "alice", remoteAccount, deps)
+	if err != nil {
+		t.Fatalf("handleUndoActivityWithDeps failed: %v", err)
+	}
+
+	// Verify boost was removed
+	if len(mockDB.Boosts) != 0 {
+		t.Errorf("Expected 0 boosts after undo, got %d", len(mockDB.Boosts))
+	}
+
+	// Verify boost count on activity was decremented
+	if activity.BoostCount != 0 {
+		t.Errorf("Expected activity boost count to be 0 after undo, got %d", activity.BoostCount)
+	}
+}
+
 // TestHandleAnnounceActivity_ObjectAsMap tests that Announce activity with object as map
 // (containing id field) is handled correctly
 func TestHandleAnnounceActivity_ObjectAsMap(t *testing.T) {

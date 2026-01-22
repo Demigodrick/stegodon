@@ -3249,6 +3249,15 @@ func (db *DB) HasBoostFromRemote(remoteAccountId uuid.UUID, objectURI string) (b
 	return count > 0, nil
 }
 
+// DeleteBoostByRemoteAccountAndObjectURI removes a boost by remote account ID and object URI
+func (db *DB) DeleteBoostByRemoteAccountAndObjectURI(remoteAccountId uuid.UUID, objectURI string) error {
+	return db.wrapTransaction(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM boosts WHERE remote_account_id = ? AND object_uri = ?`,
+			remoteAccountId.String(), objectURI)
+		return err
+	})
+}
+
 // Reply query methods
 
 // ReadRepliesByNoteId returns all direct replies to a local note by its UUID
