@@ -1599,3 +1599,217 @@ func TestHighlightMentionsHTML_WithNewlines(t *testing.T) {
 		t.Errorf("Expected 2 newlines to be preserved, got %d", strings.Count(result, "\n"))
 	}
 }
+
+// Tests for LinkifyRawURLsHTML
+
+func TestLinkifyRawURLsHTML_SingleURL(t *testing.T) {
+	input := "Check out https://example.com for more info"
+	result := LinkifyRawURLsHTML(input)
+
+	expected := `Check out <a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a> for more info`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_MultipleURLs(t *testing.T) {
+	input := "Visit https://example.com and https://test.org"
+	result := LinkifyRawURLsHTML(input)
+
+	if !strings.Contains(result, `<a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a>`) {
+		t.Errorf("Expected first URL to be linkified, got: %s", result)
+	}
+	if !strings.Contains(result, `<a href="https://test.org" target="_blank" rel="noopener noreferrer">https://test.org</a>`) {
+		t.Errorf("Expected second URL to be linkified, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_URLAtStart(t *testing.T) {
+	input := "https://example.com is a great site"
+	result := LinkifyRawURLsHTML(input)
+
+	expected := `<a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a> is a great site`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_OnlyURL(t *testing.T) {
+	input := "https://example.com"
+	result := LinkifyRawURLsHTML(input)
+
+	expected := `<a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a>`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_NoURLs(t *testing.T) {
+	input := "Hello world without any URLs"
+	result := LinkifyRawURLsHTML(input)
+
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_URLWithPath(t *testing.T) {
+	input := "Check https://github.com/deemkeen/stegodon for the code"
+	result := LinkifyRawURLsHTML(input)
+
+	if !strings.Contains(result, `<a href="https://github.com/deemkeen/stegodon" target="_blank" rel="noopener noreferrer">https://github.com/deemkeen/stegodon</a>`) {
+		t.Errorf("Expected URL with path to be linkified, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_URLWithQueryParams(t *testing.T) {
+	input := "Search at https://example.com/search?q=test&page=1 for results"
+	result := LinkifyRawURLsHTML(input)
+
+	if !strings.Contains(result, `<a href="https://example.com/search?q=test&amp;page=1"`) {
+		t.Errorf("Expected URL with query params to be linkified, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_HttpURL(t *testing.T) {
+	input := "Old site at http://example.com"
+	result := LinkifyRawURLsHTML(input)
+
+	if !strings.Contains(result, `<a href="http://example.com" target="_blank" rel="noopener noreferrer">http://example.com</a>`) {
+		t.Errorf("Expected http URL to be linkified, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_PreservesExistingLinks(t *testing.T) {
+	// This tests that URLs already converted by MarkdownLinksToHTML are not double-linkified
+	// After MarkdownLinksToHTML: <a href="https://example.com" ...>click here</a>
+	input := `<a href="https://example.com" target="_blank">click here</a>`
+	result := LinkifyRawURLsHTML(input)
+
+	// The URL inside href should not be converted again
+	// Count occurrences of <a href
+	count := strings.Count(result, "<a href")
+	if count != 1 {
+		t.Errorf("Expected only 1 link, got %d in: %s", count, result)
+	}
+}
+
+func TestLinkifyRawURLsHTML_MixedContent(t *testing.T) {
+	// Test with existing markdown-converted link and a raw URL
+	input := `Check <a href="https://doc.example.com" target="_blank">the docs</a> or visit https://example.com`
+	result := LinkifyRawURLsHTML(input)
+
+	// The raw URL should be linkified
+	if !strings.Contains(result, `<a href="https://example.com" target="_blank" rel="noopener noreferrer">https://example.com</a>`) {
+		t.Errorf("Expected raw URL to be linkified, got: %s", result)
+	}
+	// The existing link should still be there
+	if !strings.Contains(result, `<a href="https://doc.example.com" target="_blank">the docs</a>`) {
+		t.Errorf("Expected existing link to be preserved, got: %s", result)
+	}
+}
+
+// Tests for LinkifyRawURLsTerminal
+
+func TestLinkifyRawURLsTerminal_SingleURL(t *testing.T) {
+	input := "Check out https://example.com for more info"
+	result := LinkifyRawURLsTerminal(input)
+
+	// Should contain OSC 8 hyperlink
+	if !strings.Contains(result, "\033]8;;https://example.com\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink, got: %s", result)
+	}
+	// Should contain the URL text
+	if !strings.Contains(result, "https://example.com") {
+		t.Errorf("Expected URL text to be preserved, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsTerminal_URLAtStart(t *testing.T) {
+	input := "https://example.com is great"
+	result := LinkifyRawURLsTerminal(input)
+
+	// Should contain OSC 8 hyperlink
+	if !strings.Contains(result, "\033]8;;https://example.com\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsTerminal_OnlyURL(t *testing.T) {
+	input := "https://example.com"
+	result := LinkifyRawURLsTerminal(input)
+
+	// Should contain OSC 8 hyperlink
+	if !strings.Contains(result, "\033]8;;https://example.com\033\\") {
+		t.Errorf("Expected OSC 8 hyperlink, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsTerminal_NoURLs(t *testing.T) {
+	input := "Hello world without any URLs"
+	result := LinkifyRawURLsTerminal(input)
+
+	if result != input {
+		t.Errorf("Expected unchanged text, got: %s", result)
+	}
+}
+
+func TestLinkifyRawURLsTerminal_PreservesExistingOSC8Links(t *testing.T) {
+	// This tests that URLs already converted by MarkdownLinksToTerminal are not double-linkified
+	// After MarkdownLinksToTerminal: OSC8 wrapped link
+	input := "\033[38;2;0;255;135;4m\033]8;;https://example.com\033\\click here\033]8;;\033\\\033[39;24m"
+	result := LinkifyRawURLsTerminal(input)
+
+	// The URL inside the existing OSC 8 link should not be converted again
+	// Count occurrences of OSC 8 start sequence
+	count := strings.Count(result, "\033]8;;https://example.com\033\\")
+	if count != 1 {
+		t.Errorf("Expected only 1 OSC 8 link, got %d in: %s", count, result)
+	}
+}
+
+func TestLinkifyRawURLsTerminal_MultipleURLs(t *testing.T) {
+	input := "Visit https://example.com and https://test.org"
+	result := LinkifyRawURLsTerminal(input)
+
+	if !strings.Contains(result, "\033]8;;https://example.com\033\\") {
+		t.Errorf("Expected first OSC 8 hyperlink, got: %s", result)
+	}
+	if !strings.Contains(result, "\033]8;;https://test.org\033\\") {
+		t.Errorf("Expected second OSC 8 hyperlink, got: %s", result)
+	}
+}
+
+// Test that simulates what Mastodon content looks like after StripHTMLTags
+func TestLinkifyRawURLsHTML_AfterStripHTMLTags(t *testing.T) {
+	// Mastodon wraps URLs like: <span class="invisible">https://</span><span>example.com</span>
+	// After StripHTMLTags, this becomes: https://example.com
+	input := StripHTMLTags(`<p><a href="https://example.com" rel="nofollow noopener noreferrer" target="_blank"><span class="invisible">https://</span><span class="">example.com</span><span class="invisible"></span></a></p>`)
+	result := LinkifyRawURLsHTML(input)
+
+	// After strip: "https://example.com"
+	// After linkify: should be a clickable link
+	if !strings.Contains(result, `<a href="https://example.com"`) {
+		t.Errorf("Expected URL to be linkified after StripHTMLTags, got: %s (input was: %s)", result, input)
+	}
+}
+
+// Test empty content
+func TestLinkifyRawURLsHTML_EmptyContent(t *testing.T) {
+	input := ""
+	result := LinkifyRawURLsHTML(input)
+
+	if result != "" {
+		t.Errorf("Expected empty string, got: %s", result)
+	}
+}
+
+// Test whitespace-only content
+func TestLinkifyRawURLsHTML_WhitespaceOnly(t *testing.T) {
+	input := "   "
+	result := LinkifyRawURLsHTML(input)
+
+	if result != "   " {
+		t.Errorf("Expected whitespace preserved, got: %s", result)
+	}
+}

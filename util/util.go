@@ -39,6 +39,14 @@ const (
 
 var urlRegex = regexp.MustCompile(`^https?://[^\s]+$`)
 
+// Regex for finding raw URLs in text (not anchored, for linkification)
+// Matches URLs that are preceded by start-of-string or whitespace
+// Excludes URLs already in markdown link format or HTML attributes
+var rawURLInTextRegex = regexp.MustCompile(`(^|[\s>])(https?://[^\s<>"'\)\]]+)`)
+
+// Regex to check if a URL is inside a markdown link (used to avoid double-linkifying)
+var insideMarkdownLinkRegex = regexp.MustCompile(`\]\(https?://`)
+
 type RsaKeyPair struct {
 	Private string
 	Public  string
@@ -310,6 +318,60 @@ func IsURL(text string) bool {
 	text = strings.TrimSpace(text)
 
 	return urlRegex.MatchString(text)
+}
+
+// LinkifyRawURLsHTML converts raw URLs in text to HTML anchor tags.
+// This should be called AFTER MarkdownLinksToHTML to avoid double-linkifying.
+// URLs that are already inside <a> tags (from markdown conversion) are skipped.
+func LinkifyRawURLsHTML(text string) string {
+	// Replace raw URLs with HTML anchor tags
+	// The regex captures: $1 = preceding whitespace/>, $2 = the URL
+	result := rawURLInTextRegex.ReplaceAllStringFunc(text, func(match string) string {
+		matches := rawURLInTextRegex.FindStringSubmatch(match)
+		if len(matches) == 3 {
+			prefix := matches[1]
+			rawURL := matches[2]
+
+			// Skip if this URL appears to be inside an existing href attribute
+			// by checking if it's preceded by href=" or src="
+			if strings.Contains(text, `href="`+rawURL) || strings.Contains(text, `src="`+rawURL) {
+				return match
+			}
+
+			escapedURL := html.EscapeString(rawURL)
+			return fmt.Sprintf(`%s<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>`, prefix, escapedURL, escapedURL)
+		}
+		return match
+	})
+
+	return result
+}
+
+// LinkifyRawURLsTerminal converts raw URLs in text to OSC 8 terminal hyperlinks.
+// This should be called AFTER MarkdownLinksToTerminal to avoid double-linkifying.
+func LinkifyRawURLsTerminal(text string) string {
+	// Replace raw URLs with OSC 8 hyperlinks
+	// The regex captures: $1 = preceding whitespace, $2 = the URL
+	result := rawURLInTextRegex.ReplaceAllStringFunc(text, func(match string) string {
+		matches := rawURLInTextRegex.FindStringSubmatch(match)
+		if len(matches) == 3 {
+			prefix := matches[1]
+			rawURL := matches[2]
+
+			// Skip if this URL is already inside an OSC 8 sequence
+			if strings.Contains(text, "\033]8;;"+rawURL) {
+				return match
+			}
+
+			// OSC 8 format with link color (RGB) and underline
+			// Format: PREFIX + COLOR_START + OSC8_START + TEXT + OSC8_END + COLOR_RESET
+			return fmt.Sprintf("%s\033[38;2;"+ansiLinkRGB+";4m\033]8;;%s\033\\%s\033]8;;\033\\\033[39;24m",
+				prefix, rawURL, rawURL)
+		}
+		return match
+	})
+
+	return result
 }
 
 // CountVisibleChars counts only the visible characters (runes) in text, ignoring:

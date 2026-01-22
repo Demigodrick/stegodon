@@ -835,6 +835,7 @@ func (m Model) View() string {
 			processedContent = util.UnescapeHTML(processedContent)
 			processedContent = util.MarkdownLinksToTerminal(processedContent)
 		}
+		processedContent = util.LinkifyRawURLsTerminal(processedContent)
 		highlightedContent := util.HighlightHashtagsTerminal(processedContent)
 		highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
 
