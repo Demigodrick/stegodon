@@ -33,6 +33,70 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate release announcement with Claude
+        if: success()
+        id: generate-announcement
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Collect changes since last tag (or last 20 commits if no previous tag)
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log --pretty=format:"- %s" "$PREV_TAG"..HEAD | head -30)
+          else
+            CHANGES=$(git log --pretty=format:"- %s" -20)
+          fi
+
+          # Build prompt for Claude
+          RELEASE_LINK="[$TAG_NAME](https://github.com/deemkeen/stegodon/releases/tag/$TAG_NAME)"
+          PROMPT="You are writing a release announcement for Stegodon, an SSH-first fediverse microblogging server written in Go.
+
+Write a brief, engaging announcement post for version $TAG_NAME. The post will be published on the fediverse (like Mastodon).
+
+Requirements:
+- Start with the 🦣 emoji
+- Keep it under 260 characters
+- Mention 1-2 key highlights from the changes
+- Use this exact markdown link for the version number inline: $RELEASE_LINK (e.g. 'Stegodon $RELEASE_LINK brings...')
+- Be concise and enthusiastic but not over the top
+- You can use relevant hashtags like #fediverse #activitypub #golang
+
+Changes in this release:
+$CHANGES
+
+Respond with ONLY the post text, nothing else."
+
+          # Call Claude API
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "$(jq -n \
+              --arg prompt "$PROMPT" \
+              '{
+                model: "claude-sonnet-4-20250514",
+                max_tokens: 300,
+                messages: [{role: "user", content: $prompt}]
+              }')")
+
+          # Extract the message content
+          MESSAGE=$(echo "$RESPONSE" | jq -r '.content[0].text // empty')
+
+          # Fallback if API fails
+          if [ -z "$MESSAGE" ]; then
+            echo "Claude API failed, using fallback message"
+            MESSAGE="🦣 Stegodon [$TAG_NAME](https://github.com/deemkeen/stegodon/releases/tag/$TAG_NAME) released!"
+          fi
+
+          # Save for next step
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          echo "$MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Announce release on stegodon.social
         if: success()
         env:
@@ -43,11 +107,8 @@ jobs:
           echo "$STEGODON_SSH_KEY" > ~/.ssh/stegodon_key
           chmod 600 ~/.ssh/stegodon_key
 
-          # Post announcement
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          MESSAGE="🦣 Stegodon [$TAG_NAME](https://github.com/deemkeen/stegodon/releases/tag/$TAG_NAME) released!"
-
-          echo "$MESSAGE" | ssh -o StrictHostKeyChecking=no \
+          # Post the generated announcement
+          echo '${{ steps.generate-announcement.outputs.message }}' | ssh -o StrictHostKeyChecking=no \
             -i ~/.ssh/stegodon_key -p 37331 stegodon.social post -
 
           # Cleanup
