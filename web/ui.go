@@ -31,13 +31,21 @@ type IndexPageData struct {
 	PrevPage      int
 	NextPage      int
 	InfoBoxes     []InfoBoxView
-	ServerMessage *domain.ServerMessage
+	ServerMessage *ServerMessageView
 }
 
 type InfoBoxView struct {
 	Title       string        // Plain text title (auto-escaped by template)
 	TitleHTML   template.HTML // Title rendered as markdown/HTML (for icons/formatting)
 	ContentHTML template.HTML // Sanitized HTML content from markdown
+}
+
+// ServerMessageView is the view model for server messages with rendered HTML
+type ServerMessageView struct {
+	Message     string        // Plain text message
+	MessageHTML template.HTML // Markdown-rendered HTML
+	Enabled     bool
+	WebEnabled  bool
 }
 
 type ProfilePageData struct {
@@ -53,7 +61,7 @@ type ProfilePageData struct {
 	PrevPage      int
 	NextPage      int
 	InfoBoxes     []InfoBoxView
-	ServerMessage *domain.ServerMessage
+	ServerMessage *ServerMessageView
 }
 
 type UserView struct {
@@ -202,8 +210,8 @@ func countTotalRepliesForWeb(database *db.DB, noteId uuid.UUID, sslDomain string
 	return localCount
 }
 
-// loadServerMessageForWeb returns the server message if web_enabled is true
-func loadServerMessageForWeb() *domain.ServerMessage {
+// loadServerMessageForWeb returns the server message with rendered HTML if web_enabled is true
+func loadServerMessageForWeb() *ServerMessageView {
 	database := db.GetDB()
 	err, msg := database.ReadServerMessage()
 	if err != nil {
@@ -212,7 +220,13 @@ func loadServerMessageForWeb() *domain.ServerMessage {
 	}
 	// Only return if web display is enabled
 	if msg != nil && msg.WebEnabled && msg.Message != "" {
-		return msg
+		htmlContent := convertMarkdownToHTML(msg.Message)
+		return &ServerMessageView{
+			Message:     msg.Message,
+			MessageHTML: template.HTML(htmlContent),
+			Enabled:     msg.Enabled,
+			WebEnabled:  msg.WebEnabled,
+		}
 	}
 	return nil
 }
@@ -474,7 +488,7 @@ type SinglePostPageData struct {
 	ParentPost    *PostView  // Parent post if this is a reply (nil if not a reply)
 	Replies       []PostView // Replies to this post
 	InfoBoxes     []InfoBoxView
-	ServerMessage *domain.ServerMessage
+	ServerMessage *ServerMessageView
 }
 
 type TagPageData struct {
@@ -490,7 +504,7 @@ type TagPageData struct {
 	PrevPage      int
 	NextPage      int
 	InfoBoxes     []InfoBoxView
-	ServerMessage *domain.ServerMessage
+	ServerMessage *ServerMessageView
 }
 
 func HandleSinglePost(c *gin.Context, conf *util.AppConfig) {
