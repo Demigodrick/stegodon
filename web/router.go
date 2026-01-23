@@ -29,6 +29,53 @@ var embeddedLogo []byte
 //go:embed static/style.css
 var embeddedCSS []byte
 
+// isActorFromRelay checks if an actor URI matches any relay subscription (exact or domain match)
+func isActorFromRelay(actorURI string, database *db.DB) bool {
+	// First try exact match
+	err, relay := database.ReadRelayByActorURI(actorURI)
+	if err == nil && relay != nil {
+		return true
+	}
+
+	// Fallback: domain-based matching
+	actorDomain := extractDomainFromURI(actorURI)
+	if actorDomain == "" {
+		return false
+	}
+
+	err, relays := database.ReadActiveRelays()
+	if err != nil || relays == nil {
+		return false
+	}
+
+	for _, relay := range *relays {
+		relayDomain := extractDomainFromURI(relay.ActorURI)
+		if relayDomain != "" && relayDomain == actorDomain {
+			return true
+		}
+	}
+
+	return false
+}
+
+// extractDomainFromURI extracts the domain (host) from a URI
+func extractDomainFromURI(uri string) string {
+	if !strings.HasPrefix(uri, "http://") && !strings.HasPrefix(uri, "https://") {
+		return ""
+	}
+	start := strings.Index(uri, "://")
+	if start == -1 {
+		return ""
+	}
+	start += 3
+	rest := uri[start:]
+	end := strings.Index(rest, "/")
+	if end == -1 {
+		return rest
+	}
+	return rest[:end]
+}
+
 func Router(conf *util.AppConfig) (*gin.Engine, error) {
 	log.Printf("Initializing HTTP router on port %d", conf.Conf.HttpPort)
 
@@ -389,18 +436,19 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 
 			// Check if this is relay content (activity from an active relay)
 			// Relays send to shared inbox, not individual user inboxes
+			// Only route as relay content if the actor actually matches a relay subscription
 			if targetUsername == "" {
 				activityType, _ := activity["type"].(string)
-				if activityType == "Create" || activityType == "Announce" {
+				actorURI, _ := activity["actor"].(string)
+				if (activityType == "Create" || activityType == "Announce") && actorURI != "" {
 					database := db.GetDB()
-					// Check if we have any active relays - if so, process relay content
-					err, relays := database.ReadActiveRelays()
-					if err == nil && relays != nil && len(*relays) > 0 {
+					// Check if actor matches a relay subscription (exact or domain match)
+					if isActorFromRelay(actorURI, database) {
 						// Get any local user to process this (relay content is instance-wide)
 						err, accounts := database.ReadAllAccounts()
 						if err == nil && accounts != nil && len(*accounts) > 0 {
 							targetUsername = (*accounts)[0].Username
-							log.Printf("Shared inbox: Routing relay content to %s", targetUsername)
+							log.Printf("Shared inbox: Routing relay content from %s to %s", actorURI, targetUsername)
 						}
 					}
 				}
