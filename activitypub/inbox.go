@@ -688,56 +688,40 @@ func handleCreateActivityWithDeps(body []byte, username string, isFromRelay bool
 	}
 
 	// Process tags (hashtags and mentions) from the incoming activity
-	// Store mentions in the database for future notification support
+	// Note: We don't store mentions for remote activities in note_mentions table
+	// because it has a FK constraint to notes table, but remote content is in activities.
+	// We still create notifications for local users who are mentioned.
 	if len(create.Object.Tag) > 0 {
 		for _, tag := range create.Object.Tag {
 			switch tag.Type {
 			case "Mention":
-				log.Printf("Inbox: Post mentions %s (%s)", tag.Name, tag.Href)
-
-				// Store the mention in the database
 				// Parse username and domain from @username@domain format
 				mentionName := strings.TrimPrefix(tag.Name, "@")
 				parts := strings.SplitN(mentionName, "@", 2)
 				if len(parts) == 2 {
-					mention := &domain.NoteMention{
-						Id:                uuid.New(),
-						NoteId:            activityRecord.Id, // Use activity ID as the note reference
-						MentionedActorURI: tag.Href,
-						MentionedUsername: parts[0],
-						MentionedDomain:   parts[1],
-						CreatedAt:         time.Now(),
-					}
-					if err := database.CreateNoteMention(mention); err != nil {
-						log.Printf("Inbox: Failed to store mention %s: %v", tag.Name, err)
-					} else {
-						log.Printf("Inbox: Stored mention %s for activity %s", tag.Name, activityRecord.Id)
-
-						// Create notification if the mentioned user is local
-						// Need to check if this domain matches our local domain
-						conf, confErr := util.ReadConf()
-						if confErr == nil && conf != nil && parts[1] == conf.Conf.SslDomain {
-							err, mentionedUser := database.ReadAccByUsername(parts[0])
-							if err == nil && mentionedUser != nil {
-								preview := util.StripHTMLTags(create.Object.Content)
-								if len(preview) > 100 {
-									preview = preview[:100] + "..."
-								}
-								notification := &domain.Notification{
-									Id:               uuid.New(),
-									AccountId:        mentionedUser.Id,
-									NotificationType: domain.NotificationMention,
-									ActorId:          remoteActor.Id,
-									ActorUsername:    remoteActor.Username,
-									ActorDomain:      remoteActor.Domain,
-									NoteURI:          create.Object.ID,
-									NotePreview:      preview,
-									Read:             false,
-									CreatedAt:        time.Now(),
-								}
-								if err := database.CreateNotification(notification); err != nil {
-									log.Printf("Inbox: Failed to create mention notification: %v", err)
-								}
+					// Create notification if the mentioned user is local
+					conf, confErr := util.ReadConf()
+					if confErr == nil && conf != nil && parts[1] == conf.Conf.SslDomain {
+						err, mentionedUser := database.ReadAccByUsername(parts[0])
+						if err == nil && mentionedUser != nil {
+							preview := util.StripHTMLTags(create.Object.Content)
+							if len(preview) > 100 {
+								preview = preview[:100] + "..."
+							}
+							notification := &domain.Notification{
+								Id:               uuid.New(),
+								AccountId:        mentionedUser.Id,
+								NotificationType: domain.NotificationMention,
+								ActorId:          remoteActor.Id,
+								ActorUsername:    remoteActor.Username,
+								ActorDomain:      remoteActor.Domain,
+								NoteURI:          create.Object.ID,
+								NotePreview:      preview,
+								Read:             false,
+								CreatedAt:        time.Now(),
+							}
+							if err := database.CreateNotification(notification); err != nil {
+								log.Printf("Inbox: Failed to create mention notification: %v", err)
 							}
 						}
 					}
