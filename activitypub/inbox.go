@@ -179,13 +179,21 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 
 	// If this is relay content, check if the specific relay is paused
 	if isFromRelay {
+		log.Printf("Inbox: [RELAY] Detected relay content - signer: %s, actor: %s", signerActorURI, activity.Actor)
 		relay := findRelayByActorDomain(signerActorURI, database)
-		if relay != nil && relay.Paused {
-			// This specific relay is paused - log but don't save
-			log.Printf("Inbox: Relay content from %s skipped (relay %s is paused)", activity.Actor, relay.ActorURI)
+		if relay == nil {
+			// Signer differs from actor but no matching relay found
+			// Block unrecognized relay content as a safety measure
+			log.Printf("Inbox: [RELAY] Blocking - no relay subscription matches signer %s", signerActorURI)
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
+		if relay.Paused {
+			log.Printf("Inbox: [RELAY] Blocking - relay %s is paused", relay.ActorURI)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		log.Printf("Inbox: [RELAY] Accepted via relay %s", relay.ActorURI)
 	}
 
 	// Store activity record for non-Create/non-Announce types immediately.
@@ -922,8 +930,13 @@ func handleAnnounceActivityWithDeps(body []byte, username string, deps *InboxDep
 	// If this is from a relay, check if paused before storing
 	if isFromRelay {
 		relay := findRelayByActorDomain(announceActivity.Actor, deps.Database)
-		if relay != nil && relay.Paused {
-			log.Printf("Inbox: Relay Announce from %s skipped (relay %s is paused)", announceActivity.Actor, relay.ActorURI)
+		if relay == nil {
+			// Actor looks like a relay but no matching subscription
+			log.Printf("Inbox: [RELAY] Announce from unrecognized actor %s blocked", announceActivity.Actor)
+			return nil
+		}
+		if relay.Paused {
+			log.Printf("Inbox: [RELAY] Announce from %s skipped (relay %s is paused)", announceActivity.Actor, relay.ActorURI)
 			return nil
 		}
 		return handleRelayAnnounce(announceActivity.ID, objectURI, embeddedObject, deps)
@@ -1279,18 +1292,25 @@ func isActorFromAnyRelay(actorURI string, database Database) bool {
 // For FediBuzz: matches exact ActorURI (includes tag path) for per-tag pause control.
 // For other relays: falls back to domain matching.
 func findRelayByActorDomain(actorURI string, database Database) *domain.Relay {
+	log.Printf("Inbox: [findRelayByActorDomain] Looking for: %s", actorURI)
+
 	// Get all active relays
 	err, relays := database.ReadActiveRelays()
 	if err != nil || relays == nil {
-		log.Printf("Inbox: Error reading relays for domain check: %v", err)
+		log.Printf("Inbox: [findRelayByActorDomain] Error reading relays: %v", err)
 		return nil
 	}
+
+	log.Printf("Inbox: [findRelayByActorDomain] Have %d active relays", len(*relays))
 
 	// First: try exact ActorURI match (works for FediBuzz tag subscriptions)
 	for i := range *relays {
 		relay := &(*relays)[i]
+		log.Printf("Inbox: [findRelayByActorDomain] Checking exact: %s == %s ? %v",
+			relay.ActorURI, actorURI, relay.ActorURI == actorURI)
 		if relay.ActorURI == actorURI {
-			log.Printf("Inbox: Actor %s matched relay exactly: %s", actorURI, relay.ActorURI)
+			log.Printf("Inbox: [findRelayByActorDomain] Exact match found: %s (paused=%v)",
+				relay.ActorURI, relay.Paused)
 			return relay
 		}
 	}
@@ -1298,19 +1318,23 @@ func findRelayByActorDomain(actorURI string, database Database) *domain.Relay {
 	// Fallback: domain-based matching for other relay types (e.g., YUKIMOCHI)
 	actorDomain := extractDomainFromURI(actorURI)
 	if actorDomain == "" {
+		log.Printf("Inbox: [findRelayByActorDomain] Could not extract domain from %s", actorURI)
 		return nil
 	}
+
+	log.Printf("Inbox: [findRelayByActorDomain] No exact match, trying domain match for: %s", actorDomain)
 
 	for i := range *relays {
 		relay := &(*relays)[i]
 		relayDomain := extractDomainFromURI(relay.ActorURI)
 		if relayDomain != "" && relayDomain == actorDomain {
-			log.Printf("Inbox: Actor %s from relay domain %s (matched relay: %s)",
-				actorURI, actorDomain, relay.ActorURI)
+			log.Printf("Inbox: [findRelayByActorDomain] Domain match found: %s (paused=%v)",
+				relay.ActorURI, relay.Paused)
 			return relay
 		}
 	}
 
+	log.Printf("Inbox: [findRelayByActorDomain] No relay found for %s", actorURI)
 	return nil
 }
 
