@@ -1275,15 +1275,10 @@ func isActorFromAnyRelay(actorURI string, database Database) bool {
 	return relay != nil
 }
 
-// findRelayByActorDomain finds a relay subscription that matches the actor's domain.
-// Returns nil if no matching relay is found.
+// findRelayByActorDomain finds a relay subscription that matches the actor.
+// For FediBuzz: matches exact ActorURI (includes tag path) for per-tag pause control.
+// For other relays: falls back to domain matching.
 func findRelayByActorDomain(actorURI string, database Database) *domain.Relay {
-	// Extract domain from the actor URI
-	actorDomain := extractDomainFromURI(actorURI)
-	if actorDomain == "" {
-		return nil
-	}
-
 	// Get all active relays
 	err, relays := database.ReadActiveRelays()
 	if err != nil || relays == nil {
@@ -1291,12 +1286,27 @@ func findRelayByActorDomain(actorURI string, database Database) *domain.Relay {
 		return nil
 	}
 
-	// Check if the actor's domain matches any relay's domain
+	// First: try exact ActorURI match (works for FediBuzz tag subscriptions)
+	for i := range *relays {
+		relay := &(*relays)[i]
+		if relay.ActorURI == actorURI {
+			log.Printf("Inbox: Actor %s matched relay exactly: %s", actorURI, relay.ActorURI)
+			return relay
+		}
+	}
+
+	// Fallback: domain-based matching for other relay types (e.g., YUKIMOCHI)
+	actorDomain := extractDomainFromURI(actorURI)
+	if actorDomain == "" {
+		return nil
+	}
+
 	for i := range *relays {
 		relay := &(*relays)[i]
 		relayDomain := extractDomainFromURI(relay.ActorURI)
 		if relayDomain != "" && relayDomain == actorDomain {
-			log.Printf("Inbox: Actor %s is from relay domain %s (matched relay: %s)", actorURI, actorDomain, relay.ActorURI)
+			log.Printf("Inbox: Actor %s from relay domain %s (matched relay: %s)",
+				actorURI, actorDomain, relay.ActorURI)
 			return relay
 		}
 	}
