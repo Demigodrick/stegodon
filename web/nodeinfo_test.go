@@ -436,3 +436,81 @@ func TestNodeInfo20_OpenRegistrations_ClosedOverridesSingle(t *testing.T) {
 		t.Error("openRegistrations should be false when STEGODON_CLOSED=true regardless of other settings")
 	}
 }
+
+func TestGetNodeInfo21(t *testing.T) {
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "stegodon.example"
+	conf.Conf.Closed = false
+
+	result := GetNodeInfo21(conf)
+
+	var nodeInfo map[string]any
+	if err := json.Unmarshal([]byte(result), &nodeInfo); err != nil {
+		t.Fatalf("Failed to parse NodeInfo 2.1 JSON: %v", err)
+	}
+
+	// Verify version is 2.1
+	if nodeInfo["version"] != "2.1" {
+		t.Errorf("Expected version to be '2.1', got: %v", nodeInfo["version"])
+	}
+
+	// Verify software has repository and homepage
+	software, ok := nodeInfo["software"].(map[string]any)
+	if !ok {
+		t.Fatal("software field should be an object")
+	}
+
+	if software["name"] != "stegodon" {
+		t.Errorf("Expected software.name to be 'stegodon', got: %v", software["name"])
+	}
+
+	if software["repository"] != "https://github.com/deemkeen/stegodon" {
+		t.Errorf("Expected software.repository to be 'https://github.com/deemkeen/stegodon', got: %v", software["repository"])
+	}
+
+	if software["homepage"] != "https://stegodon.social" {
+		t.Errorf("Expected software.homepage to be 'https://stegodon.social', got: %v", software["homepage"])
+	}
+}
+
+func TestGetWellKnownNodeInfo_IncludesBothVersions(t *testing.T) {
+	conf := &util.AppConfig{}
+	conf.Conf.SslDomain = "stegodon.example"
+
+	result := GetWellKnownNodeInfo(conf)
+
+	var wellKnown WellKnownNodeInfo
+	if err := json.Unmarshal([]byte(result), &wellKnown); err != nil {
+		t.Fatalf("Failed to parse well-known nodeinfo JSON: %v", err)
+	}
+
+	// Verify we have 2 links
+	if len(wellKnown.Links) != 2 {
+		t.Fatalf("Expected 2 links, got: %d", len(wellKnown.Links))
+	}
+
+	// Find both NodeInfo 2.0 and 2.1 links
+	found20 := false
+	found21 := false
+	for _, link := range wellKnown.Links {
+		if link.Rel == "http://nodeinfo.diaspora.software/ns/schema/2.0" {
+			found20 = true
+			if link.Href != "https://stegodon.example/nodeinfo/2.0" {
+				t.Errorf("NodeInfo 2.0 href incorrect: %s", link.Href)
+			}
+		}
+		if link.Rel == "http://nodeinfo.diaspora.software/ns/schema/2.1" {
+			found21 = true
+			if link.Href != "https://stegodon.example/nodeinfo/2.1" {
+				t.Errorf("NodeInfo 2.1 href incorrect: %s", link.Href)
+			}
+		}
+	}
+
+	if !found20 {
+		t.Error("NodeInfo 2.0 link not found in well-known document")
+	}
+	if !found21 {
+		t.Error("NodeInfo 2.1 link not found in well-known document")
+	}
+}

@@ -138,6 +138,88 @@ func GetNodeInfo20(conf *util.AppConfig) string {
 	return nodeInfoJSON
 }
 
+// GetNodeInfo21 returns a NodeInfo 2.1 JSON response
+// NodeInfo 2.1 adds repository and homepage fields to software
+func GetNodeInfo21(conf *util.AppConfig) string {
+	database := db.GetDB()
+
+	// Get statistics from database
+	totalUsers, err := database.CountAccounts()
+	if err != nil {
+		log.Printf("Failed to count accounts: %v", err)
+		totalUsers = 0
+	}
+
+	localPosts, err := database.CountLocalPosts()
+	if err != nil {
+		log.Printf("Failed to count local posts: %v", err)
+		localPosts = 0
+	}
+
+	activeMonth, err := database.CountActiveUsersMonth()
+	if err != nil {
+		log.Printf("Failed to count active users (month): %v", err)
+		activeMonth = 0
+	}
+
+	activeHalfyear, err := database.CountActiveUsersHalfYear()
+	if err != nil {
+		log.Printf("Failed to count active users (half year): %v", err)
+		activeHalfyear = 0
+	}
+
+	// Determine if registrations are open
+	openRegistrations := !conf.Conf.Closed
+	if conf.Conf.Single && totalUsers >= 1 {
+		openRegistrations = false
+	}
+
+	// Get node description
+	nodeDescription := conf.Conf.NodeDescription
+	if nodeDescription == "" {
+		nodeDescription = "A SSH-first federated microblog"
+	}
+
+	// Build NodeInfo 2.1 response with repository and homepage
+	nodeInfoJSON := fmt.Sprintf(`{
+  "version": "2.1",
+  "software": {
+    "name": "stegodon",
+    "version": "%s",
+    "repository": "https://github.com/deemkeen/stegodon",
+    "homepage": "https://stegodon.social"
+  },
+  "protocols": ["activitypub"],
+  "services": {
+    "outbound": [],
+    "inbound": []
+  },
+  "usage": {
+    "users": {
+      "total": %d,
+      "activeMonth": %d,
+      "activeHalfyear": %d
+    },
+    "localPosts": %d
+  },
+  "openRegistrations": %t,
+  "metadata": {
+    "nodeName": "Stegodon",
+    "nodeDescription": "%s"
+  }
+}`,
+		util.GetVersion(),
+		totalUsers,
+		activeMonth,
+		activeHalfyear,
+		localPosts,
+		openRegistrations,
+		nodeDescription,
+	)
+
+	return nodeInfoJSON
+}
+
 // GetWellKnownNodeInfo returns the /.well-known/nodeinfo discovery document
 func GetWellKnownNodeInfo(conf *util.AppConfig) string {
 	wellKnown := WellKnownNodeInfo{
@@ -145,6 +227,10 @@ func GetWellKnownNodeInfo(conf *util.AppConfig) string {
 			{
 				Rel:  "http://nodeinfo.diaspora.software/ns/schema/2.0",
 				Href: "https://" + conf.Conf.SslDomain + "/nodeinfo/2.0",
+			},
+			{
+				Rel:  "http://nodeinfo.diaspora.software/ns/schema/2.1",
+				Href: "https://" + conf.Conf.SslDomain + "/nodeinfo/2.1",
 			},
 		},
 	}

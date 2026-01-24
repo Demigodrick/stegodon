@@ -634,6 +634,11 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 			c.Render(200, render.String{Format: GetNodeInfo20(conf)})
 		})
 
+		g.GET("/nodeinfo/2.1", func(c *gin.Context) {
+			c.Header("Content-Type", "application/json; profile=\"http://nodeinfo.diaspora.software/ns/schema/2.1#\"; charset=utf-8")
+			c.Render(200, render.String{Format: GetNodeInfo21(conf)})
+		})
+
 	}
 	return g, nil
 }
