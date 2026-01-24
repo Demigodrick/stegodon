@@ -85,19 +85,6 @@ func Router(conf *util.AppConfig) (*gin.Engine, error) {
 
 	g := gin.New()
 	g.Use(gin.Logger(), gin.Recovery())
-
-	// Handle HEAD requests automatically for all GET routes
-	// Gin doesn't do this by default, but many clients (including FediBuzz) expect it
-	g.Use(func(c *gin.Context) {
-		if c.Request.Method == "HEAD" {
-			c.Request.Method = "GET"
-			c.Next()
-			// Body is automatically stripped for HEAD by Go's http package
-		} else {
-			c.Next()
-		}
-	})
-
 	g.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	// Load HTML templates from embedded filesystem (must be before routes)

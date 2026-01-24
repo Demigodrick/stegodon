@@ -20,6 +20,19 @@ import (
 	"github.com/deemkeen/stegodon/web"
 )
 
+// headToGetWrapper wraps an http.Handler to convert HEAD requests to GET.
+// This is needed because Gin's router matches routes BEFORE middleware runs,
+// so a middleware-based approach doesn't work for HEAD support.
+// Go's http package automatically strips the body for HEAD responses.
+func headToGetWrapper(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "HEAD" {
+			r.Method = "GET"
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 // App represents the main application with all its servers and dependencies
 type App struct {
 	config             *util.AppConfig
@@ -117,7 +130,7 @@ func (a *App) Initialize() error {
 
 	a.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", a.config.Conf.HttpPort),
-		Handler: router,
+		Handler: headToGetWrapper(router),
 	}
 
 	return nil
