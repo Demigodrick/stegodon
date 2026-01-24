@@ -62,8 +62,10 @@ func SendActivityWithDeps(activity any, inboxURI string, localAccount *domain.Ac
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
 
-	// Debug: log request body
+	// Debug: log request details
 	log.Printf("Outbox: Sending to %s: %s", inboxURI, string(activityJSON))
+	log.Printf("Outbox: Headers - Host: %s, Date: %s, Digest: %s", req.Header.Get("Host"), req.Header.Get("Date"), req.Header.Get("Digest"))
+	log.Printf("Outbox: Signature: %s", req.Header.Get("Signature"))
 
 	// Send request
 	resp, err := client.Do(req)
