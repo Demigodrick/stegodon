@@ -20,7 +20,7 @@ NodeInfo is a standardized way of exposing server metadata. Federation-aware too
 
 **Route:** `GET /.well-known/nodeinfo`
 
-Returns discovery document pointing to NodeInfo 2.0 endpoint.
+Returns discovery document pointing to NodeInfo 2.0 and 2.1 endpoints.
 
 ```json
 {
@@ -28,6 +28,10 @@ Returns discovery document pointing to NodeInfo 2.0 endpoint.
         {
             "rel": "http://nodeinfo.diaspora.software/ns/schema/2.0",
             "href": "https://example.com/nodeinfo/2.0"
+        },
+        {
+            "rel": "http://nodeinfo.diaspora.software/ns/schema/2.1",
+            "href": "https://example.com/nodeinfo/2.1"
         }
     ]
 }
@@ -38,6 +42,12 @@ Returns discovery document pointing to NodeInfo 2.0 endpoint.
 **Route:** `GET /nodeinfo/2.0`
 
 Returns full server statistics and metadata.
+
+### NodeInfo 2.1
+
+**Route:** `GET /nodeinfo/2.1`
+
+Returns server statistics with additional software metadata (repository, homepage).
 
 ---
 
@@ -70,6 +80,47 @@ Returns full server statistics and metadata.
     }
 }
 ```
+
+---
+
+## NodeInfo 2.1 Response
+
+```json
+{
+    "version": "2.1",
+    "software": {
+        "name": "stegodon",
+        "version": "1.6.0",
+        "repository": "https://github.com/deemkeen/stegodon",
+        "homepage": "https://stegodon.social"
+    },
+    "protocols": ["activitypub"],
+    "services": {
+        "outbound": [],
+        "inbound": []
+    },
+    "usage": {
+        "users": {
+            "total": 10,
+            "activeMonth": 5,
+            "activeHalfyear": 8
+        },
+        "localPosts": 150
+    },
+    "openRegistrations": true,
+    "metadata": {
+        "nodeName": "Stegodon",
+        "nodeDescription": "A SSH-first federated microblog"
+    }
+}
+```
+
+### NodeInfo 2.1 Additional Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `software.repository` | string | URL to source code repository |
+| `software.homepage` | string | URL to software homepage |
 
 ---
 
@@ -221,6 +272,10 @@ func GetWellKnownNodeInfo(conf *util.AppConfig) string {
                 Rel:  "http://nodeinfo.diaspora.software/ns/schema/2.0",
                 Href: "https://" + conf.Conf.SslDomain + "/nodeinfo/2.0",
             },
+            {
+                Rel:  "http://nodeinfo.diaspora.software/ns/schema/2.1",
+                Href: "https://" + conf.Conf.SslDomain + "/nodeinfo/2.1",
+            },
         },
     }
     jsonBytes, _ := json.Marshal(wellKnown)
@@ -265,10 +320,11 @@ func GetNodeInfo20(conf *util.AppConfig) string {
 
 ## Content-Type
 
-Both endpoints return:
-```
-Content-Type: application/json; charset=utf-8
-```
+| Endpoint | Content-Type |
+|----------|--------------|
+| `/.well-known/nodeinfo` | `application/json; charset=utf-8` |
+| `/nodeinfo/2.0` | `application/json; profile="http://nodeinfo.diaspora.software/ns/schema/2.0#"; charset=utf-8` |
+| `/nodeinfo/2.1` | `application/json; profile="http://nodeinfo.diaspora.software/ns/schema/2.1#"; charset=utf-8` |
 
 ---
 
@@ -294,9 +350,12 @@ NodeInfo responses are generated fresh on each request. No caching is implemente
 
 ## Standards Compliance
 
-- Implements NodeInfo 2.0 schema
-- Schema URL: `http://nodeinfo.diaspora.software/ns/schema/2.0`
+- Implements NodeInfo 2.0 and 2.1 schemas
+- Schema URLs:
+  - `http://nodeinfo.diaspora.software/ns/schema/2.0`
+  - `http://nodeinfo.diaspora.software/ns/schema/2.1`
 - Documentation: https://nodeinfo.diaspora.software/
+- NodeInfo 2.1 adds `repository` and `homepage` fields to `software` object
 
 ---
 

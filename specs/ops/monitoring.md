@@ -122,14 +122,15 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 
 ### Overview
 
-NodeInfo 2.0 provides standardized server metadata for federation discovery.
+NodeInfo 2.0/2.1 provides standardized server metadata for federation discovery.
 
 ### Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/.well-known/nodeinfo` | Discovery document |
+| `/.well-known/nodeinfo` | Discovery document (links to 2.0 and 2.1) |
 | `/nodeinfo/2.0` | NodeInfo 2.0 schema |
+| `/nodeinfo/2.1` | NodeInfo 2.1 schema (adds repository, homepage) |
 
 ### Statistics Collection
 

@@ -146,6 +146,7 @@ HTTP Server (Gin)
             ├── GET /.well-known/webfinger
             ├── GET /.well-known/nodeinfo
             ├── GET /nodeinfo/2.0
+            ├── GET /nodeinfo/2.1
             ├── GET /users/:username           (actor profile)
             ├── GET /users/:username/outbox
             ├── GET /users/:username/followers

@@ -7,7 +7,7 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 - [ActivityPub](https://www.w3.org/TR/activitypub/) (Server-to-Server)
 - [WebFinger](https://tools.ietf.org/html/rfc7033)
 - [HTTP Signatures](https://datatracker.ietf.org/doc/html/draft-cavage-http-signatures) (RSA-SHA256)
-- [NodeInfo 2.0](https://nodeinfo.diaspora.software/)
+- [NodeInfo 2.0/2.1](https://nodeinfo.diaspora.software/)
 
 ## Supported Activities
 
@@ -62,8 +62,9 @@ Stegodon implements ActivityPub Server-to-Server (S2S) federation, allowing user
 ## Discovery
 
 - `/.well-known/webfinger` - WebFinger endpoint (JRD format)
-- `/.well-known/nodeinfo` - NodeInfo discovery
+- `/.well-known/nodeinfo` - NodeInfo discovery (links to 2.0 and 2.1)
 - `/nodeinfo/2.0` - NodeInfo 2.0 endpoint
+- `/nodeinfo/2.1` - NodeInfo 2.1 endpoint (adds repository, homepage)
 
 ## HTTP Signatures
 

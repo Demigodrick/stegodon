@@ -143,8 +143,9 @@ Returns HTTP 413 if exceeded.
 | Method | Path | Handler | Description |
 |--------|------|---------|-------------|
 | GET | `/.well-known/webfinger` | `GetWebfinger` | User discovery |
-| GET | `/.well-known/nodeinfo` | `GetWellKnownNodeInfo` | NodeInfo links |
+| GET | `/.well-known/nodeinfo` | `GetWellKnownNodeInfo` | NodeInfo links (2.0, 2.1) |
 | GET | `/nodeinfo/2.0` | `GetNodeInfo20` | Server statistics |
+| GET | `/nodeinfo/2.1` | `GetNodeInfo21` | Server statistics (with repository, homepage) |
 
 ---
 

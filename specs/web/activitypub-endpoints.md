@@ -319,6 +319,10 @@ GET /.well-known/webfinger?resource=acct:alice@example.com
         {
             "rel": "http://nodeinfo.diaspora.software/ns/schema/2.0",
             "href": "https://example.com/nodeinfo/2.0"
+        },
+        {
+            "rel": "http://nodeinfo.diaspora.software/ns/schema/2.1",
+            "href": "https://example.com/nodeinfo/2.1"
         }
     ]
 }
@@ -333,7 +337,7 @@ GET /.well-known/webfinger?resource=acct:alice@example.com
     "version": "2.0",
     "software": {
         "name": "stegodon",
-        "version": "1.4.3"
+        "version": "1.6.0"
     },
     "protocols": ["activitypub"],
     "usage": {
@@ -346,8 +350,40 @@ GET /.well-known/webfinger?resource=acct:alice@example.com
     },
     "openRegistrations": true,
     "metadata": {
-        "nodeName": "example.com",
-        "nodeDescription": "A stegodon instance"
+        "nodeName": "Stegodon",
+        "nodeDescription": "A SSH-first federated microblog"
+    }
+}
+```
+
+### NodeInfo 2.1
+
+**Route:** `GET /nodeinfo/2.1`
+
+NodeInfo 2.1 adds `repository` and `homepage` fields to the `software` object.
+
+```json
+{
+    "version": "2.1",
+    "software": {
+        "name": "stegodon",
+        "version": "1.6.0",
+        "repository": "https://github.com/deemkeen/stegodon",
+        "homepage": "https://stegodon.social"
+    },
+    "protocols": ["activitypub"],
+    "usage": {
+        "users": {
+            "total": 10,
+            "activeMonth": 5,
+            "activeHalfyear": 8
+        },
+        "localPosts": 150
+    },
+    "openRegistrations": true,
+    "metadata": {
+        "nodeName": "Stegodon",
+        "nodeDescription": "A SSH-first federated microblog"
     }
 }
 ```

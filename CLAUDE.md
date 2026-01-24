@@ -223,7 +223,7 @@ type HTTPClient interface {
 - Create/Update/Delete activities
 - Like activities
 - Announce activities (relay content)
-- WebFinger, NodeInfo 2.0
+- WebFinger, NodeInfo 2.0/2.1
 
 ## Relay Support
 
