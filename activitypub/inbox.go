@@ -217,11 +217,17 @@ func HandleInboxWithDeps(w http.ResponseWriter, r *http.Request, username string
 		if err := database.CreateActivity(activityRecord); err != nil {
 			// Check if this is a duplicate (already processed)
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				log.Printf("Inbox: Activity %s already processed, returning success", activity.ID)
-				w.WriteHeader(http.StatusAccepted)
-				return
+				// For Accept activities, still process them - relay status needs updating on re-subscribe
+				if activity.Type == "Accept" {
+					log.Printf("Inbox: Activity %s is duplicate, but processing Accept anyway for relay status", activity.ID)
+				} else {
+					log.Printf("Inbox: Activity %s already processed, returning success", activity.ID)
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+			} else {
+				log.Printf("Inbox: Failed to store activity: %v", err)
 			}
-			log.Printf("Inbox: Failed to store activity: %v", err)
 			// Don't fail the request, we'll process it anyway
 		}
 	}

@@ -62,6 +62,9 @@ func SendActivityWithDeps(activity any, inboxURI string, localAccount *domain.Ac
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
 
+	// Debug: log request body
+	log.Printf("Outbox: Sending to %s: %s", inboxURI, string(activityJSON))
+
 	// Send request
 	resp, err := client.Do(req)
 	if err != nil {
@@ -70,6 +73,9 @@ func SendActivityWithDeps(activity any, inboxURI string, localAccount *domain.Ac
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Read response body for debugging
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("Outbox: Error response from %s: status=%d body=%s", inboxURI, resp.StatusCode, string(respBody))
 		return fmt.Errorf("remote server returned status: %d", resp.StatusCode)
 	}
 
