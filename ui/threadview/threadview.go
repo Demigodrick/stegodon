@@ -831,6 +831,7 @@ func (m Model) View() string {
 
 		// Format content - Unescape HTML entities, convert Markdown links, then highlight hashtags and mentions (same order as myposts)
 		processedContent := post.Content
+		processedContent = util.TruncateContent(processedContent, common.MaxDisplayContentLength)
 		if post.IsLocal {
 			processedContent = util.UnescapeHTML(processedContent)
 			processedContent = util.MarkdownLinksToTerminal(processedContent)

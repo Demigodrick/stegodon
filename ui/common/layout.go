@@ -78,6 +78,10 @@ const (
 
 	// HoursPerDay is used for time formatting calculations
 	HoursPerDay = 24
+
+	// MaxDisplayContentLength is the maximum characters to display for note content
+	// Users can press 'o' to view full content via original link
+	MaxDisplayContentLength = 1000
 )
 
 // VerticalLayoutOffset returns the total vertical space taken by header, footer, and margins

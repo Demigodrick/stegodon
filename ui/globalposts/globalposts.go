@@ -447,6 +447,7 @@ func (m Model) View() string {
 				} else {
 					// Normal content display
 					processedContent := post.Message
+					processedContent = util.TruncateContent(processedContent, common.MaxDisplayContentLength)
 					if !post.IsRemote {
 						processedContent = util.UnescapeHTML(processedContent)
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
@@ -471,6 +472,7 @@ func (m Model) View() string {
 					Width(contentWidth)
 
 				processedContent := post.Message
+				processedContent = util.TruncateContent(processedContent, common.MaxDisplayContentLength)
 				if !post.IsRemote {
 					processedContent = util.UnescapeHTML(processedContent)
 					processedContent = util.MarkdownLinksToTerminal(processedContent)

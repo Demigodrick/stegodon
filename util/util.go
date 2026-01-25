@@ -710,3 +710,42 @@ func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool
 
 	return username, domain, true
 }
+
+// NormalizeEmojis removes emoji modifiers that cause terminal width calculation issues.
+// This includes:
+// - Skin tone modifiers (U+1F3FB to U+1F3FF): 🏻🏼🏽🏾🏿
+// - Variation selectors (U+FE0E text, U+FE0F emoji)
+// - Zero Width Joiner (U+200D) - splits compound emojis into individual ones
+// This helps fix rendering issues in terminals where the width calculation
+// doesn't match the actual rendered width of multi-codepoint emojis.
+func NormalizeEmojis(text string) string {
+	var result strings.Builder
+	result.Grow(len(text))
+
+	for _, r := range text {
+		// Skip skin tone modifiers (U+1F3FB to U+1F3FF)
+		if r >= 0x1F3FB && r <= 0x1F3FF {
+			continue
+		}
+		// Skip variation selectors (U+FE0E and U+FE0F)
+		if r == 0xFE0E || r == 0xFE0F {
+			continue
+		}
+		// Skip Zero Width Joiner (U+200D)
+		if r == 0x200D {
+			continue
+		}
+		result.WriteRune(r)
+	}
+
+	return result.String()
+}
+
+// TruncateContent truncates content to maxLen characters, adding "[more]" indicator.
+// Users can press 'o' to view full content via original link.
+func TruncateContent(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "… [more]"
+}

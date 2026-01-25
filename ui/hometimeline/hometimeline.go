@@ -441,9 +441,13 @@ func (m Model) View() string {
 				} else {
 					// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 					processedContent := post.Content
+					processedContent = util.TruncateContent(processedContent, common.MaxDisplayContentLength)
 					if post.IsLocal {
 						processedContent = util.UnescapeHTML(processedContent)
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
+					} else {
+						// Normalize emojis for remote posts to fix terminal width calculation issues
+						processedContent = util.NormalizeEmojis(processedContent)
 					}
 					processedContent = util.LinkifyRawURLsTerminal(processedContent)
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
@@ -464,6 +468,7 @@ func (m Model) View() string {
 
 				// Unescape HTML entities, convert Markdown links, then highlight hashtags (same order as myposts)
 				processedContent := post.Content
+				processedContent = util.TruncateContent(processedContent, common.MaxDisplayContentLength)
 				if post.IsLocal {
 					processedContent = util.UnescapeHTML(processedContent)
 					processedContent = util.MarkdownLinksToTerminal(processedContent)
