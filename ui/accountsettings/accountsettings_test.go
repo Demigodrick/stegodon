@@ -311,8 +311,14 @@ func TestRefreshAccountResult(t *testing.T) {
 	if model.Account.DisplayName != "Updated Name" {
 		t.Error("Display name should be updated after refresh")
 	}
-	if model.Status == "" {
-		t.Error("Status should show refresh success message")
+
+	// Test that status is preserved after refresh (post-upload scenario)
+	model3 := InitialModel(acc)
+	model3.ViewState = AvatarView
+	model3.Status = "File successfully uploaded!"
+	model3, _ = model3.Update(refreshAccountResultMsg{account: updatedAcc})
+	if model3.Status != "File successfully uploaded!" {
+		t.Error("Status should be preserved after refresh")
 	}
 
 	// Test error refresh result

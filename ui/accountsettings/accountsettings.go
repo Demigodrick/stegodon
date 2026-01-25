@@ -184,7 +184,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if !msg.isNew {
 			m.Status = "Using existing upload link"
 		}
-		return m, tea.Batch(avatarPollTickCmd(), clearStatusAfter(3*time.Second)) // Start polling
+		// Just start polling, skip the status clear (it's not critical)
+		return m, avatarPollTickCmd()
 
 	case refreshAccountResultMsg:
 		if msg.err != nil {
@@ -194,13 +195,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Update text inputs with new values
 			m.displayNameInput.SetValue(msg.account.DisplayName)
 			m.bioInput.SetValue(msg.account.Summary)
-			// Only show "refreshed" message if manually triggered (not polling)
-			if m.Status == "" {
-				m.Status = "Account refreshed!"
-				return m, clearStatusAfter(3 * time.Second)
-			}
 		}
-		return m, nil
+		// Always clear status after refresh completes (handles both manual refresh and post-upload)
+		return m, clearStatusAfter(5 * time.Second)
 
 	case avatarPollTickMsg:
 		// Only poll if we're still in avatar view and polling is active
@@ -220,8 +217,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.uploadToken = ""
 			m.uploadURL = ""
 			m.Status = "File successfully uploaded!"
-			// Refresh account to get new avatar URL
-			return m, tea.Batch(refreshAccountCmd(m.Account.Id), clearStatusAfter(5*time.Second))
+			// Refresh account to get new avatar URL (status will be cleared in the result handler)
+			return m, refreshAccountCmd(m.Account.Id)
 		}
 		// Token still exists, continue polling
 		if m.isPolling {
