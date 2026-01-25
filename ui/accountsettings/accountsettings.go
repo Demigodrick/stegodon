@@ -86,6 +86,7 @@ type Model struct {
 	uploadExpiresAt   time.Time // When the upload token expires
 	originalAvatarURL string    // Track original to detect changes
 	isPolling         bool      // Whether we're polling for avatar changes
+	isActive          bool      // Track if view is visible to prevent goroutine leaks
 
 	// Config for URLs
 	conf *util.AppConfig
@@ -127,6 +128,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case common.ActivateAccountSettingsMsg:
+		m.isActive = true
+		return m, nil
+
+	case common.DeactivateAccountSettingsMsg:
+		m.isActive = false
+		m.isPolling = false // Stop polling when view is deactivated
+		return m, nil
+
 	case clearStatusMsg:
 		m.Status = ""
 		m.Error = ""
@@ -200,16 +210,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, clearStatusAfter(5 * time.Second)
 
 	case avatarPollTickMsg:
-		// Only poll if we're still in avatar view and polling is active
-		if m.ViewState == AvatarView && m.isPolling && m.uploadToken != "" {
+		// Only poll if view is active AND in avatar view AND polling is enabled
+		if m.isActive && m.ViewState == AvatarView && m.isPolling && m.uploadToken != "" {
 			return m, checkTokenExistsCmd(m.uploadToken)
 		}
-		return m, nil
+		return m, nil // Stop ticker chain when not active
 
 	case checkTokenResultMsg:
 		if msg.err != nil {
-			// Error checking token, continue polling
-			return m, avatarPollTickCmd()
+			// Error checking token, continue polling only if still active
+			if m.isActive && m.isPolling {
+				return m, avatarPollTickCmd()
+			}
+			return m, nil
 		}
 		if !msg.tokenExists && m.isPolling {
 			// Token was consumed - upload completed!
@@ -220,8 +233,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Refresh account to get new avatar URL (status will be cleared in the result handler)
 			return m, refreshAccountCmd(m.Account.Id)
 		}
-		// Token still exists, continue polling
-		if m.isPolling {
+		// Token still exists, continue polling only if still active
+		if m.isActive && m.isPolling {
 			return m, avatarPollTickCmd()
 		}
 		return m, nil

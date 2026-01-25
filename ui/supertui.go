@@ -300,6 +300,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, func() tea.Msg { return common.DeactivateViewMsg{} })
 				}
 
+				// Deactivate accountsettings if we were in it (stops avatar polling)
+				if oldState == common.AccountSettingsView {
+					cmds = append(cmds, func() tea.Msg { return common.DeactivateAccountSettingsMsg{} })
+				}
+
 				// Note: No need to activate notifications - it's always active
 			}
 		case "tab":
@@ -378,6 +383,19 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if !oldTimelineVisible && newTimelineVisible {
 				// Timeline becoming visible, activate it
 				cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
+			}
+
+			// Manage accountsettings activation based on visibility (for avatar polling)
+			// Uses specific messages to avoid conflicts with timeline activation
+			oldAccountSettingsVisible := (oldState == common.AccountSettingsView)
+			newAccountSettingsVisible := (m.state == common.AccountSettingsView)
+
+			if !oldAccountSettingsVisible && newAccountSettingsVisible {
+				// AccountSettings becoming visible, activate it
+				cmds = append(cmds, func() tea.Msg { return common.ActivateAccountSettingsMsg{} })
+			} else if oldAccountSettingsVisible && !newAccountSettingsVisible {
+				// AccountSettings becoming hidden, deactivate it
+				cmds = append(cmds, func() tea.Msg { return common.DeactivateAccountSettingsMsg{} })
 			}
 
 			// Note: Notifications model is never deactivated because the badge
@@ -465,6 +483,19 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
 			}
 
+			// Manage accountsettings activation based on visibility (for avatar polling)
+			// Uses specific messages to avoid conflicts with timeline activation
+			oldAccountSettingsVisible := (oldState == common.AccountSettingsView)
+			newAccountSettingsVisible := (m.state == common.AccountSettingsView)
+
+			if !oldAccountSettingsVisible && newAccountSettingsVisible {
+				// AccountSettings becoming visible, activate it
+				cmds = append(cmds, func() tea.Msg { return common.ActivateAccountSettingsMsg{} })
+			} else if oldAccountSettingsVisible && !newAccountSettingsVisible {
+				// AccountSettings becoming hidden, deactivate it
+				cmds = append(cmds, func() tea.Msg { return common.DeactivateAccountSettingsMsg{} })
+			}
+
 			// Note: Notifications model is never deactivated because the badge
 			// in the header needs to show real-time unread count
 
@@ -506,6 +537,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case common.ActivateViewMsg, common.DeactivateViewMsg:
 		// Activation/deactivation messages go to home timeline, myposts, globalposts, and notifications models
+		// Note: accountsettings uses its own specific messages to avoid conflicts
 		m.homeTimelineModel, cmd = m.homeTimelineModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
@@ -513,6 +545,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.globalPostsModel, cmd = m.globalPostsModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.ActivateAccountSettingsMsg, common.DeactivateAccountSettingsMsg:
+		// Accountsettings-specific activation messages (for avatar polling)
+		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
 		cmds = append(cmds, cmd)
 	case common.EditNoteMsg, common.DeleteNoteMsg, common.SessionState:
 		// Note-related messages go to note models
@@ -534,13 +570,14 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Always route to models that need feedback and don't spawn tickers
 		// These are safe from goroutine accumulation
+		// NOTE: accountsettings is NOT included here - it's only routed in the
+		// state-based routing below to prevent double-calling Update() which
+		// would cause exponential goroutine growth during avatar polling
 		m.myPostsModel, cmd = m.myPostsModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.createModel, cmd = m.createModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.followModel, cmd = m.followModel.Update(msg)
-		cmds = append(cmds, cmd)
-		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
 		cmds = append(cmds, cmd)
 		m.followersModel, cmd = m.followersModel.Update(msg)
 		cmds = append(cmds, cmd)

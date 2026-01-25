@@ -49,6 +49,13 @@ type ActivateViewMsg struct{}
 // DeactivateViewMsg is sent when a view becomes inactive (hidden)
 type DeactivateViewMsg struct{}
 
+// ActivateAccountSettingsMsg is sent specifically to accountsettings when it becomes visible
+// This avoids conflicts with the generic ActivateViewMsg used by timeline views
+type ActivateAccountSettingsMsg struct{}
+
+// DeactivateAccountSettingsMsg is sent specifically to accountsettings when it becomes hidden
+type DeactivateAccountSettingsMsg struct{}
+
 // ReplyToNoteMsg is sent when user presses 'r' to reply to a post
 type ReplyToNoteMsg struct {
 	NoteURI string // ActivityPub object URI of the note being replied to

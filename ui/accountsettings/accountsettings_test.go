@@ -406,6 +406,7 @@ func TestTokenStillExistsContinuesPolling(t *testing.T) {
 	model := InitialModel(acc)
 	model.ViewState = AvatarView
 	model.isPolling = true
+	model.isActive = true // View must be active for polling to continue
 	model.uploadToken = "test-token"
 
 	// Token still exists - upload not complete
