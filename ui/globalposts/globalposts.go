@@ -451,6 +451,9 @@ func (m Model) View() string {
 					if !post.IsRemote {
 						processedContent = util.UnescapeHTML(processedContent)
 						processedContent = util.MarkdownLinksToTerminal(processedContent)
+					} else {
+						// Normalize emojis for remote posts to fix terminal width calculation issues
+						processedContent = util.NormalizeEmojis(processedContent)
 					}
 					processedContent = util.LinkifyRawURLsTerminal(processedContent)
 					highlightedContent := util.HighlightHashtagsTerminal(processedContent)
@@ -476,6 +479,9 @@ func (m Model) View() string {
 				if !post.IsRemote {
 					processedContent = util.UnescapeHTML(processedContent)
 					processedContent = util.MarkdownLinksToTerminal(processedContent)
+				} else {
+					// Normalize emojis for remote posts to fix terminal width calculation issues
+					processedContent = util.NormalizeEmojis(processedContent)
 				}
 				highlightedContent := util.HighlightHashtagsTerminal(processedContent)
 				highlightedContent = util.HighlightMentionsTerminal(highlightedContent, m.LocalDomain)
