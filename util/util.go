@@ -711,18 +711,34 @@ func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool
 	return username, domain, true
 }
 
-// NormalizeEmojis removes emoji modifiers that cause terminal width calculation issues.
+// SanitizeRemoteContent removes characters that cause terminal rendering issues.
 // This includes:
+// - Control characters (except newline, tab)
+// - ANSI escape sequences
+// - Carriage returns (cause line overwrites)
 // - Skin tone modifiers (U+1F3FB to U+1F3FF): 🏻🏼🏽🏾🏿
 // - Variation selectors (U+FE0E text, U+FE0F emoji)
 // - Zero Width Joiner (U+200D) - splits compound emojis into individual ones
-// This helps fix rendering issues in terminals where the width calculation
-// doesn't match the actual rendered width of multi-codepoint emojis.
-func NormalizeEmojis(text string) string {
+// - Zero-width characters (U+200B, U+FEFF)
+// - Ambiguous-width characters are replaced with ASCII equivalents
+// This helps fix rendering issues in terminals.
+func SanitizeRemoteContent(text string) string {
+	// First strip ANSI escape sequences
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	text = ansiRegex.ReplaceAllString(text, "")
+
 	var result strings.Builder
 	result.Grow(len(text))
 
 	for _, r := range text {
+		// Skip control characters except newline and tab
+		if r < 0x20 && r != '\n' && r != '\t' {
+			continue
+		}
+		// Skip DEL character
+		if r == 0x7F {
+			continue
+		}
 		// Skip skin tone modifiers (U+1F3FB to U+1F3FF)
 		if r >= 0x1F3FB && r <= 0x1F3FF {
 			continue
@@ -735,10 +751,45 @@ func NormalizeEmojis(text string) string {
 		if r == 0x200D {
 			continue
 		}
+		// Skip Zero Width Space (U+200B) and BOM (U+FEFF)
+		if r == 0x200B || r == 0xFEFF {
+			continue
+		}
+
+		// Replace ambiguous-width circled/parenthesized numbers with ASCII
+		// Circled numbers ① to ⑳ (U+2460 to U+2473)
+		if r >= 0x2460 && r <= 0x2473 {
+			num := r - 0x2460 + 1
+			result.WriteString(fmt.Sprintf("(%d)", num))
+			continue
+		}
+		// Circled number zero ⓪ (U+24EA)
+		if r == 0x24EA {
+			result.WriteString("(0)")
+			continue
+		}
+		// Circled numbers ㉑ to ㉟ (U+3251 to U+325F) - 21 to 35
+		if r >= 0x3251 && r <= 0x325F {
+			num := r - 0x3251 + 21
+			result.WriteString(fmt.Sprintf("(%d)", num))
+			continue
+		}
+		// Circled numbers ㊱ to ㊿ (U+32B1 to U+32BF) - 36 to 50
+		if r >= 0x32B1 && r <= 0x32BF {
+			num := r - 0x32B1 + 36
+			result.WriteString(fmt.Sprintf("(%d)", num))
+			continue
+		}
+
 		result.WriteRune(r)
 	}
 
 	return result.String()
+}
+
+// NormalizeEmojis is an alias for SanitizeRemoteContent for backwards compatibility
+func NormalizeEmojis(text string) string {
+	return SanitizeRemoteContent(text)
 }
 
 // TruncateContent truncates content to maxLen characters, adding "[more]" indicator.
