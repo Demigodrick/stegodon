@@ -721,7 +721,9 @@ func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool
 // - Zero Width Joiner (U+200D) - splits compound emojis into individual ones
 // - Zero-width characters (U+200B, U+FEFF)
 // - Unicode BiDi control characters (U+200E-200F, U+202A-202E, U+2066-2069)
-// - Ambiguous-width characters are replaced with ASCII equivalents
+// - Ambiguous-width characters are replaced with ASCII equivalents:
+//   - Circled numbers (①②③...) → (1)(2)(3)...
+//   - CJK punctuation (「」『』【】〈〉《》etc.) → ASCII quotes/brackets
 // This helps fix rendering issues in terminals.
 func SanitizeRemoteContent(text string) string {
 	// First strip ANSI escape sequences
@@ -793,6 +795,79 @@ func SanitizeRemoteContent(text string) string {
 		if r >= 0x32B1 && r <= 0x32BF {
 			num := r - 0x32B1 + 36
 			result.WriteString(fmt.Sprintf("(%d)", num))
+			continue
+		}
+
+		// Replace CJK punctuation with ASCII equivalents (ambiguous width)
+		// Ideographic space (U+3000)
+		if r == 0x3000 {
+			result.WriteRune(' ')
+			continue
+		}
+		// Ideographic comma and full stop (U+3001, U+3002)
+		if r == 0x3001 {
+			result.WriteRune(',')
+			continue
+		}
+		if r == 0x3002 {
+			result.WriteRune('.')
+			continue
+		}
+		// CJK brackets - replace with ASCII equivalents
+		// 〈〉 angle brackets (U+3008, U+3009)
+		if r == 0x3008 {
+			result.WriteRune('<')
+			continue
+		}
+		if r == 0x3009 {
+			result.WriteRune('>')
+			continue
+		}
+		// 《》 double angle brackets (U+300A, U+300B)
+		if r == 0x300A {
+			result.WriteString("<<")
+			continue
+		}
+		if r == 0x300B {
+			result.WriteString(">>")
+			continue
+		}
+		// 「」 corner brackets (U+300C, U+300D)
+		if r == 0x300C || r == 0x300D {
+			result.WriteRune('"')
+			continue
+		}
+		// 『』 white corner brackets (U+300E, U+300F)
+		if r == 0x300E || r == 0x300F {
+			result.WriteRune('\'')
+			continue
+		}
+		// 【】 black lenticular brackets (U+3010, U+3011)
+		if r == 0x3010 || r == 0x3011 {
+			if r == 0x3010 {
+				result.WriteRune('[')
+			} else {
+				result.WriteRune(']')
+			}
+			continue
+		}
+		// 〔〕〖〗〘〙〚〛 various brackets (U+3014-U+301B)
+		if r >= 0x3014 && r <= 0x301B {
+			if r%2 == 0 { // Even = left bracket
+				result.WriteRune('[')
+			} else { // Odd = right bracket
+				result.WriteRune(']')
+			}
+			continue
+		}
+		// 〜 wave dash (U+301C)
+		if r == 0x301C {
+			result.WriteRune('~')
+			continue
+		}
+		// 〝〞〟 quotation marks (U+301D-U+301F)
+		if r >= 0x301D && r <= 0x301F {
+			result.WriteRune('"')
 			continue
 		}
 

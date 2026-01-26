@@ -1928,3 +1928,108 @@ func TestSanitizeRemoteContent_BiDi(t *testing.T) {
 		})
 	}
 }
+
+// Tests for SanitizeRemoteContent CJK punctuation replacement
+
+func TestSanitizeRemoteContent_CJKPunctuation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Ideographic space",
+			input:    "Hello\u3000world",
+			expected: "Hello world",
+		},
+		{
+			name:     "Ideographic comma",
+			input:    "Hello\u3001world",
+			expected: "Hello,world",
+		},
+		{
+			name:     "Ideographic full stop",
+			input:    "Hello\u3002",
+			expected: "Hello.",
+		},
+		{
+			name:     "Corner brackets to quotes",
+			input:    "He said「hello」",
+			expected: `He said"hello"`,
+		},
+		{
+			name:     "White corner brackets to single quotes",
+			input:    "He said『hello』",
+			expected: "He said'hello'",
+		},
+		{
+			name:     "Black lenticular brackets",
+			input:    "Title【section】here",
+			expected: "Title[section]here",
+		},
+		{
+			name:     "Angle brackets",
+			input:    "See〈this〉",
+			expected: "See<this>",
+		},
+		{
+			name:     "Double angle brackets",
+			input:    "Book《title》here",
+			expected: "Book<<title>>here",
+		},
+		{
+			name:     "Wave dash",
+			input:    "Range〜end",
+			expected: "Range~end",
+		},
+		{
+			name:     "CJK quotation marks",
+			input:    "Quote〝text〞",
+			expected: `Quote"text"`,
+		},
+		{
+			name:     "Tortoise shell brackets",
+			input:    "Note〔info〕",
+			expected: "Note[info]",
+		},
+		{
+			name:     "White lenticular brackets",
+			input:    "Note〖info〗",
+			expected: "Note[info]",
+		},
+		{
+			name:     "White tortoise shell brackets",
+			input:    "Note〘info〙",
+			expected: "Note[info]",
+		},
+		{
+			name:     "White square brackets",
+			input:    "Note〚info〛",
+			expected: "Note[info]",
+		},
+		{
+			name:     "Mixed CJK punctuation in Russian text",
+			input:    "Товарищи скорбели「Не мог выразить」слова",
+			expected: `Товарищи скорбели"Не мог выразить"слова`,
+		},
+		{
+			name:     "Preserves regular text",
+			input:    "Hello world! こんにちは 你好",
+			expected: "Hello world! こんにちは 你好",
+		},
+		{
+			name:     "Multiple CJK punctuation types",
+			input:    "Title【A】「B」『C』",
+			expected: `Title[A]"B"'C'`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SanitizeRemoteContent(tt.input)
+			if result != tt.expected {
+				t.Errorf("SanitizeRemoteContent(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
