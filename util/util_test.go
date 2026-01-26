@@ -1813,3 +1813,118 @@ func TestLinkifyRawURLsHTML_WhitespaceOnly(t *testing.T) {
 		t.Errorf("Expected whitespace preserved, got: %s", result)
 	}
 }
+
+// Tests for SanitizeRemoteContent BiDi character stripping
+
+func TestSanitizeRemoteContent_BiDi(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "LRM stripped",
+			input:    "Hello\u200Eworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "RLM stripped",
+			input:    "Hello\u200Fworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "LRE stripped",
+			input:    "Hello\u202Aworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "RLE stripped",
+			input:    "Hello\u202Bworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "PDF stripped",
+			input:    "Hello\u202Cworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "LRO stripped",
+			input:    "Hello\u202Dworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "RLO stripped",
+			input:    "Hello\u202Eworld",
+			expected: "Helloworld",
+		},
+		{
+			name:     "LRI stripped",
+			input:    "Hello\u2066world",
+			expected: "Helloworld",
+		},
+		{
+			name:     "RLI stripped",
+			input:    "Hello\u2067world",
+			expected: "Helloworld",
+		},
+		{
+			name:     "FSI stripped",
+			input:    "Hello\u2068world",
+			expected: "Helloworld",
+		},
+		{
+			name:     "PDI stripped",
+			input:    "Hello\u2069world",
+			expected: "Helloworld",
+		},
+		{
+			name:     "Mixed BiDi characters",
+			input:    "A\u200EB\u200FC\u202AD",
+			expected: "ABCD",
+		},
+		{
+			name:     "All isolates stripped",
+			input:    "X\u2066Y\u2067Z\u2068W\u2069V",
+			expected: "XYZWV",
+		},
+		{
+			name:     "Preserves RTL text characters",
+			input:    "Hello سلام world",
+			expected: "Hello سلام world",
+		},
+		{
+			name:     "Mixed Farsi and English with BiDi markers",
+			input:    "Dear NERDS\u200E، یک Open-Letter\u200F ترویج",
+			expected: "Dear NERDS، یک Open-Letter ترویج",
+		},
+		{
+			name:     "BiDi at start and end",
+			input:    "\u200EHello world\u200F",
+			expected: "Hello world",
+		},
+		{
+			name:     "Multiple consecutive BiDi characters",
+			input:    "Test\u200E\u200F\u202A\u202Btext",
+			expected: "Testtext",
+		},
+		{
+			name:     "Empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "Only BiDi characters",
+			input:    "\u200E\u200F\u202A",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SanitizeRemoteContent(tt.input)
+			if result != tt.expected {
+				t.Errorf("SanitizeRemoteContent(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

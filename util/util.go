@@ -720,6 +720,7 @@ func ParseActivityPubURL(urlStr string) (username string, domain string, ok bool
 // - Variation selectors (U+FE0E text, U+FE0F emoji)
 // - Zero Width Joiner (U+200D) - splits compound emojis into individual ones
 // - Zero-width characters (U+200B, U+FEFF)
+// - Unicode BiDi control characters (U+200E-200F, U+202A-202E, U+2066-2069)
 // - Ambiguous-width characters are replaced with ASCII equivalents
 // This helps fix rendering issues in terminals.
 func SanitizeRemoteContent(text string) string {
@@ -753,6 +754,20 @@ func SanitizeRemoteContent(text string) string {
 		}
 		// Skip Zero Width Space (U+200B) and BOM (U+FEFF)
 		if r == 0x200B || r == 0xFEFF {
+			continue
+		}
+		// Skip Unicode Bidirectional control characters
+		// These cause terminal layout issues with mixed LTR/RTL text
+		// LRM (U+200E) and RLM (U+200F)
+		if r == 0x200E || r == 0x200F {
+			continue
+		}
+		// LRE, RLE, PDF, LRO, RLO (U+202A to U+202E)
+		if r >= 0x202A && r <= 0x202E {
+			continue
+		}
+		// LRI, RLI, FSI, PDI (U+2066 to U+2069)
+		if r >= 0x2066 && r <= 0x2069 {
 			continue
 		}
 
