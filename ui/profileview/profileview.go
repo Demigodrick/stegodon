@@ -62,21 +62,26 @@ var (
 			Italic(true)
 )
 
-const maxProfilePosts = 10
+const (
+	maxProfilePosts = 10
+	avatarCols      = 8 // character width (= pixel width)
+	avatarRows      = 4 // character height (= pixel height / 2, so 8px tall)
+)
 
 type Model struct {
-	AccountId   uuid.UUID
-	ProfileUser *domain.Account
-	Posts       []domain.Note
-	IsFollowing bool
-	Selected    int
-	Offset      int
-	Width       int
-	Height      int
-	loading     bool
-	Status      string
-	Error       string
-	LocalDomain string
+	AccountId      uuid.UUID
+	ProfileUser    *domain.Account
+	Posts          []domain.Note
+	IsFollowing    bool
+	Selected       int
+	Offset         int
+	Width          int
+	Height         int
+	loading        bool
+	Status         string
+	Error          string
+	LocalDomain    string
+	AvatarRendered string
 }
 
 func InitialModel(accountId uuid.UUID, width, height int, localDomain string) Model {
@@ -105,6 +110,7 @@ type profileLoadedMsg struct {
 	account     *domain.Account
 	posts       []domain.Note
 	isFollowing bool
+	avatarStr   string
 	err         error
 }
 
@@ -128,6 +134,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.Offset = 0
 		m.ProfileUser = nil
 		m.Posts = nil
+		m.AvatarRendered = ""
 		return m, loadProfile(m.AccountId, msg.Username)
 
 	case profileLoadedMsg:
@@ -139,6 +146,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.ProfileUser = msg.account
 		m.Posts = msg.posts
 		m.IsFollowing = msg.isFollowing
+		m.AvatarRendered = msg.avatarStr
 		m.Selected = 0
 		m.Offset = 0
 		return m, nil
@@ -233,20 +241,22 @@ func (m Model) View() string {
 	rightPanelWidth := common.CalculateRightPanelWidth(m.Width, leftPanelWidth)
 	contentWidth := common.CalculateContentWidth(rightPanelWidth, 2)
 
-	// Profile header
+	// Profile header text
+	var headerText strings.Builder
+
 	name := m.ProfileUser.DisplayName
 	if name == "" {
 		name = m.ProfileUser.Username
 	}
-	s.WriteString(displayNameStyle.Render(name))
-	s.WriteString("\n")
-	s.WriteString(handleStyle.Render("@" + m.ProfileUser.Username))
-	s.WriteString("\n")
+	headerText.WriteString(displayNameStyle.Render(name))
+	headerText.WriteString("\n")
+	headerText.WriteString(handleStyle.Render("@" + m.ProfileUser.Username))
+	headerText.WriteString("\n")
 
 	if m.ProfileUser.Summary != "" {
-		s.WriteString("\n")
-		s.WriteString(bioStyle.Render(m.ProfileUser.Summary))
-		s.WriteString("\n")
+		headerText.WriteString("\n")
+		headerText.WriteString(bioStyle.Render(m.ProfileUser.Summary))
+		headerText.WriteString("\n")
 	}
 
 	// Metadata line: join date + follow status
@@ -265,8 +275,15 @@ func (m Model) View() string {
 		followBadge = notFollowBadgeStyle.Render("not following")
 	}
 
-	s.WriteString("\n")
-	s.WriteString(metadataStyle.Render(joinStr+" · ") + followBadge)
+	headerText.WriteString("\n")
+	headerText.WriteString(metadataStyle.Render(joinStr+" · ") + followBadge)
+
+	// Compose avatar + header text
+	if m.AvatarRendered != "" {
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.AvatarRendered, " ", headerText.String()))
+	} else {
+		s.WriteString(headerText.String())
+	}
 	s.WriteString("\n\n")
 
 	// Separator
@@ -390,10 +407,20 @@ func loadProfile(viewerAccountId uuid.UUID, username string) tea.Cmd {
 			isFollowing = false
 		}
 
+		// Render avatar if available
+		var avatarStr string
+		if account.AvatarURL != "" {
+			img := util.LoadAvatarImage(account.AvatarURL)
+			if img != nil {
+				avatarStr = util.RenderImageToHalfBlocks(img, avatarCols, avatarRows)
+			}
+		}
+
 		return profileLoadedMsg{
 			account:     account,
 			posts:       topLevelPosts,
 			isFollowing: isFollowing,
+			avatarStr:   avatarStr,
 		}
 	}
 }

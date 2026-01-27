@@ -45,6 +45,9 @@ func TestInitialModel(t *testing.T) {
 	if m.LocalDomain != "example.com" {
 		t.Errorf("Expected LocalDomain 'example.com', got '%s'", m.LocalDomain)
 	}
+	if m.AvatarRendered != "" {
+		t.Errorf("Expected empty AvatarRendered, got '%s'", m.AvatarRendered)
+	}
 }
 
 func TestUpdate_ViewProfileMsg(t *testing.T) {
