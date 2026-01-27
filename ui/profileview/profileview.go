@@ -64,8 +64,8 @@ var (
 
 const (
 	maxProfilePosts = 10
-	avatarCols      = 8 // character width (= pixel width)
-	avatarRows      = 4 // character height (= pixel height / 2, so 8px tall)
+	avatarCols      = 12 // character width (= pixel width)
+	avatarRows      = 6  // character height (= pixel height / 2, so 12px tall)
 )
 
 type Model struct {
@@ -280,7 +280,7 @@ func (m Model) View() string {
 
 	// Compose avatar + header text
 	if m.AvatarRendered != "" {
-		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.AvatarRendered, " ", headerText.String()))
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.AvatarRendered, "   ", headerText.String()))
 	} else {
 		s.WriteString(headerText.String())
 	}
