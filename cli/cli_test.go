@@ -36,11 +36,13 @@ func (m *mockSession) Read(p []byte) (n int, err error) {
 
 // mockDatabase implements cli.Database for testing
 type mockDatabase struct {
-	notes         []domain.HomePost
-	notifications []domain.Notification
-	unreadCount   int
-	createError   error
-	createdNoteID uuid.UUID
+	notes              []domain.HomePost
+	notifications      []domain.Notification
+	unreadCount        int
+	createError        error
+	createdNoteID      uuid.UUID
+	deleteAllCalled    bool
+	deleteAllError     error
 }
 
 func (m *mockDatabase) CreateNote(userId interface{}, message string) (interface{}, error) {
@@ -80,6 +82,11 @@ func (m *mockDatabase) ReadNotificationsByAccountId(accountId interface{}, limit
 
 func (m *mockDatabase) CountUnreadNotifications(accountId interface{}) (int, error) {
 	return m.unreadCount, nil
+}
+
+func (m *mockDatabase) DeleteAllNotifications(accountId interface{}) error {
+	m.deleteAllCalled = true
+	return m.deleteAllError
 }
 
 func newTestHandler(input string) (*Handler, *bytes.Buffer) {

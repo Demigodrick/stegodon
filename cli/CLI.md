@@ -17,6 +17,7 @@ ssh -p <port> <server> <command> [options]
 | `timeline` | Show recent home timeline |
 | `timeline -n <N>` | Limit to N posts |
 | `notifications` | Show unread notifications |
+| `clear-notifications` | Clear all notifications |
 | `help` | Show help message |
 
 ## Global Flags
@@ -45,6 +46,9 @@ ssh -p 23232 localhost timeline -n 5 -j
 
 # View notifications as JSON
 ssh -p 23232 localhost notifications -j
+
+# Clear all notifications
+ssh -p 23232 localhost clear-notifications
 ```
 
 ## JSON Output
@@ -94,6 +98,14 @@ All commands support `--json` / `-j` for machine-readable output.
 }
 ```
 
+**Clear notifications response:**
+```json
+{
+  "status": "ok",
+  "cleared": true
+}
+```
+
 **Error response:**
 ```json
 {
@@ -114,4 +126,7 @@ UNREAD=$(ssh -p 23232 localhost notifications -j | jq '.unread_count')
 
 # Export timeline to file
 ssh -p 23232 localhost timeline -n 100 -j > timeline.json
+
+# Clear notifications after reading them
+ssh -p 23232 localhost notifications -j > notifications.json && ssh -p 23232 localhost clear-notifications
 ```

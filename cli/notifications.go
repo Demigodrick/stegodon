@@ -6,6 +6,26 @@ import (
 
 const defaultNotificationsLimit = 20
 
+// handleClearNotifications deletes all notifications for the authenticated user
+func (h *Handler) handleClearNotifications(args []string) error {
+	err := h.db.DeleteAllNotifications(h.account.Id)
+	if err != nil {
+		h.output.Error(err)
+		return err
+	}
+
+	if h.output.IsJSON() {
+		h.output.JSON(ClearNotificationsResponse{
+			Status:  "ok",
+			Cleared: true,
+		})
+	} else {
+		h.output.Println("All notifications cleared.")
+	}
+
+	return nil
+}
+
 // handleNotifications shows unread notifications
 func (h *Handler) handleNotifications(args []string) error {
 	// Get unread count

@@ -128,6 +128,12 @@ type NotificationsResponse struct {
 	UnreadCount   int                `json:"unread_count"`
 }
 
+// ClearNotificationsResponse represents the clear-notifications output
+type ClearNotificationsResponse struct {
+	Status  string `json:"status"`
+	Cleared bool   `json:"cleared"`
+}
+
 // HelpCommand represents a command in help output
 type HelpCommand struct {
 	Name        string   `json:"name"`

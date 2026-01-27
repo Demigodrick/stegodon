@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,66 @@ func TestNotifications_EmptyTextMode(t *testing.T) {
 	result := output.String()
 	if !strings.Contains(result, "No notifications") {
 		t.Errorf("Expected 'No notifications' in output, got: %s", result)
+	}
+}
+
+func TestClearNotifications_TextMode(t *testing.T) {
+	db := &mockDatabase{}
+	handler, output := newTestHandlerWithDB("", db)
+
+	err := handler.Execute([]string{"clear-notifications"})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	result := output.String()
+	if !strings.Contains(result, "All notifications cleared.") {
+		t.Errorf("Expected 'All notifications cleared.' in output, got: %s", result)
+	}
+	if !db.deleteAllCalled {
+		t.Error("Expected DeleteAllNotifications to be called")
+	}
+}
+
+func TestClearNotifications_JSONMode(t *testing.T) {
+	db := &mockDatabase{}
+	handler, output := newTestHandlerWithDB("", db)
+
+	err := handler.Execute([]string{"clear-notifications", "--json"})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	var resp ClearNotificationsResponse
+	if err := json.Unmarshal(output.Bytes(), &resp); err != nil {
+		t.Fatalf("Expected valid JSON, got error: %v, output: %s", err, output.String())
+	}
+
+	if resp.Status != "ok" {
+		t.Errorf("Expected status 'ok', got %s", resp.Status)
+	}
+	if !resp.Cleared {
+		t.Error("Expected cleared to be true")
+	}
+	if !db.deleteAllCalled {
+		t.Error("Expected DeleteAllNotifications to be called")
+	}
+}
+
+func TestClearNotifications_Error(t *testing.T) {
+	db := &mockDatabase{
+		deleteAllError: fmt.Errorf("database error"),
+	}
+	handler, output := newTestHandlerWithDB("", db)
+
+	err := handler.Execute([]string{"clear-notifications"})
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	result := output.String()
+	if !strings.Contains(result, "database error") {
+		t.Errorf("Expected 'database error' in output, got: %s", result)
 	}
 }
 

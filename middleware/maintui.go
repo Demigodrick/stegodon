@@ -96,3 +96,7 @@ func (w *dbWrapper) ReadNotificationsByAccountId(accountId interface{}, limit in
 func (w *dbWrapper) CountUnreadNotifications(accountId interface{}) (int, error) {
 	return w.db.ReadUnreadNotificationCount(accountId.(uuid.UUID))
 }
+
+func (w *dbWrapper) DeleteAllNotifications(accountId interface{}) error {
+	return w.db.DeleteAllNotifications(accountId.(uuid.UUID))
+}

@@ -22,6 +22,7 @@ type Database interface {
 	ReadHomeTimelinePosts(accountId interface{}, limit int) (error, *[]domain.HomePost)
 	ReadNotificationsByAccountId(accountId interface{}, limit int) (error, *[]domain.Notification)
 	CountUnreadNotifications(accountId interface{}) (int, error)
+	DeleteAllNotifications(accountId interface{}) error
 }
 
 // Handler processes CLI commands
@@ -69,6 +70,8 @@ func (h *Handler) Execute(args []string) error {
 		return h.handleTimeline(cmdArgs)
 	case "notifications":
 		return h.handleNotifications(cmdArgs)
+	case "clear-notifications":
+		return h.handleClearNotifications(cmdArgs)
 	case "--help", "-h", "help":
 		return h.showHelp()
 	default:
@@ -119,6 +122,11 @@ func (h *Handler) showHelp() error {
 					Usage:       "notifications",
 				},
 				{
+					Name:        "clear-notifications",
+					Description: "Clear all notifications",
+					Usage:       "clear-notifications",
+				},
+				{
 					Name:        "help",
 					Description: "Show this help message",
 					Usage:       "help",
@@ -135,15 +143,16 @@ func (h *Handler) showHelp() error {
 		h.output.Println("Usage: ssh -p <port> <server> <command> [options]")
 		h.output.Println("")
 		h.output.Println("Commands:")
-		h.output.Println("  post <message>      Create a new note")
-		h.output.Println("  post -              Read message from stdin")
-		h.output.Println("  timeline            Show recent home timeline")
-		h.output.Println("  timeline -n <N>     Limit to N posts")
-		h.output.Println("  notifications       Show unread notifications")
-		h.output.Println("  help                Show this help message")
+		h.output.Println("  post <message>        Create a new note")
+		h.output.Println("  post -                Read message from stdin")
+		h.output.Println("  timeline              Show recent home timeline")
+		h.output.Println("  timeline -n <N>       Limit to N posts")
+		h.output.Println("  notifications         Show unread notifications")
+		h.output.Println("  clear-notifications   Clear all notifications")
+		h.output.Println("  help                  Show this help message")
 		h.output.Println("")
 		h.output.Println("Global flags:")
-		h.output.Println("  --json, -j          Output in JSON format")
+		h.output.Println("  --json, -j            Output in JSON format")
 		h.output.Println("")
 		h.output.Println("Examples:")
 		h.output.Println("  ssh -p 23232 localhost post \"Hello world\"")
