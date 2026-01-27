@@ -275,6 +275,12 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case common.ViewThreadMsg:
+		// Set return view based on where the thread was opened from
+		if m.state == common.ProfileView {
+			m.threadViewModel.ReturnView = common.ProfileView
+		} else {
+			m.threadViewModel.ReturnView = common.HomeTimelineView
+		}
 		// Route ViewThread message to threadview model and switch to ThreadView
 		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
 		m.state = common.ThreadView

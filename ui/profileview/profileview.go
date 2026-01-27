@@ -167,16 +167,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "up", "k":
 			if m.Selected > 0 {
 				m.Selected--
-				if m.Selected < m.Offset {
-					m.Offset = m.Selected
-				}
+				m.Offset = m.Selected
 			}
 		case "down", "j":
 			if m.Selected < len(m.Posts)-1 {
 				m.Selected++
-				if m.Selected >= m.Offset+common.DefaultItemsPerPage {
-					m.Offset = m.Selected - common.DefaultItemsPerPage + 1
-				}
+				m.Offset = m.Selected
 			}
 		case "enter":
 			// View thread for selected post
@@ -318,9 +314,9 @@ func (m Model) View() string {
 				authorFormatted := selectedBg.Render(selectedPostAuthorStyle.Render(author))
 				contentFormatted := selectedBg.Render(selectedPostContentStyle.Render(highlightedContent))
 
-				s.WriteString(common.ListSelectedPrefix + timeFormatted + "\n")
-				s.WriteString("  " + authorFormatted + "\n")
-				s.WriteString("  " + contentFormatted)
+				s.WriteString(timeFormatted + "\n")
+				s.WriteString(authorFormatted + "\n")
+				s.WriteString(contentFormatted)
 			} else {
 				unselectedStyle := lipgloss.NewStyle().Width(contentWidth)
 
@@ -328,9 +324,9 @@ func (m Model) View() string {
 				authorFormatted := unselectedStyle.Render(postAuthorStyle.Render(author))
 				contentFormatted := unselectedStyle.Render(postContentStyle.Render(highlightedContent))
 
-				s.WriteString(common.ListUnselectedPrefix + timeFormatted + "\n")
-				s.WriteString("  " + authorFormatted + "\n")
-				s.WriteString("  " + contentFormatted)
+				s.WriteString(timeFormatted + "\n")
+				s.WriteString(authorFormatted + "\n")
+				s.WriteString(contentFormatted)
 			}
 			s.WriteString("\n\n")
 		}

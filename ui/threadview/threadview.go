@@ -108,6 +108,7 @@ type Model struct {
 	pendingSelection int    // Selection to restore after reload (-2 means no pending restore)
 	pendingOffset    int    // Offset to restore after reload
 	LocalDomain      string // Cached local domain for mention highlighting
+	ReturnView       common.SessionState // View to return to on Esc (default: HomeTimelineView)
 }
 
 // InitialModel creates a new thread view model
@@ -127,6 +128,7 @@ func InitialModel(accountId uuid.UUID, width, height int, localDomain string) Mo
 		pendingSelection: -2, // -2 means no pending restore
 		pendingOffset:    -2,
 		LocalDomain:      localDomain,
+		ReturnView:       common.HomeTimelineView,
 	}
 }
 
@@ -637,9 +639,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 		case "esc", "q":
-			// Go back (handled by supertui)
+			// Go back to the view that opened this thread
+			returnView := m.ReturnView
 			return m, func() tea.Msg {
-				return common.HomeTimelineView
+				return returnView
 			}
 		case "l":
 			// Like/unlike selected post

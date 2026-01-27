@@ -406,6 +406,7 @@ func TestUpdate_EnterOnReplyWithNoReplies(t *testing.T) {
 func TestUpdate_EscapeGoesBack(t *testing.T) {
 	m := InitialModel(uuid.New(), 120, 40, "")
 
+	// Default ReturnView is HomeTimelineView
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
 
 	if cmd == nil {
@@ -415,6 +416,22 @@ func TestUpdate_EscapeGoesBack(t *testing.T) {
 	msg := cmd()
 	if msg != common.HomeTimelineView {
 		t.Errorf("Expected HomeTimelineView, got %v", msg)
+	}
+}
+
+func TestUpdate_EscapeReturnsToProfileView(t *testing.T) {
+	m := InitialModel(uuid.New(), 120, 40, "")
+	m.ReturnView = common.ProfileView
+
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+
+	if cmd == nil {
+		t.Fatal("Expected command for escape")
+	}
+
+	msg := cmd()
+	if msg != common.ProfileView {
+		t.Errorf("Expected ProfileView, got %v", msg)
 	}
 }
 

@@ -166,11 +166,17 @@ func TestUpdate_Navigation(t *testing.T) {
 	if m.Selected != 1 {
 		t.Errorf("Expected Selected 1 after down, got %d", m.Selected)
 	}
+	if m.Offset != 1 {
+		t.Errorf("Expected Offset 1 after down, got %d", m.Offset)
+	}
 
 	// Move down again
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if m.Selected != 2 {
 		t.Errorf("Expected Selected 2 after down, got %d", m.Selected)
+	}
+	if m.Offset != 2 {
+		t.Errorf("Expected Offset 2 after down, got %d", m.Offset)
 	}
 
 	// Try to move past end
@@ -184,11 +190,17 @@ func TestUpdate_Navigation(t *testing.T) {
 	if m.Selected != 1 {
 		t.Errorf("Expected Selected 1 after up, got %d", m.Selected)
 	}
+	if m.Offset != 1 {
+		t.Errorf("Expected Offset 1 after up, got %d", m.Offset)
+	}
 
 	// Move up again
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if m.Selected != 0 {
 		t.Errorf("Expected Selected 0 after up, got %d", m.Selected)
+	}
+	if m.Offset != 0 {
+		t.Errorf("Expected Offset 0 after up, got %d", m.Offset)
 	}
 
 	// Try to move past start
