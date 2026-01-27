@@ -246,6 +246,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = common.AccountSettingsView
 		case common.ThreadView:
 			m.state = common.ThreadView
+		case common.ProfileView:
+			m.state = common.ProfileView
 		case common.UpdateNoteList:
 			// Route to models that need to refresh (handled by SessionState routing below)
 			// Note: This message is also a SessionState, so it will trigger reloads
