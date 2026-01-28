@@ -416,6 +416,10 @@ func (m *Model) Blur() {
 	m.Textarea.Blur()
 }
 
+func (m Model) IsReplying() bool {
+	return m.isReplying
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd

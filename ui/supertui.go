@@ -673,7 +673,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.accountSettingsModel, cmd = m.accountSettingsModel.Update(msg)
 		cmds = append(cmds, cmd)
 	case common.ThreadView:
-		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		if m.createModel.IsReplying() {
+			m.createModel, cmd = m.createModel.Update(msg)
+		} else {
+			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		}
 		cmds = append(cmds, cmd)
 	case common.ProfileView:
 		m.profileViewModel, cmd = m.profileViewModel.Update(msg)
@@ -906,9 +910,15 @@ func (m MainModel) View() string {
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(accountSettingsStyleStr))
 		case common.ThreadView:
-			s += lipgloss.JoinHorizontal(lipgloss.Top,
-				modelStyle.Render(createStyleStr),
-				focusedModelStyle.Render(threadViewStyleStr))
+			if m.createModel.IsReplying() {
+				s += lipgloss.JoinHorizontal(lipgloss.Top,
+					focusedModelStyle.Render(createStyleStr),
+					modelStyle.Render(threadViewStyleStr))
+			} else {
+				s += lipgloss.JoinHorizontal(lipgloss.Top,
+					modelStyle.Render(createStyleStr),
+					focusedModelStyle.Render(threadViewStyleStr))
+			}
 		case common.ProfileView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
