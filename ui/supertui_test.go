@@ -594,3 +594,53 @@ func TestActivateDeactivateCycle(t *testing.T) {
 		model = mainModel
 	}
 }
+
+// TestReplyFromThreadViewKeepsThreadState verifies that pressing 'r' in
+// thread view keeps the thread visible in the right panel (issue #97)
+func TestReplyFromThreadViewKeepsThreadState(t *testing.T) {
+	account := domain.Account{
+		Id:       uuid.New(),
+		Username: "testuser",
+	}
+
+	model := NewModel(account, 120, 40)
+	model.state = common.ThreadView
+
+	replyMsg := common.ReplyToNoteMsg{
+		NoteURI: "https://example.com/notes/123",
+		Author:  "someuser",
+		Preview: "Test post content",
+	}
+
+	updatedModel, _ := model.Update(replyMsg)
+	mainModel := updatedModel.(MainModel)
+
+	if mainModel.state != common.ThreadView {
+		t.Errorf("Expected state to remain ThreadView after reply, got %v", mainModel.state)
+	}
+}
+
+// TestReplyFromHomeTimelineSwitchesToCreateNoteView verifies that reply from
+// non-thread views still switches to CreateNoteView (existing behavior)
+func TestReplyFromHomeTimelineSwitchesToCreateNoteView(t *testing.T) {
+	account := domain.Account{
+		Id:       uuid.New(),
+		Username: "testuser",
+	}
+
+	model := NewModel(account, 120, 40)
+	model.state = common.HomeTimelineView
+
+	replyMsg := common.ReplyToNoteMsg{
+		NoteURI: "https://example.com/notes/123",
+		Author:  "someuser",
+		Preview: "Test post content",
+	}
+
+	updatedModel, _ := model.Update(replyMsg)
+	mainModel := updatedModel.(MainModel)
+
+	if mainModel.state != common.CreateNoteView {
+		t.Errorf("Expected state CreateNoteView after reply from home, got %v", mainModel.state)
+	}
+}

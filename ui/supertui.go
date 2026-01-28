@@ -271,9 +271,12 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.myPostsModel.Init()
 
 	case common.ReplyToNoteMsg:
-		// Route ReplyToNote message to writenote model and switch to CreateNoteView
+		// Route ReplyToNote message to writenote model
 		m.createModel, cmd = m.createModel.Update(msg)
-		m.state = common.CreateNoteView
+		// Keep thread/profile visible in right panel during reply
+		if m.state != common.ThreadView && m.state != common.ProfileView {
+			m.state = common.CreateNoteView
+		}
 		return m, cmd
 
 	case common.ViewThreadMsg:
