@@ -65,6 +65,11 @@ const (
 	MenuDeleteAccount
 )
 
+const (
+	avatarCols = 12
+	avatarRows = 6
+)
+
 type Model struct {
 	Account        *domain.Account
 	ViewState      ViewState
@@ -90,6 +95,9 @@ type Model struct {
 
 	// Config for URLs
 	conf *util.AppConfig
+
+	// Pre-rendered avatar for display
+	avatarRendered string
 }
 
 func InitialModel(account *domain.Account) Model {
@@ -107,6 +115,14 @@ func InitialModel(account *domain.Account) Model {
 
 	conf, _ := util.ReadConf()
 
+	var avatarStr string
+	if account.AvatarURL != "" {
+		img := util.LoadAvatarImage(account.AvatarURL)
+		if img != nil {
+			avatarStr = util.RenderImageToHalfBlocks(img, avatarCols, avatarRows)
+		}
+	}
+
 	return Model{
 		Account:          account,
 		ViewState:        MenuView,
@@ -117,6 +133,7 @@ func InitialModel(account *domain.Account) Model {
 		displayNameInput: dnInput,
 		bioInput:         bioInput,
 		conf:             conf,
+		avatarRendered:   avatarStr,
 	}
 }
 
@@ -205,6 +222,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Update text inputs with new values
 			m.displayNameInput.SetValue(msg.account.DisplayName)
 			m.bioInput.SetValue(msg.account.Summary)
+			// Re-render avatar
+			m.avatarRendered = ""
+			if msg.account.AvatarURL != "" {
+				img := util.LoadAvatarImage(msg.account.AvatarURL)
+				if img != nil {
+					m.avatarRendered = util.RenderImageToHalfBlocks(img, avatarCols, avatarRows)
+				}
+			}
 		}
 		// Always clear status after refresh completes (handles both manual refresh and post-upload)
 		return m, clearStatusAfter(5 * time.Second)
@@ -432,18 +457,38 @@ func (m Model) View() string {
 func (m Model) renderMenu() string {
 	var s strings.Builder
 
-	s.WriteString("Current profile:\n")
-	s.WriteString(fmt.Sprintf("  Username: @%s\n", m.Account.Username))
-	s.WriteString(fmt.Sprintf("  Display name: %s\n", m.Account.DisplayName))
+	// Profile header text (matching profile view style)
+	var headerText strings.Builder
+
+	displayNameStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(common.COLOR_USERNAME)).
+		Bold(true)
+	handleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(common.COLOR_SECONDARY))
+	bioStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(common.COLOR_WHITE))
+
+	name := m.Account.DisplayName
+	if name == "" {
+		name = m.Account.Username
+	}
+	headerText.WriteString(displayNameStyle.Render(name))
+	headerText.WriteString("\n")
+	headerText.WriteString(handleStyle.Render("@" + m.Account.Username))
+	headerText.WriteString("\n")
+
 	if m.Account.Summary != "" {
-		s.WriteString(fmt.Sprintf("  Bio: %s\n", m.Account.Summary))
+		headerText.WriteString("\n")
+		headerText.WriteString(bioStyle.Render(m.Account.Summary))
+		headerText.WriteString("\n")
 	}
-	if m.Account.AvatarURL != "" {
-		s.WriteString(fmt.Sprintf("  Avatar: %s\n", m.Account.AvatarURL))
+
+	if m.avatarRendered != "" {
+		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.avatarRendered, "   ", headerText.String()))
 	} else {
-		s.WriteString("  Avatar: (default)\n")
+		s.WriteString(headerText.String())
 	}
-	s.WriteString("\n")
+	s.WriteString("\n\n")
 
 	items := []struct {
 		key   string
@@ -497,8 +542,11 @@ func (m Model) renderAvatar() string {
 
 	s.WriteString("Change Avatar\n\n")
 
-	// Show current avatar status
-	if m.Account.AvatarURL != "" {
+	// Show current avatar
+	if m.avatarRendered != "" {
+		s.WriteString(m.avatarRendered)
+		s.WriteString("\n\n")
+	} else if m.Account.AvatarURL != "" {
 		s.WriteString(fmt.Sprintf("Current avatar: %s\n\n", m.Account.AvatarURL))
 	} else {
 		s.WriteString("Current avatar: (default)\n\n")

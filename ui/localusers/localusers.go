@@ -78,7 +78,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.Offset = m.Selected - common.DefaultItemsPerPage + 1
 				}
 			}
-		case "enter", "f":
+		case "enter":
+			if len(otherUsers) > 0 && m.Selected < len(otherUsers) {
+				selectedUser := otherUsers[m.Selected]
+				return m, func() tea.Msg {
+					return common.ViewProfileMsg{
+						Username:  selectedUser.Username,
+						AccountId: selectedUser.Id,
+					}
+				}
+			}
+		case "f":
 			if len(otherUsers) > 0 && m.Selected < len(otherUsers) {
 				selectedUser := otherUsers[m.Selected]
 

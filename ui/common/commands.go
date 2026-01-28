@@ -24,6 +24,7 @@ const (
 	AccountSettingsView // Account settings (profile, avatar, delete)
 	ThreadView          // View thread with parent and replies
 	NotificationsView   // View notifications
+	ProfileView         // View user profile with recent posts
 )
 
 const (
@@ -78,6 +79,12 @@ type LikeNoteMsg struct {
 	NoteURI string    // ActivityPub object URI of the note being liked
 	NoteID  uuid.UUID // Local UUID (if local note)
 	IsLocal bool      // Whether this is a local note
+}
+
+// ViewProfileMsg is sent when user presses Enter on a local user to view their profile
+type ViewProfileMsg struct {
+	Username  string
+	AccountId uuid.UUID
 }
 
 // BoostNoteMsg is sent when user presses 'b' to boost/unboost a post

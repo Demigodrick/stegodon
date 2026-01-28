@@ -24,6 +24,7 @@ import (
 	"github.com/deemkeen/stegodon/ui/localusers"
 	"github.com/deemkeen/stegodon/ui/myposts"
 	"github.com/deemkeen/stegodon/ui/notifications"
+	"github.com/deemkeen/stegodon/ui/profileview"
 	"github.com/deemkeen/stegodon/ui/relay"
 	"github.com/deemkeen/stegodon/ui/threadview"
 	"github.com/deemkeen/stegodon/ui/writenote"
@@ -61,6 +62,7 @@ type MainModel struct {
 	relayModel           relay.Model
 	accountSettingsModel accountsettings.Model
 	threadViewModel      threadview.Model
+	profileViewModel     profileview.Model
 	notificationsModel   notifications.Model
 }
 
@@ -110,6 +112,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	relayModel := relay.InitialModel(acc.Id, &acc, config, width, height)
 	accountSettingsModel := accountsettings.InitialModel(&acc)
 	threadViewModel := threadview.InitialModel(acc.Id, width, height, localDomain)
+	profileViewModel := profileview.InitialModel(acc.Id, width, height, localDomain)
 	notificationsModel := notifications.InitialModel(acc.Id, width, height)
 
 	m := MainModel{state: common.CreateUserView}
@@ -127,6 +130,7 @@ func NewModel(acc domain.Account, width int, height int) MainModel {
 	m.relayModel = relayModel
 	m.accountSettingsModel = accountSettingsModel
 	m.threadViewModel = threadViewModel
+	m.profileViewModel = profileViewModel
 	m.notificationsModel = notificationsModel
 	m.headerModel = headerModel
 	m.account = acc
@@ -193,6 +197,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localUsersModel.Height = msg.Height
 		m.threadViewModel.Width = msg.Width
 		m.threadViewModel.Height = msg.Height
+		m.profileViewModel.Width = msg.Width
+		m.profileViewModel.Height = msg.Height
 		return m, nil
 
 	case tea.MouseMsg:
@@ -240,6 +246,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = common.AccountSettingsView
 		case common.ThreadView:
 			m.state = common.ThreadView
+		case common.ProfileView:
+			m.state = common.ProfileView
 		case common.UpdateNoteList:
 			// Route to models that need to refresh (handled by SessionState routing below)
 			// Note: This message is also a SessionState, so it will trigger reloads
@@ -269,9 +277,21 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case common.ViewThreadMsg:
+		// Set return view based on where the thread was opened from
+		if m.state == common.ProfileView {
+			m.threadViewModel.ReturnView = common.ProfileView
+		} else {
+			m.threadViewModel.ReturnView = common.HomeTimelineView
+		}
 		// Route ViewThread message to threadview model and switch to ThreadView
 		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
 		m.state = common.ThreadView
+		return m, cmd
+
+	case common.ViewProfileMsg:
+		// Route ViewProfile message to profileview model and switch to ProfileView
+		m.profileViewModel, cmd = m.profileViewModel.Update(msg)
+		m.state = common.ProfileView
 		return m, cmd
 
 	case common.LikeNoteMsg:
@@ -593,7 +613,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// Only route to admin/relay/thread models when active (leak prevention)
+		// Only route to admin/relay/thread/profile models when active (leak prevention)
 		switch m.state {
 		case common.AdminPanelView:
 			m.adminModel, cmd = m.adminModel.Update(msg)
@@ -603,6 +623,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		case common.ThreadView:
 			m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+			cmds = append(cmds, cmd)
+		case common.ProfileView:
+			m.profileViewModel, cmd = m.profileViewModel.Update(msg)
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -648,6 +671,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case common.ThreadView:
 		m.threadViewModel, cmd = m.threadViewModel.Update(msg)
+		cmds = append(cmds, cmd)
+	case common.ProfileView:
+		m.profileViewModel, cmd = m.profileViewModel.Update(msg)
 		cmds = append(cmds, cmd)
 	case common.NotificationsView:
 		m.notificationsModel, cmd = m.notificationsModel.Update(msg)
@@ -804,6 +830,14 @@ func (m MainModel) View() string {
 		Margin(1).
 		Render(m.threadViewModel.View())
 
+	profileViewStyleStr := lipgloss.NewStyle().
+		MaxHeight(availableHeight).
+		Height(availableHeight).
+		Width(rightPanelWidth).
+		MaxWidth(rightPanelWidth).
+		Margin(1).
+		Render(m.profileViewModel.View())
+
 	notificationsStyleStr := lipgloss.NewStyle().
 		MaxHeight(availableHeight).
 		Height(availableHeight).
@@ -872,6 +906,10 @@ func (m MainModel) View() string {
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
 				focusedModelStyle.Render(threadViewStyleStr))
+		case common.ProfileView:
+			s += lipgloss.JoinHorizontal(lipgloss.Top,
+				modelStyle.Render(createStyleStr),
+				focusedModelStyle.Render(profileViewStyleStr))
 		case common.NotificationsView:
 			s += lipgloss.JoinHorizontal(lipgloss.Top,
 				modelStyle.Render(createStyleStr),
@@ -894,7 +932,7 @@ func (m MainModel) View() string {
 		case common.FollowingView:
 			viewCommands = "↑/↓ • u/enter: unfollow"
 		case common.LocalUsersView:
-			viewCommands = "↑/↓ • enter: toggle follow"
+			viewCommands = "↑/↓ • enter: profile • f: follow"
 		case common.AdminPanelView:
 			// Context-aware help based on admin view state
 			switch m.adminModel.CurrentView {
@@ -921,6 +959,8 @@ func (m MainModel) View() string {
 			viewCommands = "↑/↓ • e: name • b: bio • a: avatar • d: delete"
 		case common.ThreadView:
 			viewCommands = "↑/↓ • enter: thread • r: reply • l: ⭐ • b: 🔁 • o: URL • esc: back"
+		case common.ProfileView:
+			viewCommands = "↑/↓ • enter: thread • f: follow • esc: back"
 		case common.NotificationsView:
 			viewCommands = "j/k: nav • v: view • f: follow • enter: del • a: del all"
 		default:
@@ -928,8 +968,8 @@ func (m MainModel) View() string {
 		}
 
 		var helpText string
-		if m.state == common.ThreadView {
-			// Thread view doesn't use tab navigation
+		if m.state == common.ThreadView || m.state == common.ProfileView {
+			// Thread and profile views don't use tab navigation
 			helpText = fmt.Sprintf(
 				"focused > %s\t\tkeys > %s • ctrl-c: exit",
 				model, viewCommands)
@@ -985,6 +1025,8 @@ func (m MainModel) currentFocusedModel() string {
 		return "settings"
 	case common.ThreadView:
 		return "thread"
+	case common.ProfileView:
+		return "profile"
 	case common.NotificationsView:
 		return "notifications"
 	default:
