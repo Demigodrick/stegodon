@@ -183,15 +183,30 @@ func (m MainModel) Init() tea.Cmd {
 	cmds = append(cmds, func() tea.Msg { return common.ActivateViewMsg{} })
 
 	if m.account.FirstTimeLogin == domain.TRUE {
-		// New users must accept terms first, then create profile
-		cmds = append(cmds, func() tea.Msg {
-			return common.TermsAcceptanceView
-		})
-		cmds = append(cmds, loadTermsCmd())
+		if m.config.Conf.ShowTos {
+			// New users must accept terms first, then create profile
+			cmds = append(cmds, func() tea.Msg {
+				return common.TermsAcceptanceView
+			})
+			cmds = append(cmds, loadTermsCmd())
+		} else {
+			// Terms disabled, go directly to profile creation
+			cmds = append(cmds, func() tea.Msg {
+				return common.CreateUserView
+			})
+		}
 	} else {
-		// For existing users, check if they need to accept terms first
-		// The termsCheckResultMsg handler will transition to the appropriate state
-		cmds = append(cmds, checkTermsAcceptanceCmd(m.account.Id))
+		if m.config.Conf.ShowTos {
+			// For existing users, check if they need to accept terms first
+			// The termsCheckResultMsg handler will transition to the appropriate state
+			cmds = append(cmds, checkTermsAcceptanceCmd(m.account.Id))
+		} else {
+			// Terms disabled, go directly to main app
+			cmds = append(cmds, func() tea.Msg {
+				return common.CreateNoteView
+			})
+			cmds = append(cmds, m.createModel.Init())
+		}
 	}
 
 	return tea.Batch(cmds...)
